@@ -1,34 +1,30 @@
-import { prisma } from '@/lib/db';
-import { notFound } from 'next/navigation';
+import { redirect } from 'next/navigation';
+import { PrismaClient } from '@prisma/client';
 import ConfirmButton from './ConfirmButton';
+import { CheckCircle2, XCircle, HelpCircle, FileCheck2, Info, MapPin, Hash, ShieldAlert } from 'lucide-react';
 
-export default async function ConferirBUPage({ params }: { params: Promise<{ id: string }> }) {
+const prisma = new PrismaClient();
+
+export default async function ConferirPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+
   const report = await prisma.ballotReport.findUnique({
     where: { id },
     include: {
       votes: {
-        include: {
-          office: true
-        }
+        include: { office: true }
       }
     }
   });
 
-  if (!report) return notFound();
-
-  if (report.status !== 'PENDENTE_CONFIRMACAO') {
+  if (!report) {
     return (
-      <div className="min-h-screen bg-gray-50 p-4 md:p-8 flex items-center justify-center font-sans">
-        <div className="bg-white p-8 rounded-lg shadow max-w-md w-full text-center">
-          <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4">
-            <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-          </div>
-          <h1 className="text-2xl font-bold text-gray-800 mb-2">Boletim Indisponível</h1>
-          <p className="text-gray-600 mb-6">Este Boletim de Urna não está aguardando confirmação. O status atual é <strong className="text-gray-800">{report.status}</strong>.</p>
-          <a href="/admin/scanner" className="inline-block bg-blue-900 text-white font-bold px-6 py-3 rounded hover:bg-blue-800">
+      <div className="min-h-screen bg-slate-50 font-sans flex items-center justify-center p-4">
+        <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200 text-center max-w-md w-full">
+          <HelpCircle className="w-12 h-12 text-slate-300 mx-auto mb-4" />
+          <h1 className="text-xl font-bold text-slate-800 mb-2">Boletim não encontrado</h1>
+          <p className="text-slate-500 mb-6">O código identificador informado não consta na base de dados.</p>
+          <a href="/admin/scanner" className="inline-block bg-slate-900 text-white font-bold px-6 py-3 rounded-xl hover:bg-slate-800 transition-colors">
             Voltar ao Scanner
           </a>
         </div>
@@ -36,15 +32,32 @@ export default async function ConferirBUPage({ params }: { params: Promise<{ id:
     );
   }
 
-  // Parse validation data
+  // Preserve Phase 6 logic: Only PENDENTE_CONFIRMACAO
+  if (report.status !== 'PENDENTE_CONFIRMACAO') {
+    return (
+      <div className="min-h-screen bg-slate-50 font-sans flex items-center justify-center p-4">
+        <div className="bg-white p-8 rounded-2xl shadow-sm border border-slate-200 text-center max-w-md w-full">
+          <Info className="w-12 h-12 text-indigo-400 mx-auto mb-4" />
+          <h1 className="text-xl font-bold text-slate-800 mb-2">Boletim indisponível</h1>
+          <p className="text-slate-600 mb-6">
+            Este Boletim de Urna não está aguardando confirmação. O status atual é{' '}
+            <strong className="text-slate-900 uppercase bg-slate-100 px-2 py-1 rounded text-xs ml-1 tracking-wider">{report.status}</strong>.
+          </p>
+          <a href="/admin/scanner" className="inline-block bg-slate-900 text-white font-bold px-6 py-3 rounded-xl hover:bg-slate-800 transition-colors">
+            Voltar ao Scanner
+          </a>
+        </div>
+      </div>
+    );
+  }
+
   let validation = { hashStatus: 'UNVERIFIED', sigStatus: 'UNVERIFIED' };
   try {
     if (report.validationData) {
       validation = JSON.parse(report.validationData as string);
     }
-  } catch (e) {}
+  } catch {}
 
-  // Group votes by office
   const votesByOffice = report.votes.reduce((acc, vote) => {
     if (!acc[vote.office.name]) acc[vote.office.name] = [];
     acc[vote.office.name].push(vote);
@@ -52,74 +65,83 @@ export default async function ConferirBUPage({ params }: { params: Promise<{ id:
   }, {} as Record<string, typeof report.votes>);
 
   return (
-    <div className="min-h-screen bg-gray-100 font-sans">
-      <header className="bg-blue-900 text-white p-4 shadow-md flex justify-between items-center">
-        <div>
-          <h1 className="text-xl font-bold uppercase tracking-tight">Apuração Paralela 2026</h1>
-          <p className="text-blue-200 text-sm font-medium">Conferência de Boletim</p>
+    <div className="min-h-screen bg-slate-100 font-sans flex flex-col">
+      <header className="bg-slate-900 text-white shadow-md border-b-4 border-indigo-600">
+        <div className="max-w-4xl mx-auto px-4 md:px-6 h-16 flex items-center gap-3">
+          <FileCheck2 className="w-6 h-6 text-indigo-400" />
+          <div>
+            <h1 className="text-lg md:text-xl font-bold uppercase tracking-tight leading-none">
+              Conferência de Boletim
+            </h1>
+            <p className="text-indigo-300 text-xs font-medium uppercase tracking-wider mt-0.5">Operação Administrativa</p>
+          </div>
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto p-4 py-8">
+      <main className="flex-1 max-w-4xl w-full mx-auto p-4 md:p-6 py-8 flex flex-col gap-6">
         {report.isSimulation && (
-          <div className="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-800 p-4 mb-6 rounded shadow-sm flex items-center">
-            <svg className="w-6 h-6 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+          <div className="bg-amber-50 border border-amber-200 text-amber-800 p-5 rounded-xl shadow-sm flex items-start gap-3">
+            <ShieldAlert className="w-6 h-6 shrink-0 text-amber-600" />
             <div>
-              <p className="font-bold uppercase tracking-wider">Modo Simulação / Dados de Teste</p>
-              <p className="text-sm">Este boletim contém dados simulados e não será totalizado como resultado real.</p>
+              <p className="font-bold uppercase tracking-wider text-sm">Modo Simulação / Dados de Teste</p>
+              <p className="text-sm mt-1 text-amber-700">Este boletim contém dados simulados e não será totalizado como resultado real na apuração pública.</p>
             </div>
           </div>
         )}
         
-        <div className="bg-white shadow-sm border rounded-lg overflow-hidden mb-6">
-          <div className="bg-gray-50 border-b p-4 flex justify-between items-center">
-            <h2 className="text-lg font-bold text-gray-800 uppercase tracking-wide">Identificação do BU</h2>
+        {/* Identificação e Hash */}
+        <div className="bg-white shadow-sm border border-slate-200 rounded-2xl overflow-hidden">
+          <div className="bg-slate-50 border-b border-slate-200 p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <h2 className="text-lg font-black text-slate-800 uppercase tracking-tight flex items-center gap-2">
+              <Hash className="w-5 h-5 text-slate-400" />
+              Identidade do BU
+            </h2>
             
             {validation.hashStatus === 'VERIFIED' ? (
-              <span className="inline-flex items-center bg-green-100 text-green-800 text-xs font-bold px-2.5 py-1 rounded-full border border-green-200">
-                <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                HASH VERIFICADO
+              <span className="inline-flex items-center bg-emerald-100 text-emerald-800 text-xs font-bold px-3 py-1.5 rounded-full border border-emerald-200 uppercase tracking-wide">
+                <CheckCircle2 className="w-4 h-4 mr-1.5" /> HASH VERIFICADO
               </span>
             ) : validation.hashStatus === 'INVALID' ? (
-              <span className="inline-flex items-center bg-red-100 text-red-800 text-xs font-bold px-2.5 py-1 rounded-full border border-red-200">
-                <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                HASH INVÁLIDO
+              <span className="inline-flex items-center bg-red-100 text-red-800 text-xs font-bold px-3 py-1.5 rounded-full border border-red-200 uppercase tracking-wide">
+                <XCircle className="w-4 h-4 mr-1.5" /> HASH INVÁLIDO
               </span>
             ) : (
-              <span className="inline-flex items-center bg-gray-100 text-gray-800 text-xs font-bold px-2.5 py-1 rounded-full border border-gray-200">
-                <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                HASH NÃO VERIFICADO
+              <span className="inline-flex items-center bg-slate-100 text-slate-700 text-xs font-bold px-3 py-1.5 rounded-full border border-slate-300 uppercase tracking-wide">
+                <HelpCircle className="w-4 h-4 mr-1.5" /> HASH NÃO VERIFICADO
               </span>
             )}
           </div>
           
-          <div className="p-4 grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-            <div className="bg-gray-50 p-3 rounded border">
-              <span className="block text-xs text-gray-500 font-bold uppercase mb-1">Estado</span>
-              <span className="block text-lg font-bold text-gray-900">{report.stateCode}</span>
+          <div className="p-5 grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex flex-col items-center justify-center text-center">
+              <span className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-1">Estado</span>
+              <span className="text-2xl font-black text-slate-900">{report.stateCode}</span>
             </div>
-            <div className="bg-gray-50 p-3 rounded border">
-              <span className="block text-xs text-gray-500 font-bold uppercase mb-1">Município</span>
-              <span className="block text-lg font-bold text-gray-900">{report.cityCode}</span>
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex flex-col items-center justify-center text-center">
+              <span className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-1">Município</span>
+              <span className="text-2xl font-black text-slate-900">{report.cityCode}</span>
             </div>
-            <div className="bg-gray-50 p-3 rounded border">
-              <span className="block text-xs text-gray-500 font-bold uppercase mb-1">Zona</span>
-              <span className="block text-lg font-bold text-gray-900">{report.zoneCode}</span>
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex flex-col items-center justify-center text-center">
+              <span className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-1">Zona</span>
+              <span className="text-2xl font-black text-slate-900">{report.zoneCode}</span>
             </div>
-            <div className="bg-gray-50 p-3 rounded border">
-              <span className="block text-xs text-gray-500 font-bold uppercase mb-1">Seção</span>
-              <span className="block text-lg font-bold text-gray-900">{report.sectionCode}</span>
+            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex flex-col items-center justify-center text-center">
+              <span className="text-xs text-slate-500 font-bold uppercase tracking-wider mb-1">Seção</span>
+              <span className="text-2xl font-black text-slate-900">{report.sectionCode}</span>
             </div>
           </div>
         </div>
 
-        <div className="bg-white shadow-sm border rounded-lg overflow-hidden mb-6">
-          <div className="bg-gray-50 border-b p-4">
-            <h2 className="text-lg font-bold text-gray-800 uppercase tracking-wide">Votos Lidos</h2>
+        {/* Votos */}
+        <div className="bg-white shadow-sm border border-slate-200 rounded-2xl overflow-hidden">
+          <div className="bg-slate-50 border-b border-slate-200 p-5">
+            <h2 className="text-lg font-black text-slate-800 uppercase tracking-tight flex items-center gap-2">
+              <MapPin className="w-5 h-5 text-slate-400" />
+              Resumo de Votos
+            </h2>
           </div>
           
           {Object.entries(votesByOffice).map(([officeName, votes]) => {
-            // Sort votes: NOMINAL/LEGENDA first, then BRANCO, NULO
             const sortedVotes = [...votes].sort((a, b) => {
               if (a.voteType === 'BRANCO' || a.voteType === 'NULO') return 1;
               if (b.voteType === 'BRANCO' || b.voteType === 'NULO') return -1;
@@ -127,53 +149,53 @@ export default async function ConferirBUPage({ params }: { params: Promise<{ id:
             });
 
             return (
-              <div key={officeName} className="p-4 border-b last:border-b-0">
-                <h3 className="font-bold text-blue-900 mb-3 uppercase">{officeName}</h3>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm text-left">
-                    <thead className="text-xs text-gray-500 uppercase bg-gray-50">
-                      <tr>
-                        <th className="px-4 py-2 rounded-l-lg">Candidato/Partido</th>
-                        <th className="px-4 py-2">Tipo</th>
-                        <th className="px-4 py-2 text-right rounded-r-lg">Votos</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {sortedVotes.map(v => (
-                        <tr key={v.id} className="border-b last:border-b-0">
-                          <td className="px-4 py-2 font-medium text-gray-900">
+              <div key={officeName} className="border-b border-slate-200 last:border-b-0">
+                <div className="px-5 py-4 bg-slate-50/50">
+                  <h3 className="font-bold text-indigo-900 uppercase tracking-wide text-sm">{officeName}</h3>
+                </div>
+                <div className="px-5 pb-5 pt-2">
+                  <div className="flex flex-col gap-2">
+                    {sortedVotes.map(v => (
+                      <div key={v.id} className="flex items-center justify-between py-2 border-b border-slate-100 last:border-0">
+                        <div className="flex items-center gap-3">
+                          <span className={`inline-flex w-20 justify-center px-2 py-1 rounded text-[10px] font-black uppercase tracking-wider ${
+                            v.voteType === 'BRANCO' ? 'bg-slate-200 text-slate-700' : 
+                            v.voteType === 'NULO' ? 'bg-red-100 text-red-700' : 
+                            v.voteType === 'LEGENDA' ? 'bg-indigo-100 text-indigo-700' : 'bg-emerald-100 text-emerald-800'
+                          }`}>
+                            {v.voteType}
+                          </span>
+                          <span className="font-bold text-slate-800 text-sm md:text-base">
                             {v.voteType === 'NOMINAL' ? v.candidateNumber : 
-                             v.voteType === 'LEGENDA' ? `Partido ${v.partyNumber}` : '-'}
-                          </td>
-                          <td className="px-4 py-2 text-gray-600">
-                            <span className={`inline-block px-2 py-1 rounded text-xs font-semibold ${
-                              v.voteType === 'BRANCO' ? 'bg-gray-200 text-gray-700' : 
-                              v.voteType === 'NULO' ? 'bg-red-100 text-red-700' : 
-                              v.voteType === 'LEGENDA' ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-800'
-                            }`}>
-                              {v.voteType}
-                            </span>
-                          </td>
-                          <td className="px-4 py-2 text-right font-mono font-bold text-lg text-gray-800">
+                             v.voteType === 'LEGENDA' ? `Partido ${v.partyNumber}` : '—'}
+                          </span>
+                        </div>
+                        <div className="text-right flex items-end gap-2">
+                          <span className="font-black text-lg md:text-xl text-slate-900 leading-none">
                             {v.quantity}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                          </span>
+                          <span className="text-xs font-bold text-slate-400 uppercase mb-0.5">votos</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             );
           })}
           
           {Object.keys(votesByOffice).length === 0 && (
-             <div className="p-8 text-center text-gray-500">
-               Nenhum voto contabilizado neste Boletim.
+             <div className="p-12 text-center text-slate-500 flex flex-col items-center justify-center">
+               <Info className="w-8 h-8 text-slate-300 mb-3" />
+               <p className="font-medium">Nenhum voto contabilizado neste Boletim.</p>
              </div>
           )}
         </div>
 
-        <ConfirmButton reportId={report.id} />
+        {/* Componente Cliente (Confirm/Cancel) */}
+        <div className="mt-2">
+          <ConfirmButton reportId={report.id} />
+        </div>
       </main>
     </div>
   );

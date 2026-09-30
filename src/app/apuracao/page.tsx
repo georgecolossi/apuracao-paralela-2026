@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { Activity, Radio, AlertCircle, RefreshCw, Archive, CheckCircle2, AlertTriangle, Users } from 'lucide-react';
 
 interface TotalItem {
   officeName: string;
@@ -37,7 +38,6 @@ export default function ApuracaoPage() {
           setLastUpdate(new Date());
           setError(false);
           
-          // Set initial active office if none selected
           setActiveOffice(prev => {
             if (!prev && data.totals?.length > 0) {
               const offices = Array.from(new Set(data.totals.map((t: TotalItem) => t.officeName))) as string[];
@@ -48,31 +48,35 @@ export default function ApuracaoPage() {
             return prev;
           });
         }
-      } catch (e) {
+      } catch {
         if (mounted) setError(true);
       } finally {
         if (mounted) setLoading(false);
       }
     };
 
-    void fetchTotals();
+    fetchTotals();
 
     const evtSource = new EventSource('/api/realtime');
+    
     evtSource.onopen = () => {
       if (mounted) setConnected(true);
-      void fetchTotals();
+      fetchTotals();
     };
-    evtSource.onerror = () => {
-      if (mounted) setConnected(false);
-    };
+
     evtSource.onmessage = (event) => {
       try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'BU_PROCESSED') {
-          void fetchTotals();
+        const payload = JSON.parse(event.data);
+        if (payload.type === 'BU_PROCESSED') {
+          fetchTotals();
         }
-      } catch (e) {
-        // ignore parse error
+      } catch {}
+    };
+
+    evtSource.onerror = () => {
+      if (mounted) {
+        setConnected(false);
+        setError(true);
       }
     };
 
@@ -82,36 +86,26 @@ export default function ApuracaoPage() {
     };
   }, []);
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center p-4">
-        <div className="w-12 h-12 border-4 border-blue-900 border-t-transparent rounded-full animate-spin mb-4"></div>
-        <p className="text-xl font-semibold text-gray-700">Carregando apuração...</p>
-      </div>
-    );
-  }
+  const offices = totals?.totals ? Array.from(new Set(totals.totals.map(t => t.officeName))) : [];
 
-  const offices = totals ? Array.from(new Set(totals.totals.map((t: TotalItem) => t.officeName))) : [];
-
-  const getOfficeData = (office: string) => {
-    if (!totals) return { candidates: [], brancos: 0, nulos: 0, totalValidos: 0, totalGeral: 0 };
+  const getOfficeData = (officeName: string) => {
+    if (!totals) return null;
     
-    const officeVotes = totals.totals.filter(t => t.officeName === office);
+    const officeVotes = totals.totals.filter(t => t.officeName === officeName);
     
+    let validos = 0;
     let brancos = 0;
     let nulos = 0;
-    let validos = 0;
     
-    const candidateMap = new Map<string, { candidateNumber: string, partyNumber: string, quantity: number }>();
-    
+    const candidateMap = new Map<string, { candidateNumber: string; partyNumber: string; quantity: number }>();
+
     for (const v of officeVotes) {
-      if (v.voteType === 'BRANCO') {
-        brancos += v.quantity;
-      } else if (v.voteType === 'NULO') {
-        nulos += v.quantity;
-      } else if (v.voteType === 'NOMINAL' || v.voteType === 'LEGENDA') {
+      if (v.voteType === 'BRANCO') brancos += v.quantity;
+      else if (v.voteType === 'NULO') nulos += v.quantity;
+      else if (v.voteType === 'NOMINAL' || v.voteType === 'LEGENDA') {
         validos += v.quantity;
-        const key = v.voteType === 'LEGENDA' ? `LEG-${v.partyNumber}` : `NOM-${v.candidateNumber}`;
+        const key = v.voteType === 'LEGENDA' ? `LEG_${v.partyNumber}` : `NOM_${v.candidateNumber}`;
+        
         const existing = candidateMap.get(key);
         if (existing) {
           existing.quantity += v.quantity;
@@ -134,128 +128,225 @@ export default function ApuracaoPage() {
   const activeData = activeOffice ? getOfficeData(activeOffice) : null;
 
   return (
-    <div className="min-h-screen bg-gray-100 font-sans text-gray-900">
-      <header className="bg-blue-900 text-white shadow-md">
-        <div className="max-w-7xl mx-auto px-4 py-6 md:py-8 flex flex-col md:flex-row items-center justify-between">
-          <div className="text-center md:text-left mb-4 md:mb-0">
-            <h1 className="text-2xl md:text-4xl font-extrabold uppercase tracking-tight">Apuração Paralela 2026</h1>
-            <p className="text-blue-200 mt-1 font-medium text-sm md:text-base">Acompanhamento independente dos Boletins de Urna</p>
+    <div className="min-h-screen bg-slate-50 font-sans text-slate-900 flex flex-col">
+      {/* Header Profissional / Jornalístico */}
+      <header className="bg-slate-900 border-b-4 border-indigo-600 sticky top-0 z-50">
+        <div className="max-w-7xl mx-auto px-4 md:px-6 h-16 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Archive className="text-indigo-400 w-6 h-6 hidden sm:block" />
+            <h1 className="text-xl md:text-2xl font-black text-white tracking-tight uppercase">
+              Apuração Paralela <span className="text-indigo-400">2026</span>
+            </h1>
           </div>
-          <div className="bg-red-600 text-white px-4 py-2 rounded font-bold uppercase text-sm shadow-sm border border-red-500">
-            Resultado Não Oficial
+          
+          <div className="flex items-center gap-3">
+            <div className="hidden md:flex items-center gap-2 px-3 py-1 rounded bg-slate-800 text-slate-300 text-sm font-medium border border-slate-700">
+              {connected ? (
+                <><Radio className="w-4 h-4 text-emerald-400 animate-pulse" /> Ao Vivo</>
+              ) : (
+                <><RefreshCw className="w-4 h-4 text-amber-400 animate-spin" /> Conectando...</>
+              )}
+            </div>
+            <div className="bg-red-600/90 text-white px-3 py-1.5 rounded text-xs md:text-sm font-bold uppercase tracking-wider shadow-sm flex items-center gap-1.5">
+              <AlertTriangle className="w-4 h-4" />
+              <span className="hidden sm:inline">Resultado</span> Não Oficial
+            </div>
           </div>
-        </div>
-        <div className="bg-blue-950 px-4 py-3 text-sm text-center text-blue-200">
-          Esta é uma apuração paralela independente baseada nos Boletins de Urna coletados pela equipe responsável. Os resultados oficiais são divulgados pela Justiça Eleitoral.
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-4 py-8">
-        {error && (
-          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-6 text-center">
-            <strong>Não foi possível atualizar os resultados.</strong> O sistema tentará reconectar automaticamente.
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 md:px-6 py-6 md:py-8 flex flex-col gap-6">
+        
+        {/* Status Bar */}
+        <div className="flex flex-col md:flex-row gap-4 items-stretch justify-between">
+          <div className="flex-1 bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex items-center gap-4">
+            <div className="bg-indigo-50 p-3 rounded-lg text-indigo-600">
+              <CheckCircle2 className="w-6 h-6" />
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-wider font-semibold text-slate-500">Urnas Apuradas (BUs)</p>
+              <p className="text-2xl md:text-3xl font-black text-slate-900 leading-none mt-1">
+                {totals?.processedReports || 0}
+              </p>
+            </div>
           </div>
-        )}
 
-        <div className="bg-white rounded-lg shadow-sm border p-4 md:p-6 mb-8 flex flex-col md:flex-row items-center justify-between gap-4">
-          <div className="text-center md:text-left">
-            <p className="text-sm text-gray-500 uppercase font-semibold">BUs Processados</p>
-            <p className="text-3xl font-bold text-gray-900">{totals?.processedReports || 0}</p>
+          <div className="flex-1 bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex items-center gap-4">
+            <div className="bg-slate-50 p-3 rounded-lg text-slate-600">
+              <Activity className="w-6 h-6" />
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-wider font-semibold text-slate-500">Última Atualização</p>
+              <p className="text-xl md:text-2xl font-bold text-slate-900 leading-none mt-1">
+                {lastUpdate ? lastUpdate.toLocaleTimeString('pt-BR') : '--:--:--'}
+              </p>
+            </div>
           </div>
           
-          <div className="text-center">
-            <p className="text-sm text-gray-500 uppercase font-semibold">Última Atualização</p>
-            <p className="text-xl font-medium text-gray-900">{lastUpdate ? lastUpdate.toLocaleTimeString('pt-BR') : '--:--:--'}</p>
-          </div>
-          
-          <div className="text-center md:text-right flex items-center gap-2">
-            <div className={`w-3 h-3 rounded-full ${connected ? 'bg-red-500 animate-pulse' : 'bg-gray-400'}`}></div>
-            <span className={`font-bold ${connected ? 'text-red-600' : 'text-gray-500'}`}>
-              {connected ? 'AO VIVO' : 'Reconectando...'}
-            </span>
+          {/* Mobile Connection Status */}
+          <div className="md:hidden bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex items-center gap-3 justify-center">
+            {connected ? (
+              <><Radio className="w-5 h-5 text-emerald-500 animate-pulse" /> <span className="font-bold text-emerald-700">Conectado (Ao Vivo)</span></>
+            ) : (
+              <><RefreshCw className="w-5 h-5 text-amber-500 animate-spin" /> <span className="font-bold text-amber-700">Reconectando...</span></>
+            )}
           </div>
         </div>
 
-        {offices.length === 0 ? (
-          <div className="bg-white p-12 text-center rounded-lg shadow-sm border">
-            <svg className="w-16 h-16 text-gray-300 mx-auto mb-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
-            <h2 className="text-2xl font-bold text-gray-700 mb-2">A apuração ainda não possui Boletins de Urna processados.</h2>
-            <p className="text-gray-500">Aguarde o processamento das primeiras seções.</p>
+        {error && (
+          <div className="bg-red-50 border border-red-200 text-red-800 p-4 rounded-xl flex items-start gap-3 shadow-sm">
+            <AlertCircle className="w-5 h-5 shrink-0 mt-0.5 text-red-600" />
+            <div>
+              <p className="font-bold">Aviso de Conexão</p>
+              <p className="text-sm mt-1 text-red-700">A conexão em tempo real foi perdida. O sistema está tentando reconectar automaticamente para buscar novos resultados.</p>
+            </div>
+          </div>
+        )}
+
+        {loading ? (
+          <div className="py-20 flex flex-col items-center justify-center text-slate-500">
+            <RefreshCw className="w-8 h-8 animate-spin text-indigo-500 mb-4" />
+            <p className="font-medium">Carregando dados da apuração...</p>
+          </div>
+        ) : offices.length === 0 ? (
+          <div className="bg-white p-12 text-center rounded-xl shadow-sm border border-slate-200 flex flex-col items-center">
+            <div className="bg-slate-50 p-4 rounded-full mb-4">
+              <Archive className="w-10 h-10 text-slate-400" />
+            </div>
+            <h2 className="text-xl md:text-2xl font-bold text-slate-800 mb-2">A apuração ainda não iniciou</h2>
+            <p className="text-slate-500 max-w-md mx-auto">Nenhum Boletim de Urna foi processado e confirmado no sistema até o momento. Aguarde os primeiros resultados.</p>
           </div>
         ) : (
-          <div>
-            <div className="flex overflow-x-auto gap-2 mb-6 pb-2 border-b scrollbar-hide">
-              {offices.map(office => (
-                <button
-                  key={office}
-                  onClick={() => setActiveOffice(office)}
-                  className={`px-6 py-3 font-bold uppercase rounded-t-lg whitespace-nowrap transition-colors ${
-                    activeOffice === office 
-                      ? 'bg-blue-900 text-white border-b-4 border-blue-500' 
-                      : 'bg-white text-gray-600 hover:bg-gray-50 hover:text-blue-900 border-b-4 border-transparent'
-                  }`}
-                >
-                  {office}
-                </button>
-              ))}
+          <div className="flex flex-col gap-6">
+            
+            {/* Seletor de Cargos (Tabs) */}
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+              <div className="flex overflow-x-auto scrollbar-hide">
+                {offices.map(office => (
+                  <button
+                    key={office}
+                    onClick={() => setActiveOffice(office)}
+                    className={`flex-1 min-w-[140px] px-4 py-4 font-bold text-sm uppercase tracking-wide transition-colors border-b-2 outline-none focus-visible:bg-slate-50 ${
+                      activeOffice === office 
+                        ? 'bg-indigo-50/50 text-indigo-700 border-indigo-600' 
+                        : 'text-slate-500 border-transparent hover:text-slate-800 hover:bg-slate-50'
+                    }`}
+                  >
+                    {office}
+                  </button>
+                ))}
+              </div>
             </div>
 
+            {/* View do Cargo Selecionado */}
             {activeData && (
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="md:col-span-2 space-y-4">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+                
+                {/* Lista de Candidatos */}
+                <div className="lg:col-span-2 flex flex-col gap-3">
+                  <h2 className="text-lg font-bold uppercase tracking-tight text-slate-800 mb-1 flex items-center gap-2">
+                    <Users className="w-5 h-5 text-slate-400" />
+                    Votos Nominais e Legenda
+                  </h2>
+                  
                   {activeData.candidates.length === 0 ? (
-                    <div className="bg-white p-8 text-center rounded-lg shadow-sm border text-gray-500">
+                    <div className="bg-white p-8 text-center rounded-xl shadow-sm border border-slate-200 text-slate-500">
                       Nenhum voto válido contabilizado para este cargo.
                     </div>
                   ) : (
-                    activeData.candidates.map((cand, idx) => (
-                      <div key={idx} className="bg-white p-4 rounded-lg shadow-sm border flex items-center justify-between">
-                        <div className="flex-1">
-                          <h3 className="text-xl font-bold text-gray-900">
-                            {cand.candidateNumber}
-                          </h3>
-                          <p className="text-gray-500 font-medium">Partido: {cand.partyNumber}</p>
+                    activeData.candidates.map((cand, idx) => {
+                      const percent = activeData.totalValidos > 0 
+                        ? ((cand.quantity / activeData.totalValidos) * 100) 
+                        : 0;
+                        
+                      return (
+                        <div key={idx} className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 md:p-5 relative overflow-hidden group">
+                          {/* Barra de progresso de fundo sutil */}
+                          <div 
+                            className="absolute left-0 top-0 bottom-0 bg-indigo-50/50 -z-10 transition-all duration-1000 ease-out" 
+                            style={{ width: `${percent}%` }}
+                          />
+                          <div className="absolute left-0 top-0 bottom-0 w-1 bg-indigo-500" />
+                          
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 z-10">
+                            <div className="flex-1 pl-3">
+                              <h3 className="text-2xl md:text-3xl font-black text-slate-900 leading-none">
+                                {cand.candidateNumber}
+                              </h3>
+                              <p className="text-sm font-semibold text-slate-500 uppercase tracking-wider mt-1.5">
+                                Partido {cand.partyNumber}
+                              </p>
+                            </div>
+                            
+                            <div className="flex flex-row sm:flex-col items-end justify-between sm:justify-center border-t sm:border-t-0 pt-3 sm:pt-0 mt-3 sm:mt-0 border-slate-100">
+                              <div className="text-left sm:text-right">
+                                <p className="text-2xl md:text-3xl font-black text-indigo-700 leading-none">
+                                  {cand.quantity.toLocaleString('pt-BR')}
+                                </p>
+                                <p className="text-xs uppercase font-bold text-slate-400 mt-1">votos</p>
+                              </div>
+                              <div className="text-right sm:mt-1">
+                                <p className="text-xl md:text-2xl font-bold text-slate-800">
+                                  {percent.toFixed(2).replace('.', ',')}%
+                                </p>
+                              </div>
+                            </div>
+                          </div>
                         </div>
-                        <div className="text-right">
-                          <p className="text-2xl font-extrabold text-blue-900">
-                            {cand.quantity.toLocaleString('pt-BR')} <span className="text-sm font-normal text-gray-600">votos</span>
-                          </p>
-                          <p className="text-lg font-bold text-gray-700">
-                            {activeData.totalValidos > 0 ? ((cand.quantity / activeData.totalValidos) * 100).toFixed(2) : '0.00'}%
-                          </p>
-                        </div>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
 
-                <div className="space-y-4">
-                  <div className="bg-white p-5 rounded-lg shadow-sm border">
-                    <h3 className="font-bold text-gray-700 mb-4 uppercase text-sm border-b pb-2">Resumo de Votos</h3>
-                    
-                    <div className="flex justify-between items-center mb-3">
-                      <span className="text-gray-600">Válidos</span>
-                      <span className="font-bold text-gray-900">{activeData.totalValidos.toLocaleString('pt-BR')}</span>
+                {/* Sidebar - Resumo Matemático */}
+                <div className="flex flex-col gap-3 lg:sticky lg:top-24">
+                  <h2 className="text-lg font-bold uppercase tracking-tight text-slate-800 mb-1 flex items-center gap-2">
+                    <Activity className="w-5 h-5 text-slate-400" />
+                    Composição dos Votos
+                  </h2>
+                  
+                  <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div className="p-5 flex flex-col gap-4">
+                      
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm font-bold uppercase text-slate-500">Válidos</span>
+                        <span className="text-lg font-black text-slate-800">{activeData.totalValidos.toLocaleString('pt-BR')}</span>
+                      </div>
+                      
+                      <div className="h-px bg-slate-100" />
+                      
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm font-bold uppercase text-slate-500">Brancos</span>
+                        <span className="text-lg font-black text-slate-800">{activeData.brancos.toLocaleString('pt-BR')}</span>
+                      </div>
+                      
+                      <div className="h-px bg-slate-100" />
+                      
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm font-bold uppercase text-slate-500">Nulos</span>
+                        <span className="text-lg font-black text-slate-800">{activeData.nulos.toLocaleString('pt-BR')}</span>
+                      </div>
+                      
                     </div>
                     
-                    <div className="flex justify-between items-center mb-3">
-                      <span className="text-gray-600">Brancos</span>
-                      <span className="font-bold text-gray-900">{activeData.brancos.toLocaleString('pt-BR')}</span>
-                    </div>
-                    
-                    <div className="flex justify-between items-center mb-3">
-                      <span className="text-gray-600">Nulos</span>
-                      <span className="font-bold text-gray-900">{activeData.nulos.toLocaleString('pt-BR')}</span>
-                    </div>
-
-                    <div className="flex justify-between items-center mt-4 pt-3 border-t">
-                      <span className="font-bold text-gray-900">Total</span>
-                      <span className="font-bold text-blue-900 text-lg">{activeData.totalGeral.toLocaleString('pt-BR')}</span>
+                    <div className="bg-slate-50 p-5 border-t border-slate-200">
+                      <div className="flex justify-between items-end">
+                        <div>
+                          <span className="block text-xs font-bold uppercase text-slate-400 mb-1">Total Processado</span>
+                          <span className="text-sm font-bold text-slate-600">Neste cargo</span>
+                        </div>
+                        <span className="text-3xl font-black text-indigo-700 leading-none">
+                          {activeData.totalGeral.toLocaleString('pt-BR')}
+                        </span>
+                      </div>
                     </div>
                   </div>
+                  
+                  <div className="bg-slate-100 p-4 rounded-xl text-xs text-slate-500 mt-2 border border-slate-200">
+                    Os percentuais de candidatos são calculados exclusivamente sobre os votos <strong>válidos</strong>, seguindo a regra da Justiça Eleitoral. Brancos e Nulos não são considerados votos válidos.
+                  </div>
                 </div>
+                
               </div>
             )}
           </div>

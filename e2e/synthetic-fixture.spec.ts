@@ -82,7 +82,7 @@ test.describe('TSE 2026 SYNTHETIC FIXTURE E2E', () => {
     await expect(page.locator('text=71072').first()).toBeVisible();
     
     // 5. Confirma Processamento
-    await page.click('button:has-text("CONFIRMAR BOLETIM")');
+    await page.click('button:has-text("Confirmar e Totalizar")');
     await expect(page).toHaveURL('/admin/scanner');
 
     // 6. Confirma que apareceu no Painel
