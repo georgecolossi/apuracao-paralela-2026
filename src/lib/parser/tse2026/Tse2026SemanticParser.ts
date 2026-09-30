@@ -38,16 +38,14 @@ export class Tse2026SemanticParser {
         if (token.value.includes(',')) {
           // Fallback para testes sintéticos antigos
           const [part, partVotes] = token.value.split(',');
-          if (part && partVotes) {
-            votes.push({ officeName: `Cargo ${currentOfficeCode}`, partyNumber: part, type: 'LEGENDA', quantity: parseInt(partVotes, 10) });
-          }
+          votes.push({ officeName: `Cargo ${currentOfficeCode}`, partyNumber: part, type: 'LEGENDA', quantity: parseInt(partVotes, 10) });
         } else {
           currentPartyCode = token.value;
         }
       } else if (token.key === 'NOMI') {
         // Fallback para testes sintéticos antigos
-        const [cand, candVotes] = token.value.split(',');
-        if (cand && candVotes) {
+        if (token.value.includes(',')) {
+          const [cand, candVotes] = token.value.split(',');
           votes.push({ officeName: `Cargo ${currentOfficeCode}`, candidateNumber: cand, type: 'NOMINAL', quantity: parseInt(candVotes, 10) });
         }
       } else if (token.key === 'LEGP') {
@@ -80,9 +78,15 @@ export class Tse2026SemanticParser {
 
     const validVotes = [];
     for (const v of votes) {
-      if (isNaN(v.quantity) || v.quantity < 0) continue;
-      if (v.type === 'NOMINAL' && !v.candidateNumber) continue;
-      if (v.type === 'LEGENDA' && !v.partyNumber) continue;
+      if (isNaN(v.quantity) || v.quantity < 0) {
+        return { code: 'INVALID_VOTE_DATA', message: 'Quantidade de votos inválida.', details: { officeCode: v.officeName, voteType: v.type } };
+      }
+      if (v.type === 'NOMINAL' && !v.candidateNumber) {
+        return { code: 'INVALID_VOTE_DATA', message: 'Voto nominal sem número de candidato.', details: { officeCode: v.officeName, voteType: v.type } };
+      }
+      if (v.type === 'LEGENDA' && !v.partyNumber) {
+        return { code: 'INVALID_VOTE_DATA', message: 'Voto de legenda sem número de partido.', details: { officeCode: v.officeName, voteType: v.type } };
+      }
       validVotes.push(v);
     }
 

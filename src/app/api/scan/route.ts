@@ -163,12 +163,14 @@ export async function POST(req: Request) {
       }
 
       const activeElection = activeElections[0];
-      const activeRound = activeElection.rounds.find(r => r.roundNumber === roundNumber);
+      const activeRound = activeElection.rounds.find(
+        r => r.roundNumber === roundNumber && r.status === 'ACTIVE'
+      );
 
       if (!activeRound) {
         return NextResponse.json({
           error: 'ELECTION_CONTEXT_MISMATCH',
-          message: 'O BU pertence a outro turno.',
+          message: 'O BU pertence a outro turno ou a um turno que não está ativo.',
           received: { plei: electionId, turn: roundNumber }
         }, { status: 400 });
       }

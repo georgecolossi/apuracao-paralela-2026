@@ -8,19 +8,16 @@ describe('Integração de Banco de Dados e Concorrência', () => {
   let roundId: string;
 
   beforeAll(async () => {
-    let election = await prisma.election.findFirst({ include: { rounds: true }});
-    if (!election) {
-      election = await prisma.election.create({
-        data: {
-          plei: 'INTEG',
-          name: 'Teste Concorrência',
-          year: 2026,
-          status: 'ACTIVE',
-          rounds: { create: [{ roundNumber: 1, status: 'ACTIVE' }] }
-        },
-        include: { rounds: true }
-      });
-    }
+    const election = await prisma.election.create({
+      data: {
+        plei: `INTEG-${Date.now()}`,
+        name: 'Teste Concorrência',
+        year: 2026,
+        status: 'ACTIVE',
+        rounds: { create: [{ roundNumber: 1, status: 'ACTIVE' }] }
+      },
+      include: { rounds: true }
+    });
     electionId = election.id;
     roundId = election.rounds[0].id;
   });

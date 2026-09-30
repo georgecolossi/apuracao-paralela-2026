@@ -50,3 +50,12 @@ Esta fase focou na correÃ§Ã£o de problemas operacionais identificados em auditor
 - **Testes UnitÃ¡rios/IntegraÃ§Ã£o**: Passando (84 tests in 8 suites)
 - **Testes E2E (Playwright)**: Passando (3 suites, cobrindo SimulaÃ§Ã£o, SintÃ©tico e Oficial).
 - **Cobertura Funcional**: ApuraÃ§Ã£o Paralela 100% pronta dentro do escopo estabelecido. O backend Ã© declarado operacional.
+
+## FINAL HOTFIX - Phase 5.3.1 (Engine Freeze)
+
+- **Requirement 1**: Descarte Silencioso de Votos Semânticos Inválidos foi corrigido no Tse2026SemanticParser.ts para retornar { code: 'INVALID_VOTE_DATA' } (com 100% de cobertura nos testes unitários em tests/tse2026-parser.test.ts). Fallback de NOMI e PART não ignora mais votos faltantes, reportando-os devidamente.
+- **Requirement 2**: Status de ROUND ACTIVE exigido obrigatoriamente. Modificado src/app/api/scan/route.ts para validar r.status === 'ACTIVE'. Testes incluídos em tests/election-context.test.ts.
+- **Requirement 3**: Validação End-to-End da Totalização Oficial. Expandido o arquivo de testes e2e/official-qrbu.spec.ts para bater em /api/totals após o processamento da fixture e comprovar agregação linha-a-linha de cada voto contra os dados extraídos pelo parser (garantindo que 100% da totalização do sistema é fidedigna).
+- **Requirement 4**: Regressões Opcionais de TS passadas. Build de NextJS validou o código sem erros. 
+- **Requirement 5**: Fixtures originais read-only do TSE 2026 foram preservadas integralmente. Hash é validado (VERIFIED).
+

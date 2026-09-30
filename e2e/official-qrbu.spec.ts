@@ -96,8 +96,40 @@ test.describe('E2E OFFICIAL FIXTURE', () => {
 
     // 7. Confirma que apareceu no Painel
     await page.goto('/apuracao');
-    // Deve mostrar o cargo respectivo ou quantidade (só precisamos verificar se carregou algo sem erro)
     await expect(page.locator('text=Apuração Paralela 2026')).toBeVisible();
+
+    // 7.1 Verificar agregação comparando com parsed.votes
+    const totalsResponse = await page.request.get('/api/totals');
+    expect(totalsResponse.status()).toBe(200);
+    const totalsBody = await totalsResponse.json();
+
+    const expectedAgg: Record<string, number> = {};
+    for (const v of parsed.votes) {
+      const officeName = v.officeName;
+      const candidateNumber = v.candidateNumber || null;
+      const partyNumber = v.partyNumber || null;
+      const voteType = v.type;
+      
+      const key = `${officeName}|${candidateNumber}|${partyNumber}|${voteType}`;
+      if (!expectedAgg[key]) expectedAgg[key] = 0;
+      expectedAgg[key] += v.quantity;
+    }
+
+    for (const [key, expectedQuantity] of Object.entries(expectedAgg)) {
+      const [oName, cNumStr, pNumStr, vType] = key.split('|');
+      const expectedCNum = cNumStr === 'null' ? null : cNumStr;
+      const expectedPNum = pNumStr === 'null' ? null : pNumStr;
+
+      const found = totalsBody.totals.find((t: any) => 
+        t.officeName === oName &&
+        (t.candidateNumber === expectedCNum || String(t.candidateNumber) === String(expectedCNum)) &&
+        (t.partyNumber === expectedPNum || String(t.partyNumber) === String(expectedPNum)) &&
+        t.voteType === vType
+      );
+      
+      expect(found, `Expected to find total for ${key}`).toBeDefined();
+      expect(found.quantity, `Quantity mismatch for ${key}`).toBe(expectedQuantity);
+    }
 
     // 8. Tentar duplicar deve rejeitar
     const duplicateScan = await page.request.post('/api/scan', {

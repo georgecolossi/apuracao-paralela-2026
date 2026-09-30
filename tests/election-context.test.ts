@@ -5,9 +5,19 @@ const prisma = new PrismaClient();
 
 describe('Election Context Resolution', () => {
   beforeAll(async () => {
-    // Limpar state anterior
-    await prisma.electionRound.deleteMany({});
-    await prisma.election.deleteMany({});
+    // Não limpa banco para evitar quebrar testes em paralelo, limpa apenas os específicos
+    await prisma.ballotVote.deleteMany({
+      where: { report: { election: { plei: { in: ['PLEI-A', 'PLEI-STATUS', 'PLEI-INEXISTENTE', 'PLEI-AMBIGUO'] } } } }
+    });
+    await prisma.ballotReport.deleteMany({
+      where: { election: { plei: { in: ['PLEI-A', 'PLEI-STATUS', 'PLEI-INEXISTENTE', 'PLEI-AMBIGUO'] } } }
+    });
+    await prisma.electionRound.deleteMany({
+      where: { election: { plei: { in: ['PLEI-A', 'PLEI-STATUS', 'PLEI-INEXISTENTE', 'PLEI-AMBIGUO'] } } }
+    });
+    await prisma.election.deleteMany({
+      where: { plei: { in: ['PLEI-A', 'PLEI-STATUS', 'PLEI-INEXISTENTE', 'PLEI-AMBIGUO'] } }
+    });
 
     // Eleição A
     const electionA = await prisma.election.create({
@@ -41,7 +51,7 @@ describe('Election Context Resolution', () => {
     if (activeElections.length > 1) return { error: 'CONFIGURATION_ERROR' };
 
     const activeElection = activeElections[0];
-    const activeRound = activeElection.rounds.find(r => r.roundNumber === turn);
+    const activeRound = activeElection.rounds.find(r => r.roundNumber === turn && r.status === 'ACTIVE');
 
     if (!activeRound) return { error: 'ELECTION_CONTEXT_MISMATCH_TURN' };
     
@@ -66,5 +76,25 @@ describe('Election Context Resolution', () => {
   it('deve falhar de maneira previsível caso múltiplas eleições dividam o mesmo PLEI ACTIVE', async () => {
     const res = await mockApiScanResolveContext('PLEI-AMBIGUO', 1);
     expect(res.error).toBe('CONFIGURATION_ERROR');
+  });
+
+  describe('Round Status', () => {
+    beforeAll(async () => {
+      const elStatus = await prisma.election.create({
+        data: { plei: 'PLEI-STATUS', name: 'Eleição Status', year: 2026, status: 'ACTIVE' }
+      });
+      await prisma.electionRound.create({ data: { electionId: elStatus.id, roundNumber: 1, status: 'FINISHED' } });
+      await prisma.electionRound.create({ data: { electionId: elStatus.id, roundNumber: 2, status: 'ACTIVE' } });
+    });
+
+    it('TURN 1 (FINISHED) deve ser rejeitado', async () => {
+      const res = await mockApiScanResolveContext('PLEI-STATUS', 1);
+      expect(res.error).toBe('ELECTION_CONTEXT_MISMATCH_TURN');
+    });
+
+    it('TURN 2 (ACTIVE) deve ser aceito', async () => {
+      const res = await mockApiScanResolveContext('PLEI-STATUS', 2);
+      expect(res.success).toBe(true);
+    });
   });
 });
