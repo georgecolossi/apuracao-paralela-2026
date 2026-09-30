@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { prisma } from '@/lib/db';
-import { ScanLine, LayoutDashboard, Users, FileText, CheckCircle2, AlertCircle, Clock, Search, RotateCcw, ShieldCheck, Download } from 'lucide-react';
+import { ScanLine, LayoutDashboard, Users, FileText, CheckCircle2, AlertCircle, Clock, Search, RotateCcw, ShieldCheck, Download, Trash2 } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 
@@ -132,14 +132,14 @@ export default async function AdminDashboard() {
         </div>
 
         {/* Quick Links */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <Link href="/admin/conferencia" className="bg-white border border-slate-200 p-4 rounded-xl text-center hover:bg-slate-50 transition-colors flex flex-col items-center gap-2 group">
             <Search className="w-5 h-5 text-slate-400 group-hover:text-indigo-500 transition-colors" />
             <span className="font-bold text-xs uppercase tracking-wider text-slate-600 group-hover:text-slate-900">Conferência Global</span>
           </Link>
           <Link href="/admin/recalcular" className="bg-white border border-slate-200 p-4 rounded-xl text-center hover:bg-slate-50 transition-colors flex flex-col items-center gap-2 group">
             <RotateCcw className="w-5 h-5 text-slate-400 group-hover:text-indigo-500 transition-colors" />
-            <span className="font-bold text-xs uppercase tracking-wider text-slate-600 group-hover:text-slate-900">Recalcular Apuração</span>
+            <span className="font-bold text-xs uppercase tracking-wider text-slate-600 group-hover:text-slate-900">Integridade</span>
           </Link>
           <Link href="/admin/audit" className="bg-white border border-slate-200 p-4 rounded-xl text-center hover:bg-slate-50 transition-colors flex flex-col items-center gap-2 group">
             <ShieldCheck className="w-5 h-5 text-slate-400 group-hover:text-indigo-500 transition-colors" />
@@ -149,7 +149,13 @@ export default async function AdminDashboard() {
             <Download className="w-5 h-5 text-slate-400 group-hover:text-indigo-500 transition-colors" />
             <span className="font-bold text-xs uppercase tracking-wider text-slate-600 group-hover:text-slate-900">Exportar CSV</span>
           </Link>
+
+          <Link href="/admin/preparar" className="bg-white border border-slate-200 p-4 rounded-xl text-center hover:bg-red-50 transition-colors flex flex-col items-center gap-2 group">
+            <Trash2 className="w-5 h-5 text-red-400 group-hover:text-red-600 transition-colors" />
+            <span className="font-bold text-xs uppercase tracking-wider text-red-600 group-hover:text-red-700">Zerar</span>
+          </Link>
         </div>
+
       </main>
     </div>
   );

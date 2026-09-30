@@ -97,7 +97,7 @@ test.describe('E2E OFFICIAL FIXTURE', () => {
 
     // 7. Confirma que apareceu no Painel
     await page.goto('/apuracao');
-    await expect(page.locator('text=Apuração Paralela 2026')).toBeVisible();
+    await expect(page.locator('text=Apuração Paralela — Concórdia e Região')).toBeVisible();
 
     // 7.1 Verificar agregação comparando com parsed.votes
     const totalsResponse = await page.request.get('/api/totals');

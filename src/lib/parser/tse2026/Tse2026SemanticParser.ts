@@ -16,6 +16,18 @@ export class Tse2026SemanticParser {
       'ASSI', 'CERT', 'VRQR'
     ];
 
+    const officeMap: Record<string, string> = {
+      '1': 'Presidente',
+      '3': 'Governador',
+      '5': 'Senador',
+      '6': 'Deputado Federal',
+      '7': 'Deputado Estadual',
+      '11': 'Prefeito',
+      '13': 'Vereador'
+    };
+    
+    const getOfficeName = (code: string) => officeMap[code] || `Cargo não identificado (código ${code})`;
+
     let currentOfficeCode = '';
     let currentPartyCode = '';
     const votes: Array<{ officeName: string; candidateNumber?: string; partyNumber?: string; type: 'NOMINAL' | 'LEGENDA' | 'BRANCO' | 'NULO'; quantity: number }> = [];
@@ -38,7 +50,7 @@ export class Tse2026SemanticParser {
         if (token.value.includes(',')) {
           // Fallback para testes sintéticos antigos
           const [part, partVotes] = token.value.split(',');
-          votes.push({ officeName: `Cargo ${currentOfficeCode}`, partyNumber: part, type: 'LEGENDA', quantity: parseInt(partVotes, 10) });
+          votes.push({ officeName: getOfficeName(currentOfficeCode), partyNumber: part, type: 'LEGENDA', quantity: parseInt(partVotes, 10) });
         } else {
           currentPartyCode = token.value;
         }
@@ -46,24 +58,24 @@ export class Tse2026SemanticParser {
         // Fallback para testes sintéticos antigos
         if (token.value.includes(',')) {
           const [cand, candVotes] = token.value.split(',');
-          votes.push({ officeName: `Cargo ${currentOfficeCode}`, candidateNumber: cand, type: 'NOMINAL', quantity: parseInt(candVotes, 10) });
+          votes.push({ officeName: getOfficeName(currentOfficeCode), candidateNumber: cand, type: 'NOMINAL', quantity: parseInt(candVotes, 10) });
         }
       } else if (token.key === 'LEGP') {
         // Voto de legenda
         votes.push({
-          officeName: `Cargo ${currentOfficeCode}`,
+          officeName: getOfficeName(currentOfficeCode),
           partyNumber: currentPartyCode,
           type: 'LEGENDA',
           quantity: parseInt(token.value, 10)
         });
       } else if (token.key === 'BRAN') {
-        votes.push({ officeName: `Cargo ${currentOfficeCode}`, type: 'BRANCO', quantity: parseInt(token.value, 10) });
+        votes.push({ officeName: getOfficeName(currentOfficeCode), type: 'BRANCO', quantity: parseInt(token.value, 10) });
       } else if (token.key === 'NULO') {
-        votes.push({ officeName: `Cargo ${currentOfficeCode}`, type: 'NULO', quantity: parseInt(token.value, 10) });
+        votes.push({ officeName: getOfficeName(currentOfficeCode), type: 'NULO', quantity: parseInt(token.value, 10) });
       } else if (/^\d+$/.test(token.key)) {
         // Se a chave for apenas números, é um candidato! (ex: 9202:1)
         votes.push({
-          officeName: `Cargo ${currentOfficeCode}`,
+          officeName: getOfficeName(currentOfficeCode),
           candidateNumber: token.key,
           partyNumber: currentPartyCode ? currentPartyCode : undefined,
           type: 'NOMINAL',

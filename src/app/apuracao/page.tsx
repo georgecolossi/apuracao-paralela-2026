@@ -135,7 +135,7 @@ export default function ApuracaoPage() {
           <div className="flex items-center gap-3">
             <Archive className="text-indigo-400 w-6 h-6 hidden sm:block" />
             <h1 className="text-xl md:text-2xl font-black text-white tracking-tight uppercase">
-              Apuração Paralela <span className="text-indigo-400">2026</span>
+              Apuração Paralela — Concórdia e Região
             </h1>
           </div>
           

@@ -115,6 +115,30 @@ export async function POST(req: Request) {
     const { buildBallotReportIdentity } = await import('@/lib/identity');
     // Determina DeterministicID real a partir do parser
     const { electionId, roundNumber, stateCode, cityCode, zoneCode, sectionCode, urnCode } = reportData;
+
+    // Checagem de Escopo Geográfico (Cobertura Regional)
+    const coverageCities = process.env.COVERAGE_CITY_CODES 
+      ? process.env.COVERAGE_CITY_CODES.split(',').map(c => c.trim()) 
+      : [];
+    
+    if (coverageCities.length > 0 && !coverageCities.includes(cityCode)) {
+      // Registrar tentativa fora de cobertura
+      await prisma.auditLog.create({
+        data: {
+          action: 'SCAN_OUT_OF_COVERAGE',
+          result: 'REJECTED',
+          identifiers: `City: ${cityCode}, Zone: ${zoneCode}, Sec: ${sectionCode}`,
+          errors: 'Município fora da área de cobertura configurada.',
+          userId: operatorId
+        }
+      });
+
+      return NextResponse.json({
+        error: 'OUT_OF_COVERAGE',
+        message: 'Este Boletim de Urna pertence a um município fora da área de cobertura configurada.'
+      }, { status: 403 });
+    }
+
     const deterministicId = buildBallotReportIdentity({ 
       plei: electionId, 
       turn: String(roundNumber), 

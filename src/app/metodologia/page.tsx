@@ -74,7 +74,7 @@ export default function MetodologiaPage() {
                   </div>
                   <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl">
                     <h3 className="font-bold text-slate-900 uppercase tracking-wide text-xs mb-1">Brancos e Nulos</h3>
-                    <p className="text-sm">Contabilizados separadamente, conforme ditames eleitorais, não compondo o percentual de votos válidos para declaração de vitória.</p>
+                    <p className="text-sm">Contabilizados separadamente, conforme ditames eleitorais, não compondo o percentual de votos válidos da apuração paralela.</p>
                   </div>
                   <div className="bg-slate-50 border border-slate-200 p-4 rounded-xl sm:col-span-2">
                     <h3 className="font-bold text-slate-900 uppercase tracking-wide text-xs mb-1">Comparecimento</h3>
@@ -97,7 +97,7 @@ export default function MetodologiaPage() {
                   Tratamento de Duplicidades
                 </h2>
                 <p className="leading-relaxed">
-                  O sistema é blindado arquiteturalmente contra <em className="text-slate-900 font-medium">&quot;Double Count&quot;</em>. Caso dois operadores bipem o mesmo Boletim de Urna em cidades diferentes simultaneamente, a plataforma aplica um algoritmo de <strong className="text-slate-900">Constraint Atômica (Deterministic ID)</strong> baseado na Hash combinada de UF, Município, Zona, Seção e Código de Urna. Apenas a primeira operação é aceita, a segunda recebe um erro de conflito amigável e é isolada (<span className="text-red-700 bg-red-50 font-bold px-1.5 py-0.5 rounded text-sm">DUPLICADO</span>).
+                  O sistema utiliza identificação determinística e restrições de unicidade para impedir a contabilização duplicada de um mesmo BU nos fluxos cobertos pela implementação. Caso dois operadores bipem o mesmo Boletim de Urna em cidades diferentes simultaneamente, a plataforma aplica um algoritmo de <strong className="text-slate-900">Constraint Atômica (Deterministic ID)</strong> baseado na Hash combinada de UF, Município, Zona, Seção e Código de Urna. Apenas a primeira operação é aceita, a segunda recebe um erro de conflito amigável e é isolada (<span className="text-red-700 bg-red-50 font-bold px-1.5 py-0.5 rounded text-sm">DUPLICADO</span>).
                 </p>
               </div>
             </section>
@@ -114,7 +114,7 @@ export default function MetodologiaPage() {
                   Modo de Simulação
                 </h2>
                 <p className="leading-relaxed">
-                  Para auditorias técnicas de fluxo, a plataforma pode operar em <strong className="text-slate-900">MODO SIMULAÇÃO</strong>. Boletins escaneados com sintaxe sintética exibem um banner de alerta inquestionável e são guardados em namespace isolado no banco de dados (<code className="text-xs bg-slate-100 px-1.5 py-0.5 rounded text-slate-800 font-bold border border-slate-200">isSimulation = true</code>). Eles <strong className="text-slate-900 border-b border-indigo-300">jamais</strong> interagem ou contaminam a matemática da eleição real pública.
+                  Para auditorias técnicas de fluxo, a plataforma pode operar em <strong className="text-slate-900">MODO SIMULAÇÃO</strong>. Boletins escaneados com sintaxe sintética exibem um banner de alerta inquestionável e são guardados em namespace isolado no banco de dados (<code className="text-xs bg-slate-100 px-1.5 py-0.5 rounded text-slate-800 font-bold border border-slate-200">isSimulation = true</code>). Eles não interagem ou contaminam a matemática da eleição real pública.
                 </p>
               </div>
             </section>
