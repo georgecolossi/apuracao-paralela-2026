@@ -13,7 +13,7 @@ export async function POST(req: Request) {
     }
 
     const { content, isSimulation = false, sessionId } = await req.json();
-    const operatorId = auth.user?.userId || '';
+    const operatorId = auth.user.userId;
 
     const parser = isSimulation ? new Tse2026SimulationParser() : new Tse2026BallotReportParser();
 

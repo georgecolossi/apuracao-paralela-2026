@@ -25,7 +25,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         data: {
           action: 'CANCEL_BU',
           reportId: report.id,
-          userId: auth.user?.userId || '',
+          userId: auth.user.userId,
           result: 'SUCCESS',
           previousStatus: 'PENDENTE_CONFIRMACAO',
           newStatus: 'CANCELADO'
