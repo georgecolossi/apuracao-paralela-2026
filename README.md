@@ -18,12 +18,12 @@ A configuração da lista exata dos municípios da região será definida poster
 - **Reconstrução Multipart**: Suporte a BUs impressos em vários fragmentos/QR Codes.
 - **Parser Semântico**: Classificação dos votos por cargo (nominais, legenda, nulos, brancos).
 - **Identidade Determinística**: Identificação rigorosa do BU a partir de suas variáveis espaciais.
-- **Deduplicação**: Proteção total contra a dupla contabilização do mesmo BU.
+- **Deduplicação**: Rejeição de BUs já registrados com base na identidade determinística utilizada pelo sistema.
 - **Conferência Administrativa**: Painel restrito para inspecionar o BU antes da consolidação.
-- **Confirmação e Totalização**: Somatório oficial de votos.
+- **Confirmação e Totalização**: Consolidação dos votos processados pela apuração paralela.
 - **Painel Público**: Interface pública para acompanhamento regional consolidado.
 - **SSE (Server-Sent Events)**: Atualização do painel em tempo real.
-- **Logs de Auditoria**: Registro imutável das principais operações administrativas.
+- **Logs de Auditoria**: Registro de eventos e operações administrativas relevantes.
 - **Modo de Simulação**: Via QR codes de teste isolados da apuração principal.
 - **Cobertura Geográfica**: Bloqueio de BUs de municípios fora da área de interesse.
 - **Preparação/Reset**: Ferramenta destrutiva autenticada para zerar o banco antes da apuração real.
@@ -38,9 +38,9 @@ O ciclo de vida de um Boletim de Urna no sistema ocorre da seguinte maneira:
 4. Ocorre a **Identificação e deduplicação** para rejeitar BUs já registrados.
 5. O operador visualiza o resultado em tela de **Conferência**.
 6. Executa-se a **Confirmação** manual dos dados.
-7. O sistema executa a **Persistência** isolada no banco de dados.
+7. O sistema executa a **Persistência** no banco de dados.
 8. O sistema realiza a **Totalização** atualizada para todos os BUs processados.
-9. Os dados atualizados são enviados imediatamente via SSE ao **Painel público**.
+9. O **Painel público** utiliza SSE para receber sinalizações de atualização e consultar os totais.
 
 ## Boletim de Urna e QRBU
 O sistema trabalha estritamente com a especificação QRBU em formato textual, muitas vezes particionados (multipart) devido às restrições de densidade óptica da impressão.
@@ -72,12 +72,12 @@ A resolução `número → nome → partido/sigla` será adicionada posteriormen
 **Importante**: Como decisão de produto, o sistema não utilizará e não armazenará fotografias de candidatos. A apresentação futura utilizará apenas nome, número e partido/sigla.
 
 ## Integridade e validação
-- **Parsing**: Todo payload é dissecado estruturalmente, e campos vitais ausentes ou corrompidos paralisam o fluxo.
+- **Parsing**: Todo payload é dissecado estruturalmente, e campos obrigatórios/reconhecidos necessários ao processamento ausentes ou corrompidos paralisam o fluxo.
 - **Validação de Hash (Integridade)**: A validação implementada nesta versão contempla a verificação de integridade via HASH. O código computa o hash (SHA-512) dos fragmentos textuais reconstruídos e o compara com o hash registrado pelo próprio QRBU.
 - **Assinatura Digital**: UNAVAILABLE / NÃO IMPLEMENTADA. O sistema valida apenas integridade de parsing e estrutura (Hash). A verificação da criptografia assimétrica da Justiça Eleitoral não faz parte do atual pipeline de processamento.
 
 ## Identificação e deduplicação
-A identidade determinística do Boletim de Urna garante proteção contra duplicidade em qualquer cenário.
+A identidade determinística do Boletim de Urna permite que o sistema rejeite tentativas de múltiplos registros.
 Um identificador global é gerado utilizando: `PLEI` + `TURN` + `ESTADO` + `MUNI` + `ZONA` + `SEÇÃO` + `CÓDIGO DA URNA`.
 
 Se um QRBU correspondente a este identificador for escaneado em uma tentativa posterior, o sistema acusa o status **DUPLICADO** (HTTP 409) e ignora a operação preservando os dados originais e evitando o retrabalho.
@@ -94,7 +94,7 @@ Para evitar o registro de urnas distantes da área de foco do portal da apuraç�
 ## Modo de simulação
 Com foco em possibilitar testes operacionais durante o dia da eleição antes da abertura das urnas, a arquitetura distingue BUs oficiais de _BUs de simulação_ via a flag `isSimulation`.
 
-Se for acionado o fluxo de simulação, um prefixo virtual `SIM-` será atrelado àquela eleição no registro e no código da urna, isolando os relatórios perfeitamente das totalizações originais baseadas em payloads oficias (pleitos e seções ativas), mas mantendo-os auditáveis no painel administrativo.
+Se for acionado o fluxo de simulação, um prefixo virtual `SIM-` será atrelado àquela eleição no registro e no código da urna, garantindo que os dados de simulação sejam excluídos da totalização pública, mas continuem disponíveis para os fluxos administrativos pertinentes.
 
 ## Preparação para a apuração real
 Uma operação destrutiva está presente sob a rota administrativa `/admin/preparar` para realizar a higiene final do banco de dados antes da apuração.
@@ -102,7 +102,7 @@ Uma operação destrutiva está presente sob a rota administrativa `/admin/prepa
 - Requer permissão restrita de ADMIN.
 - Exige inserção literal do texto `ZERAR APURAÇÃO` para confirmação destrutiva.
 - Executa limpeza transacional que exclui resultados, votos, sessões de scan e relatórios (reports).
-- Preserva perfeitamente a configuração estrutural conforme implementação (eleições e turnos mantêm seus IDs originais).
+- Preserva as configurações estruturais de eleições e turnos definidas no banco de dados.
 - Após o processo, uma entrada `SYSTEM_RESET` é incluída na tabela `AuditLog`.
 
 ## Arquitetura
@@ -140,7 +140,7 @@ external-fixtures/ # Arquivos brutos de payloads oficiais do TSE (testes)
 | `/admin/conferir/[id]` | Formulário para revisão final do resultado lido | ADMIN / OPERATOR |
 | `/admin/conferencia` | Listagem global para auditoria visual de resultados | ADMIN / OPERATOR |
 | `/admin/audit` | Timeline centralizada de acessos, erros e atividades | ADMIN / OPERATOR |
-| `/admin/recalcular` | Ferramenta administrativa para forçar consolidação | ADMIN / OPERATOR |
+| `/admin/recalcular` | Página informativa sobre a integridade da totalização | ADMIN / OPERATOR |
 | `/admin/preparar` | Interface destrutiva para resetar sistema | ADMIN |
 | `/metodologia` | Página contendo contexto explicativo | Público |
 
@@ -186,7 +186,7 @@ A suite foi construída baseando-se em testes exaustivos e isolados com Playwrig
 ## Fixtures TSE 2026
 Os diretórios de testes (`tests/` e `external-fixtures/`) hospedam exemplos baseados nas normativas.
 
-- **Fixtures OFICIAIS**: Cópias transcritas publicadas pelo Tribunal Superior Eleitoral em manuais de testes que refletem estrutura válida para simulações completas E2E.
+- **Fixtures OFICIAIS**: Exemplos/fixtures provenientes do pacote oficial do TSE (manuais de testes) que refletem estrutura válida para simulações completas E2E.
 - **Fixtures SINTÉTICAS**: Utilizadas para forçar testes lógicos e simulações focando primariamente no motor semântico em vez de integridade algorítmica real.
 
 ## Segurança
