@@ -221,3 +221,22 @@ model ProcessingError {
   metadata       String?
   createdAt      DateTime @default(now())
 }
+
+model CandidateMetadata {
+  id                String   @id @default(uuid())
+  candidateSequence String   @unique // SQ_CANDIDATO
+  electionYear      Int      // ANO_ELEICAO
+  electionCode      String   // CD_ELEICAO
+  round             Int      // NR_TURNO
+  state             String   // SG_UF
+  officeCode        String   // CD_CARGO
+  officeName        String   // DS_CARGO
+  candidateNumber   String   // NR_CANDIDATO
+  ballotName        String   // NM_URNA_CANDIDATO
+  partyNumber       String   // NR_PARTIDO
+  partyAbbreviation String   // SG_PARTIDO
+  partyName         String   // NM_PARTIDO
+  source            String?
+  importedAt        DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}

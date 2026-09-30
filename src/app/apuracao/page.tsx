@@ -9,6 +9,9 @@ interface TotalItem {
   partyNumber?: string | null;
   voteType: string;
   quantity: number;
+  metadataStatus?: string;
+  candidateName?: string;
+  partyAbbreviation?: string;
 }
 
 interface TotalsData {
@@ -97,7 +100,7 @@ export default function ApuracaoPage() {
     let brancos = 0;
     let nulos = 0;
     
-    const candidateMap = new Map<string, { candidateNumber: string; partyNumber: string; quantity: number }>();
+    const candidateMap = new Map<string, { candidateNumber: string; partyNumber: string; quantity: number; candidateName?: string; partyAbbreviation?: string; metadataStatus?: string; voteType: string; }>();
 
     for (const v of officeVotes) {
       if (v.voteType === 'BRANCO') brancos += v.quantity;
@@ -113,7 +116,11 @@ export default function ApuracaoPage() {
           candidateMap.set(key, {
             candidateNumber: v.voteType === 'LEGENDA' ? `Legenda ${v.partyNumber}` : (v.candidateNumber || '-'),
             partyNumber: v.partyNumber || '-',
-            quantity: v.quantity
+            quantity: v.quantity,
+            candidateName: v.candidateName,
+            partyAbbreviation: v.partyAbbreviation,
+            metadataStatus: v.metadataStatus,
+            voteType: v.voteType
           });
         }
       }
@@ -271,10 +278,15 @@ export default function ApuracaoPage() {
                           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 z-10">
                             <div className="flex-1 pl-3">
                               <h3 className="text-2xl md:text-3xl font-black text-slate-900 leading-none">
-                                {cand.candidateNumber}
+                                {cand.candidateName || (cand.voteType === 'LEGENDA' ? `Voto de Legenda` : 'Nome não identificado')}
                               </h3>
-                              <p className="text-sm font-semibold text-slate-500 uppercase tracking-wider mt-1.5">
-                                Partido {cand.partyNumber}
+                              <p className="text-sm font-semibold text-slate-500 uppercase tracking-wider mt-1.5 flex items-center gap-2">
+                                <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded border border-slate-200">{cand.candidateNumber}</span>
+                                {cand.partyAbbreviation ? (
+                                  <span>{cand.partyAbbreviation}</span>
+                                ) : (
+                                  <span>Partido {cand.partyNumber}</span>
+                                )}
                               </p>
                             </div>
                             

@@ -10,7 +10,8 @@
     "test": "vitest run --exclude e2e",
     "test:unit": "vitest run --exclude e2e",
     "test:e2e": "playwright test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "import:candidates": "tsx scripts/import-candidates.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
