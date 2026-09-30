@@ -22,6 +22,9 @@ export default function ApuracaoPage() {
     fetchTotals();
 
     const evtSource = new EventSource('/api/realtime');
+    evtSource.onopen = () => {
+      fetchTotals();
+    };
     evtSource.onmessage = (event) => {
       const data = JSON.parse(event.data);
       if (data.type === 'BU_PROCESSED') {

@@ -21,9 +21,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Credenciais inválidas' }, { status: 401 });
   }
 
+  const { getJwtSecret } = require('@/lib/auth');
   const token = jwt.sign(
     { userId: user.id, role: user.role },
-    process.env.JWT_SECRET || 'fallback_inseguro_local',
+    getJwtSecret(),
     { expiresIn: '8h' }
   );
 

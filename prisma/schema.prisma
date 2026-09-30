@@ -9,6 +9,7 @@ generator client {
 
 model Election {
   id          String   @id @default(uuid())
+  plei        String?
   name        String
   year        Int
   description String?

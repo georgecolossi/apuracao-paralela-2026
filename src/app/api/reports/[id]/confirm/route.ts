@@ -27,6 +27,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
         data: {
           action: 'CONFIRM_BU',
           reportId: report.id,
+          userId: auth.user.userId,
           result: 'SUCCESS',
           previousStatus: 'PENDENTE_CONFIRMACAO',
           newStatus: 'PROCESSADO'

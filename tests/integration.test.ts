@@ -12,6 +12,7 @@ describe('Integração de Banco de Dados e Concorrência', () => {
     if (!election) {
       election = await prisma.election.create({
         data: {
+          plei: 'INTEG',
           name: 'Teste Concorrência',
           year: 2026,
           status: 'ACTIVE',

@@ -19,10 +19,9 @@ describe('TSE 2026 Official Fixtures Integration', () => {
   });
 
   it('deve validar todas as fixtures oficiais em disco', () => {
-    if (examples.length === 0) {
-      console.warn('Nenhuma fixture oficial encontrada no diretório de testes.');
-      return;
-    }
+    expect(examples.length).toBeGreaterThan(0);
+
+    let processedCount = 0;
 
     for (const example of examples) {
       const decodedDir = path.join(examplesDir, example, 'decoded');
@@ -33,6 +32,8 @@ describe('TSE 2026 Official Fixtures Integration', () => {
       const partsPayloads = files.map(file => {
         return fs.readFileSync(path.join(decodedDir, file), 'utf8').trim();
       });
+
+      expect(partsPayloads.length).toBeGreaterThan(0);
 
       const full = parser.reconstruct(partsPayloads);
       expect(typeof full).toBe('string');
@@ -48,7 +49,12 @@ describe('TSE 2026 Official Fixtures Integration', () => {
         expect(parsed.votes.length).toBeGreaterThan(0);
         expect(parsed.electionId).toBeDefined();
         expect(parsed.urnCode).toBeDefined();
+        
+        console.log(`- ${example} | Parts: ${partsPayloads.length} | Parse: PASS | Hash: ${parsed.hashStatus} | Votes: ${parsed.votes.length}`);
+        processedCount++;
       }
     }
+    
+    console.log(`\nResult: ${processedCount}/${examples.length} fixtures oficiais processadas.`);
   });
 });

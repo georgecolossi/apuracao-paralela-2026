@@ -142,15 +142,43 @@ export async function POST(req: Request) {
     // Tentar criar via Transação para previnir condição de corrida exata no mesmo milissegundo.
     let reportId: string;
     try {
-      const activeElection = await prisma.election.findFirst({ where: { status: 'ACTIVE' }, include: { rounds: true }});
-      const activeRound = activeElection?.rounds[0]?.id || 'unknown';
+      const activeElections = await prisma.election.findMany({
+        where: { plei: electionId, status: 'ACTIVE' },
+        include: { rounds: true }
+      });
+
+      if (activeElections.length === 0) {
+        return NextResponse.json({
+          error: 'ELECTION_CONTEXT_MISMATCH',
+          message: 'O BU pertence a outro pleito não configurado ou inativo.',
+          received: { plei: electionId, turn: roundNumber }
+        }, { status: 400 });
+      }
+
+      if (activeElections.length > 1) {
+        return NextResponse.json({
+          error: 'CONFIGURATION_ERROR',
+          message: 'Múltiplas eleições ativas para o mesmo pleito.',
+        }, { status: 500 });
+      }
+
+      const activeElection = activeElections[0];
+      const activeRound = activeElection.rounds.find(r => r.roundNumber === roundNumber);
+
+      if (!activeRound) {
+        return NextResponse.json({
+          error: 'ELECTION_CONTEXT_MISMATCH',
+          message: 'O BU pertence a outro turno.',
+          received: { plei: electionId, turn: roundNumber }
+        }, { status: 400 });
+      }
 
       const result = await prisma.$transaction(async (tx) => {
         const newReport = await tx.ballotReport.create({
           data: {
             deterministicId,
-            electionId: activeElection?.id || reportData.electionId,
-            roundId: activeRound,
+            electionId: activeElection.id,
+            roundId: activeRound.id,
             stateCode,
             cityCode,
             zoneCode,

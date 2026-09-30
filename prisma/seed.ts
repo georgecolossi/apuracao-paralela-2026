@@ -18,7 +18,7 @@ async function main() {
     });
   }
 
-  const electionDb = await prisma.election.findFirst();
+  const electionDb = await prisma.election.findFirst({ where: { plei: '123' }});
   if (electionDb) {
     console.log('Seed already ran.');
     return;
@@ -26,6 +26,7 @@ async function main() {
 
   const election = await prisma.election.create({
     data: {
+      plei: '123',
       name: 'Eleições Gerais 2026',
       year: 2026,
       description: 'Eleição para Presidente, Governador, Senador, Deputado Federal e Estadual',

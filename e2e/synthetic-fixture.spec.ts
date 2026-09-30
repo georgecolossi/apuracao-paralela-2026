@@ -7,8 +7,21 @@ test.describe('TSE 2026 SYNTHETIC FIXTURE E2E', () => {
     // Limpa o BU caso já exista de execuções anteriores, pois a identidade é determinística e a fixture é constante
     const { PrismaClient } = require('@prisma/client');
     const prisma = new PrismaClient();
-    await prisma.ballotReport.deleteMany({
-      where: { deterministicId: '123-1-SP-71072-0001-0001-1234567' }
+    await prisma.ballotVote.deleteMany({});
+    await prisma.ballotReportPart.deleteMany({});
+    await prisma.ballotReport.deleteMany({});
+    await prisma.scanSession.deleteMany({});
+    await prisma.electionRound.deleteMany({});
+    await prisma.election.deleteMany({});
+
+    await prisma.election.create({
+      data: {
+        plei: '123',
+        name: 'Eleição Synthetic 123',
+        year: 2026,
+        status: 'ACTIVE',
+        rounds: { create: [{ roundNumber: 1, status: 'ACTIVE' }] }
+      }
     });
     await prisma.$disconnect();
   });

@@ -11,7 +11,7 @@ describe('Simulation Isolation', () => {
 
   beforeAll(async () => {
     const election = await prisma.election.create({
-      data: { name: 'Eleição Teste Simulação', year: 2026, status: 'ACTIVE' }
+      data: { plei: '789', name: 'Eleição Teste Simulação', year: 2026, status: 'ACTIVE' }
     });
     electionId = election.id;
 
@@ -37,7 +37,7 @@ describe('Simulation Isolation', () => {
 
   async function insertBU(urnCode: string, quantity: number, isSimulation: boolean) {
     const deterministicId = buildBallotReportIdentity({
-      plei: electionId, turn: roundId, stateCode: 'BR', cityCode: 'BR', zoneCode: '0001', sectionCode: '0001', urnCode
+      plei: '789', turn: '1', stateCode: 'BR', cityCode: 'BR', zoneCode: '0001', sectionCode: '0001', urnCode
     });
 
     const report = await prisma.ballotReport.create({

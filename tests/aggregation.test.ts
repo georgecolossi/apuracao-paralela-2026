@@ -12,7 +12,7 @@ describe('Totalization and Aggregation Service', () => {
   beforeAll(async () => {
     // Setup Election
     const election = await prisma.election.create({
-      data: { name: 'Eleição Teste Agregação', year: 2026, status: 'ACTIVE' }
+      data: { plei: '456', name: 'Eleição Teste Agregação', year: 2026, status: 'ACTIVE' }
     });
     electionId = election.id;
 
@@ -38,7 +38,7 @@ describe('Totalization and Aggregation Service', () => {
 
   async function insertBU(urnCode: string, votes: any[]) {
     const deterministicId = buildBallotReportIdentity({
-      plei: electionId, turn: roundId, stateCode: 'BR', cityCode: 'BR', zoneCode: '0001', sectionCode: '0001', urnCode
+      plei: '456', turn: '1', stateCode: 'BR', cityCode: 'BR', zoneCode: '0001', sectionCode: '0001', urnCode
     });
 
     const report = await prisma.ballotReport.create({

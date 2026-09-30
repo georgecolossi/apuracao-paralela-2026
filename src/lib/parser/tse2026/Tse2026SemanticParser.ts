@@ -4,20 +4,31 @@ import { BallotReportData, ParseError } from '../index';
 export class Tse2026SemanticParser {
   parse(tokens: Tse2026QrToken[]): BallotReportData | ParseError {
     const map = new Map<string, string>();
-    const unknownFields: string[] = [];
-
-    // Votos podem repetir a chave VOTO multiplas vezes, mas no QR TSE usual
-    // a lista de votos vem agrupada ou iterada.
-    // O padrão TSE comum para cargo é CARG:<codigo> seguido de PART:<num> ou NOMI:<cand>,<votos>
-    // Vamos processar token a token, com estado de cargo atual.
+    const unknownFields = new Set<string>();
     
+    // Known structural fields in TSE 2026
+    const knownFields = [
+      'ORIG', 'ORLC', 'PROC', 'DTPL', 'PLEI', 'TURN', 'FASE', 'UNFE', 
+      'MUNI', 'ZONA', 'SECA', 'AGRE', 'IDUE', 'IDCA', 'VERS', 'LOCA', 
+      'APTO', 'COMP', 'FALT', 'HBBM', 'HBBG', 'HBSB', 'DTAB', 'HRAB', 
+      'DTFC', 'HRFC', 'IDEL', 'CARG', 'TIPO', 'VERC', 'PART', 'NOMI', 
+      'LEGP', 'BRAN', 'NULO', 'TOTC', 'APTA', 'APTS', 'APTT', 'HASH', 
+      'ASSI', 'CERT', 'VRQR'
+    ];
+
     let currentOfficeCode = '';
     let currentPartyCode = '';
     const votes: any[] = [];
 
     for (const token of tokens) {
-      if (/^[A-Z]+$/.test(token.key) && !['CARG', 'PART', 'LEGP', 'BRAN', 'NULO'].includes(token.key)) {
-        map.set(token.key, token.value);
+      if (/^[A-Z]+$/.test(token.key)) {
+        if (!['CARG', 'PART', 'LEGP', 'BRAN', 'NULO'].includes(token.key)) {
+          map.set(token.key, token.value);
+        }
+        
+        if (!knownFields.includes(token.key)) {
+          unknownFields.add(token.key);
+        }
       }
       
       if (token.key === 'CARG') {
@@ -56,7 +67,7 @@ export class Tse2026SemanticParser {
         votes.push({
           officeName: `Cargo ${currentOfficeCode}`,
           candidateNumber: token.key,
-          partyNumber: currentPartyCode || token.key.substring(0, 2), // Em cargo majoritário, o partido são os 2 primeiros dígitos
+          partyNumber: currentPartyCode ? currentPartyCode : undefined,
           type: 'NOMINAL',
           quantity: parseInt(token.value, 10)
         });
@@ -67,6 +78,14 @@ export class Tse2026SemanticParser {
       return { code: 'MISSING_FIELDS', message: 'Campos estruturais de identificação obrigatórios ausentes' };
     }
 
+    const validVotes = [];
+    for (const v of votes) {
+      if (isNaN(v.quantity) || v.quantity < 0) continue;
+      if (v.type === 'NOMINAL' && !v.candidateNumber) continue;
+      if (v.type === 'LEGENDA' && !v.partyNumber) continue;
+      validVotes.push(v);
+    }
+
     return {
       electionId: map.get('PLEI') || 'DESCONHECIDO',
       roundNumber: parseInt(map.get('TURN') || '1', 10),
@@ -75,12 +94,12 @@ export class Tse2026SemanticParser {
       zoneCode: map.get('ZONA') || '',
       sectionCode: map.get('SECA') || '',
       urnCode: map.get('IDUE') || '',
-      votes,
+      votes: validVotes,
       hash: map.get('HASH') || '',
       signature: map.get('ASSI') || '',
       hashStatus: 'UNAVAILABLE',
       sigStatus: 'UNAVAILABLE',
-      warnings: unknownFields.length > 0 ? [`Campos opcionais desconhecidos: ${unknownFields.join(', ')}`] : []
+      warnings: unknownFields.size > 0 ? [`Campos opcionais desconhecidos: ${Array.from(unknownFields).join(', ')}`] : []
     };
   }
 }
