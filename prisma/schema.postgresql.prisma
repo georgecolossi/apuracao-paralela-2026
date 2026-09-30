@@ -1,0 +1,222 @@
+datasource db {
+  provider = "postgresql"
+  url      = "file:./dev.db"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Election {
+  id          String   @id @default(uuid())
+  name        String
+  year        Int
+  description String?
+  status      String   @default("PLANNED") // PLANNED, ACTIVE, FINISHED
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  rounds      ElectionRound[]
+  reports     BallotReport[]
+}
+
+model ElectionRound {
+  id           String   @id @default(uuid())
+  electionId   String
+  roundNumber  Int
+  status       String   @default("PLANNED")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  election     Election       @relation(fields: [electionId], references: [id])
+  reports      BallotReport[]
+}
+
+model State {
+  id           String   @id @default(uuid())
+  name         String
+  abbreviation String   @unique
+  municipalities Municipality[]
+}
+
+model Municipality {
+  id           String   @id @default(uuid())
+  stateId      String
+  name         String
+  officialCode String   @unique
+  zones        PollingZone[]
+  state        State    @relation(fields: [stateId], references: [id])
+}
+
+model PollingZone {
+  id             String   @id @default(uuid())
+  municipalityId String
+  zoneNumber     String
+  expectedBUs    Int?     @default(0)
+  sections       PollingSection[]
+  municipality   Municipality @relation(fields: [municipalityId], references: [id])
+}
+
+model PollingSection {
+  id            String   @id @default(uuid())
+  pollingZoneId String
+  sectionNumber String
+  expectedBUs   Int?     @default(1)
+  stations      PollingStation[]
+  zone          PollingZone @relation(fields: [pollingZoneId], references: [id])
+}
+
+model PollingStation {
+  id           String   @id @default(uuid())
+  sectionId    String
+  urnCode      String
+  metadata     String?
+  section      PollingSection @relation(fields: [sectionId], references: [id])
+}
+
+model Office {
+  id            String   @id @default(uuid())
+  name          String
+  orderNumber   Int
+  configuration String?
+  candidates    Candidate[]
+  votes         BallotVote[]
+}
+
+model Party {
+  id                 String   @id @default(uuid())
+  officialIdentifier String   @unique
+  name               String
+  abbreviation       String
+  candidates         Candidate[]
+  votes              BallotVote[]
+}
+
+model Candidate {
+  id                 String   @id @default(uuid())
+  partyId            String
+  officeId           String
+  officialIdentifier String   @unique // Numero do candidato
+  name               String
+  ballotName         String
+  
+  party              Party    @relation(fields: [partyId], references: [id])
+  office             Office   @relation(fields: [officeId], references: [id])
+  votes              BallotVote[]
+}
+
+model ScanSession {
+  id            String   @id @default(uuid())
+  sequenceId    String   @unique
+  operatorId    String?
+  status        String   @default("ACTIVE")
+  expectedParts Int
+  isSimulation  Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  parts         BallotReportPart[]
+  operator      User?    @relation(fields: [operatorId], references: [id])
+}
+
+model BallotReport {
+  id             String   @id @default(uuid())
+  deterministicId String  @unique
+  electionId     String
+  roundId        String
+  stateCode      String
+  cityCode       String
+  zoneCode       String
+  sectionCode    String
+  urnCode        String
+  hash           String?
+  signature      String?
+  status         String   @default("RECEBIDO")
+  isSimulation   Boolean  @default(false)
+  operatorId     String?
+  validationData String?
+  metadata       String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  election       Election       @relation(fields: [electionId], references: [id])
+  round          ElectionRound  @relation(fields: [roundId], references: [id])
+  operator       User?          @relation(fields: [operatorId], references: [id])
+  votes          BallotVote[]
+  auditLogs      AuditLog[]
+}
+
+model BallotReportPart {
+  id             String   @id @default(uuid())
+  sessionId      String
+  partIndex      Int
+  totalParts     Int
+  rawContent     String
+  contentHash    String
+  operatorId     String?
+  status         String   @default("STORED")
+  createdAt      DateTime @default(now())
+
+  session        ScanSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  operator       User?        @relation(fields: [operatorId], references: [id])
+  
+  @@unique([sessionId, partIndex])
+}
+
+model BallotVote {
+  id             String   @id @default(uuid())
+  reportId       String
+  officeId       String
+  candidateId    String?
+  candidateNumber String?
+  partyId        String?
+  partyNumber    String?
+  voteType       String   // NOMINAL, LEGENDA, BRANCO, NULO
+  quantity       Int
+
+  report         BallotReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  office         Office       @relation(fields: [officeId], references: [id])
+  candidate      Candidate?   @relation(fields: [candidateId], references: [id])
+  party          Party?       @relation(fields: [partyId], references: [id])
+}
+
+model User {
+  id             String   @id @default(uuid())
+  name           String
+  email          String   @unique
+  passwordHash   String
+  role           String   @default("OPERATOR")
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  reportsProcessed BallotReport[]
+  partsReceived    BallotReportPart[]
+  auditLogs        AuditLog[]
+  scanSessions     ScanSession[]
+}
+
+model AuditLog {
+  id             String   @id @default(uuid())
+  userId         String?
+  action         String
+  reportId       String?
+  identifiers    String?
+  result         String
+  previousStatus String?
+  newStatus      String?
+  errors         String?
+  ipAddress      String?
+  createdAt      DateTime @default(now())
+
+  user           User?         @relation(fields: [userId], references: [id])
+  report         BallotReport? @relation(fields: [reportId], references: [id])
+}
+
+model ProcessingError {
+  id             String   @id @default(uuid())
+  errorCode      String
+  message        String
+  stackTrace     String?
+  metadata       String?
+  createdAt      DateTime @default(now())
+}

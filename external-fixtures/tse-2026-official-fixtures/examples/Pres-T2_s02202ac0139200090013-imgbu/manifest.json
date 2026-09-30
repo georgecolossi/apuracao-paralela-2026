@@ -1,0 +1,56 @@
+{
+  "source_relative_path": "BUsTurno2/BU_T2_VOTA_Presidente/Pres-T2_s02202ac0139200090013-imgbu.pdf",
+  "source_pdf": "Pres-T2_s02202ac0139200090013-imgbu.pdf",
+  "source_pdf_sha256": "8467c318e7bbf26cf0c22a251b27f883518ca3ea2dec330e671819b1dcf3ef4f",
+  "source_dat": "Pres-T2_s02202ac0139200090013-imgbu.dat",
+  "source_dat_sha256": "083dbcf02d00c3e8f63f1d1e8dc3f8dfba7cc342ee747fbca92d29b30e79311c",
+  "decoded_qr_count": 3,
+  "decoded": [
+    {
+      "kind": "QRBU",
+      "index": 1,
+      "total": 1,
+      "page": 1,
+      "payload_sha256": "50e07bf686b40416d792c42e74ce9400ed3e3b414c0c1de3d86e43154d9e2033"
+    },
+    {
+      "kind": "QRCE",
+      "index": 1,
+      "total": 2,
+      "page": 1,
+      "payload_sha256": "5510e888869c17e9c3410d9b4d9960216fd71a4c9bf4b22aaeeed83ff3c43334"
+    },
+    {
+      "kind": "QRCE",
+      "index": 2,
+      "total": 2,
+      "page": 2,
+      "payload_sha256": "29666d46c7caa7aa3296e10096f6ad2135bf20e1fcd12ab9ff3aa7113d44ddae"
+    }
+  ],
+  "expected_direct_fields_from_qrbu": {
+    "VRQR": "6.0",
+    "ORIG": "VOTA",
+    "ORLC": "LEG",
+    "PROC": "2002",
+    "DTPL": "20261025",
+    "PLEI": "2202",
+    "TURN": "2",
+    "FASE": "S",
+    "UNFE": "AC",
+    "MUNI": "1392",
+    "ZONA": "9",
+    "SECA": "13",
+    "IDUE": "2250280",
+    "IDCA": "146113540341669047216787",
+    "VERS": "10.20.0.0",
+    "LOCA": "15",
+    "HASH": "AB6D80A1362854303FDD92EA5D96CCDB54C2566058A8022CD59254FF7491AA8BC27BC9C985D5A86EF9DC040A4C95CBA58450B692DD8DF1B81936046B223E83C6",
+    "ASSI": "F509E65CE37604D01B5EBE88568D6230C706030710A0EC5395A864E8746DD0F823CF13DC4F6C254E4D13696E445D3CA4DA3517CD5AC6C8EA2CB9E7EC889A0807928155C56E60E47DC832C435DAF04C980C569109769273FF707898FF0BD13EB91327A99EB4FD6DACFC3DAC8C75D8C3229F0EEA30370C9B6DA23A729F9B282A0600926500"
+  },
+  "notes": [
+    "Decoded payload text is stored byte-for-byte as UTF-8 text returned by the QR decoder.",
+    "No payload was manually corrected.",
+    "qrbu-mechanical-reconstruction.txt is convenience output only; validate exact TSE multipart/hash rules against the 2026 manual before using it as cryptographic input."
+  ]
+}

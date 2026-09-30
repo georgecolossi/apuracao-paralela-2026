@@ -1,0 +1,63 @@
+{
+  "source_relative_path": "BUsTurno1CenarioPadraoEleicoesGerais/BU_VOTA_UE2020/UE2020_s02110ac0139200090110-imgbu.pdf",
+  "source_pdf": "UE2020_s02110ac0139200090110-imgbu.pdf",
+  "source_pdf_sha256": "4e94fd9c634c889bde34d4b88c5b6985ee6e16bd0c1cb167e60eede927009b7f",
+  "source_dat": "UE2020_s02110ac0139200090110-imgbu.dat",
+  "source_dat_sha256": "efd9d3adfab55cadff7ee3b7c143c67456ee2168633c0684731ed07fc5257639",
+  "decoded_qr_count": 4,
+  "decoded": [
+    {
+      "kind": "QRBU",
+      "index": 1,
+      "total": 2,
+      "page": 2,
+      "payload_sha256": "02d99a8b1e15a22e7cde6f5650cff43d12d626a693edfbe0ed68da1c614deac4"
+    },
+    {
+      "kind": "QRBU",
+      "index": 2,
+      "total": 2,
+      "page": 2,
+      "payload_sha256": "3aece667d3f8a7eee98486c8de6d5dfbc6d01732e98c94009f8c2419ad14d968"
+    },
+    {
+      "kind": "QRCE",
+      "index": 1,
+      "total": 2,
+      "page": 3,
+      "payload_sha256": "3876ce9f283772656de8235b21a50fcb7590d1ae93309f1f9d741ac62a3619d3"
+    },
+    {
+      "kind": "QRCE",
+      "index": 2,
+      "total": 2,
+      "page": 3,
+      "payload_sha256": "7b80935ff4df1c3b2f30a2410b4441476652beca05490ca6869b5fee5b97e2a7"
+    }
+  ],
+  "expected_direct_fields_from_qrbu": {
+    "VRQR": "6.0",
+    "ORIG": "VOTA",
+    "ORLC": "LEG",
+    "PROC": "2100",
+    "DTPL": "20261004",
+    "PLEI": "2110",
+    "TURN": "1",
+    "FASE": "S",
+    "UNFE": "AC",
+    "MUNI": "1392",
+    "ZONA": "9",
+    "SECA": "110",
+    "IDUE": "2031032",
+    "IDCA": "408739565147612615265566",
+    "VERS": "10.20.0.0",
+    "LOCA": "6",
+    "HASH": "FC2A422E8B541BF5691AC72355808F199AB7C5CB0D5F2307BE70D89A8653B8EEC2D8E66A5DB4EC6BECC02CAE37CD348E82FA61CDBEC851FFDE64CBEB4EB387E0",
+    "ASSI": "E28575F87225383D950F4D832DA90BC18AF4F69D840B01267AC0E54682DBB7E956A4E1B9F42FDA2ADA6BB18FE9FB8A5C9CCB7B1CCF30E9B21CD0CEA52F076FB69D80041334DA2F001A7ED9A00FC95383DF20D6CEED9F864008FDA24EB41CDD5B8BBE57011EC917E79C3B843F677D0EBBC0E98CD272E4C08F05B7F0C77A48160CDBC92400"
+  },
+  "notes": [
+    "Decoded payload text is stored byte-for-byte as UTF-8 text returned by the QR decoder.",
+    "No payload was manually corrected.",
+    "qrbu-mechanical-reconstruction.txt is convenience output only; validate exact TSE multipart/hash rules against the 2026 manual before using it as cryptographic input."
+  ]
+}

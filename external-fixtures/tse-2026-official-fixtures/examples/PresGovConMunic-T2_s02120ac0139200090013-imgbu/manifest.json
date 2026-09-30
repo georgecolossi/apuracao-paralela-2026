@@ -1,0 +1,56 @@
+{
+  "source_relative_path": "BUsTurno2/BU_T2_VOTA_Presidente_Governador_ConsultaPopular/PresGovConMunic-T2_s02120ac0139200090013-imgbu.pdf",
+  "source_pdf": "PresGovConMunic-T2_s02120ac0139200090013-imgbu.pdf",
+  "source_pdf_sha256": "a14f97d6a82d889a5c8f4c0d747c921b62753255862c26ef0883fc48705ddd7e",
+  "source_dat": "PresGovConMunic-T2_s02120ac0139200090013-imgbu.dat",
+  "source_dat_sha256": "4db34a3feda8fda1d0243f1d4d4b2eda5eaa8c30f326e86585d33247cc16ab6a",
+  "decoded_qr_count": 3,
+  "decoded": [
+    {
+      "kind": "QRBU",
+      "index": 1,
+      "total": 1,
+      "page": 2,
+      "payload_sha256": "b40ecd2fa9009c8ddf4591e77d246e69e8c5749f7c13292be6a6156dd5744a0d"
+    },
+    {
+      "kind": "QRCE",
+      "index": 1,
+      "total": 2,
+      "page": 2,
+      "payload_sha256": "5510e888869c17e9c3410d9b4d9960216fd71a4c9bf4b22aaeeed83ff3c43334"
+    },
+    {
+      "kind": "QRCE",
+      "index": 2,
+      "total": 2,
+      "page": 2,
+      "payload_sha256": "29666d46c7caa7aa3296e10096f6ad2135bf20e1fcd12ab9ff3aa7113d44ddae"
+    }
+  ],
+  "expected_direct_fields_from_qrbu": {
+    "VRQR": "6.0",
+    "ORIG": "VOTA",
+    "ORLC": "LEG",
+    "PROC": "2100",
+    "DTPL": "20261025",
+    "PLEI": "2120",
+    "TURN": "2",
+    "FASE": "S",
+    "UNFE": "AC",
+    "MUNI": "1392",
+    "ZONA": "9",
+    "SECA": "13",
+    "IDUE": "2250280",
+    "IDCA": "024901429128548117200672",
+    "VERS": "10.20.0.0",
+    "LOCA": "15",
+    "HASH": "8D5008D02A1ED7DA869B69479AF94FE1D54F919C558792DE0F2C6FFCD2660FD6F087A54EE56ED698F3428FCF4F23A410E9A238D0A1C0CEC0A9C3404CEC52AD3E",
+    "ASSI": "089D224CAD13CEB8A4E0BE0377D3DB2085EE5E00980221D0AB2590DF451C2CCA6CB2531802AC4ACCAF2AF3852179D69EBE4A08C064041755AD73EAD236F5E1653F00EFA8487BEC8E3B036B5DD93F7686EE195922257290E38C8E32CA06F47BE6D473A2417B497444D0136C4D2D9493A48A9273660B2E2D14F904ACBD45B80B0701D53700"
+  },
+  "notes": [
+    "Decoded payload text is stored byte-for-byte as UTF-8 text returned by the QR decoder.",
+    "No payload was manually corrected.",
+    "qrbu-mechanical-reconstruction.txt is convenience output only; validate exact TSE multipart/hash rules against the 2026 manual before using it as cryptographic input."
+  ]
+}

@@ -1,0 +1,62 @@
+{
+  "source_relative_path": "BUsTurno1CenarioPadraoEleicoesGerais/BU_apuracao_eletronica_pelo_SA/s02110ac0139200090110-imgbusa.pdf",
+  "source_pdf": "s02110ac0139200090110-imgbusa.pdf",
+  "source_pdf_sha256": "dfc532d6e8564a9e19a80ab9394042ccbb9b42dbc6037b9e41d25c5ff843ba4a",
+  "source_dat": "s02110ac0139200090110-imgbusa.dat",
+  "source_dat_sha256": "3f2980d5950ef8be3e10088a3a499c6f062653b3bb9795c4d47aa8a153fceb1f",
+  "decoded_qr_count": 4,
+  "decoded": [
+    {
+      "kind": "QRBU",
+      "index": 1,
+      "total": 2,
+      "page": 2,
+      "payload_sha256": "bd19dc06d9717c67e61035520740ab83c4c1a47974fb55eda9a722470f52589d"
+    },
+    {
+      "kind": "QRBU",
+      "index": 2,
+      "total": 2,
+      "page": 2,
+      "payload_sha256": "950d48fbb7da2dee731bc40262cd0d58833757b70c7317171e254b575b9a3a4b"
+    },
+    {
+      "kind": "QRCE",
+      "index": 1,
+      "total": 2,
+      "page": 3,
+      "payload_sha256": "5510e888869c17e9c3410d9b4d9960216fd71a4c9bf4b22aaeeed83ff3c43334"
+    },
+    {
+      "kind": "QRCE",
+      "index": 2,
+      "total": 2,
+      "page": 3,
+      "payload_sha256": "29666d46c7caa7aa3296e10096f6ad2135bf20e1fcd12ab9ff3aa7113d44ddae"
+    }
+  ],
+  "expected_direct_fields_from_qrbu": {
+    "VRQR": "6.0",
+    "ORIG": "SA",
+    "ORLC": "LEG",
+    "PROC": "2100",
+    "DTPL": "20261004",
+    "PLEI": "2110",
+    "TURN": "1",
+    "FASE": "S",
+    "UNFE": "AC",
+    "MUNI": "1392",
+    "ZONA": "9",
+    "SECA": "110",
+    "IDUE": "2250280",
+    "IDCA": "166315320523373755377726",
+    "VERS": "10.20.0.0",
+    "HASH": "C6AD9AB31874A6C2937B6B1D38092241F895133188168F89E4E6764D3410E83461C8D152D99E5A52114D6829AA75EA2E6826C31A5AEE60DD2D7E8B8D3535CA80",
+    "ASSI": "8FE282641CAE3FCE541BA61B9464E61D4D2B7FBB939C6CE5B525C29ECE43B35919F733383B88364E3C17323626CF4FC1BE749C5AE5BEC5B93D2FC1BC935B1CB34880844EC876913A3F76AA244CCB589BBE1D163CAA9D900199B3729737FE786BD05987E74210080EF084E203F9F789F38B1EF944BC34C8532F1D186ECBCDCA29150C2000"
+  },
+  "notes": [
+    "Decoded payload text is stored byte-for-byte as UTF-8 text returned by the QR decoder.",
+    "No payload was manually corrected.",
+    "qrbu-mechanical-reconstruction.txt is convenience output only; validate exact TSE multipart/hash rules against the 2026 manual before using it as cryptographic input."
+  ]
+}

@@ -1,0 +1,56 @@
+{
+  "source_relative_path": "BUsTurno2/BU_T2_VOTA_Presidente_Governador/PresGov-T2_s02200ac0139200090013-imgbu.pdf",
+  "source_pdf": "PresGov-T2_s02200ac0139200090013-imgbu.pdf",
+  "source_pdf_sha256": "3f418e131d3682413923926bc434e7d5463254a6fa1d4ad84e622b129ea55e9b",
+  "source_dat": "PresGov-T2_s02200ac0139200090013-imgbu.dat",
+  "source_dat_sha256": "ce3131508af46efa6dbe449339fa0dd868a5281803446d4364600887cf93477f",
+  "decoded_qr_count": 3,
+  "decoded": [
+    {
+      "kind": "QRBU",
+      "index": 1,
+      "total": 1,
+      "page": 1,
+      "payload_sha256": "3fad23d7d306d33fbb1cf6667f6df7b4917d0f791ac5a1d59eca7f7b36d24fef"
+    },
+    {
+      "kind": "QRCE",
+      "index": 1,
+      "total": 2,
+      "page": 2,
+      "payload_sha256": "5510e888869c17e9c3410d9b4d9960216fd71a4c9bf4b22aaeeed83ff3c43334"
+    },
+    {
+      "kind": "QRCE",
+      "index": 2,
+      "total": 2,
+      "page": 2,
+      "payload_sha256": "29666d46c7caa7aa3296e10096f6ad2135bf20e1fcd12ab9ff3aa7113d44ddae"
+    }
+  ],
+  "expected_direct_fields_from_qrbu": {
+    "VRQR": "6.0",
+    "ORIG": "VOTA",
+    "ORLC": "LEG",
+    "PROC": "2000",
+    "DTPL": "20261025",
+    "PLEI": "2200",
+    "TURN": "2",
+    "FASE": "S",
+    "UNFE": "AC",
+    "MUNI": "1392",
+    "ZONA": "9",
+    "SECA": "13",
+    "IDUE": "2250280",
+    "IDCA": "237022631234758926209434",
+    "VERS": "10.20.0.0",
+    "LOCA": "15",
+    "HASH": "12E43BC57E5B6D8644A88647EC0610163D52619DAD947872C92765DCBEDC3624F6F399C5F6429DFCDCCCD6CA7B05FCEB05BC162DEF39F254822A93114AD4A11C",
+    "ASSI": "27616C5EC4B91AABB28EE80273A27612DBA79E6802F56155BE379AA93970DD9F7A2BAE7ECCC8465286423F39F7B40513D51668E3BB64CD8BD38E598137A94DE3960058BA0B271A9C0423B418A695B15492B06BD639282832BCCB6527883BB927608998DAA11A624389732663933FCC273868BE97CE899FFBAF0FA3E88EA4A7939F687500"
+  },
+  "notes": [
+    "Decoded payload text is stored byte-for-byte as UTF-8 text returned by the QR decoder.",
+    "No payload was manually corrected.",
+    "qrbu-mechanical-reconstruction.txt is convenience output only; validate exact TSE multipart/hash rules against the 2026 manual before using it as cryptographic input."
+  ]
+}
