@@ -1,17 +1,17 @@
-# Apuração Paralela 2026
+# Apuraï¿½ï¿½o Paralela 2026
 
-Plataforma independente de apuração paralela de votos para as eleições de 2026.
+Plataforma independente de apuraï¿½ï¿½o paralela de votos para as eleiï¿½ï¿½es de 2026.
 
-Este sistema NÃO é um sistema oficial do TSE.
-Ele NÃO tem validade jurídica ou institucional.
-Ele NÃO substitui a totalização oficial da Justiça Eleitoral.
+Este sistema Nï¿½O ï¿½ um sistema oficial do TSE.
+Ele Nï¿½O tem validade jurï¿½dica ou institucional.
+Ele Nï¿½O substitui a totalizaï¿½ï¿½o oficial da Justiï¿½a Eleitoral.
 
-O sistema permite escanear QR Codes de Boletins de Urna (BUs), agregá-los e exibir um painel público de apuração.
+O sistema permite escanear QR Codes de Boletins de Urna (BUs), agregï¿½-los e exibir um painel pï¿½blico de apuraï¿½ï¿½o.
 
-## Status da Validação (Eleições 2026)
-- **Parse Semântico**: OK (Compatível com formato real QRBU 2026).
-- **Validação de Hash (Integridade)**: OK (SHA-512 do payload concatenado, sem o campo HASH).
-- **Assinatura Digital**: UNAVAILABLE (A validação de assinatura digital não está implementada nesta versão e reportada como UNAVAILABLE. Apenas integridade via HASH é garantida).
+## Status da Validaï¿½ï¿½o (Eleiï¿½ï¿½es 2026)
+- **Parse Semï¿½ntico**: OK (Compatï¿½vel com formato real QRBU 2026).
+- **Validaï¿½ï¿½o de Hash (Integridade)**: OK (SHA-512 do payload concatenado, sem o campo HASH).
+- **Assinatura Digital**: UNAVAILABLE (A validaï¿½ï¿½o de assinatura digital nï¿½o estï¿½ implementada nesta versï¿½o e reportada como UNAVAILABLE. Apenas integridade via HASH ï¿½ garantida).
 
 ## Tecnologias
 - Next.js (App Router)
@@ -19,3 +19,10 @@ O sistema permite escanear QR Codes de Boletins de Urna (BUs), agregá-los e exib
 - Tailwind CSS
 - Vitest / Playwright
 
+
+## Cobertura GeogrÃ¡fica
+
+O sistema permite restringir os Boletins de Urna aceitos a municÃ­pios especÃ­ficos utilizando a variÃ¡vel de ambiente COVERAGE_CITY_CODES.
+Se configurado com uma lista de cÃ³digos de municÃ­pios separados por vÃ­rgula (ex: COVERAGE_CITY_CODES=1392,80879), o sistema rejeitarÃ¡ BUs fora dessa lista com erro 403 (Forbidden).
+Se a variÃ¡vel for deixada em branco, todos os municÃ­pios sÃ£o aceitos (padrÃ£o).
+O exemplo 92 corresponde Ã  fixture oficial do TSE para AcrelÃ¢ndia/AC utilizada nos testes.
