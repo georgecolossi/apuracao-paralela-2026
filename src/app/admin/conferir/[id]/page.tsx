@@ -1,9 +1,6 @@
-import { redirect } from 'next/navigation';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '@/lib/db';
 import ConfirmButton from './ConfirmButton';
 import { CheckCircle2, XCircle, HelpCircle, FileCheck2, Info, MapPin, Hash, ShieldAlert } from 'lucide-react';
-
-const prisma = new PrismaClient();
 
 export default async function ConferirPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

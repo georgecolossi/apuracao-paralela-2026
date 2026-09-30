@@ -114,7 +114,7 @@ export default function LoginPage() {
         </div>
         
         <div className="mt-8 text-center text-xs font-semibold text-slate-400 uppercase tracking-widest">
-          Sistema Eleitoral Seguro • 2026
+          Sistema de Apuração Paralela • 2026
         </div>
       </div>
     </div>
