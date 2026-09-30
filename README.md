@@ -11,7 +11,7 @@ Este sistema **não é do TSE**, **não possui validade oficial própria** e **n
 ## Escopo atual
 Atualmente, o projeto está sendo estruturado para a cobertura regional de **Concórdia e região — Santa Catarina**.
 
-A configuração da lista exata dos municípios da região será definida posteriormente, mas a infraestrutura para restringir o processamento já está funcional utilizando a variável de ambiente `COVERAGE_CITY_CODES`.
+A configuração inicial de cobertura é Concórdia/SC. A área de cobertura pode ser ampliada pelo administrador para outros municípios de Santa Catarina sem alteração de código ou novo deploy. O escopo definitivo será definido operacionalmente no dia da apuração.
 
 ## Funcionalidades
 - **Leitura QRBU**: Motor de extração e _parsing_ estrutural de dados.
@@ -228,7 +228,7 @@ Os diretórios de testes (`tests/` e `external-fixtures/`) hospedam exemplos bas
 
 ## Próximas etapas
 - Integrar a base oficial de candidatos (traduzindo `número → nome → partido/sigla`). Fotografias **não** fazem parte do escopo planejado.
-- Definição exata da lista e inclusão no `COVERAGE_CITY_CODES` para operação da regional Concórdia/SC.
+- Definição exata da lista operacional de cobertura no dia da eleição.
 - Setup final e testes operacionais em dispositivos móveis da equipe no dia real do pleito.
 
 ## Referências oficiais

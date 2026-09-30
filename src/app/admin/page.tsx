@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { prisma } from '@/lib/db';
-import { ScanLine, LayoutDashboard, Users, FileText, CheckCircle2, AlertCircle, Clock, Search, RotateCcw, ShieldCheck, Download, Trash2 } from 'lucide-react';
+import { ScanLine, LayoutDashboard, Users, FileText, CheckCircle2, AlertCircle, Clock, Search, RotateCcw, ShieldCheck, Download, Trash2, MapPin } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 
@@ -132,7 +132,11 @@ export default async function AdminDashboard() {
         </div>
 
         {/* Quick Links */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+          <Link href="/admin/cobertura" className="bg-white border border-slate-200 p-4 rounded-xl text-center hover:bg-slate-50 transition-colors flex flex-col items-center gap-2 group">
+            <MapPin className="w-5 h-5 text-slate-400 group-hover:text-indigo-500 transition-colors" />
+            <span className="font-bold text-xs uppercase tracking-wider text-slate-600 group-hover:text-slate-900">Cobertura</span>
+          </Link>
           <Link href="/admin/conferencia" className="bg-white border border-slate-200 p-4 rounded-xl text-center hover:bg-slate-50 transition-colors flex flex-col items-center gap-2 group">
             <Search className="w-5 h-5 text-slate-400 group-hover:text-indigo-500 transition-colors" />
             <span className="font-bold text-xs uppercase tracking-wider text-slate-600 group-hover:text-slate-900">Conferência Global</span>

@@ -117,9 +117,18 @@ export async function POST(req: Request) {
     const { electionId, roundNumber, stateCode, cityCode, zoneCode, sectionCode, urnCode } = reportData;
 
     // Checagem de Escopo Geográfico (Cobertura Regional)
-    const coverageCities = process.env.COVERAGE_CITY_CODES 
-      ? process.env.COVERAGE_CITY_CODES.split(',').map(c => c.trim()) 
-      : [];
+    // Checagem de Escopo Geográfico (Cobertura Regional)
+    const coverageMunicipalities = await prisma.municipality.findMany({
+      where: { isCoverage: true },
+      select: { officialCode: true }
+    });
+    
+    // Combina banco de dados com env (para testes E2E Playwright que injetam 1392, 71072)
+    let coverageCities = coverageMunicipalities.map(m => m.officialCode);
+    if (process.env.COVERAGE_CITY_CODES) {
+      const envCities = process.env.COVERAGE_CITY_CODES.split(',').map(c => c.trim());
+      coverageCities = Array.from(new Set([...coverageCities, ...envCities]));
+    }
     
     if (coverageCities.length > 0 && !coverageCities.includes(cityCode)) {
       // Registrar tentativa fora de cobertura

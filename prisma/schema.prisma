@@ -45,6 +45,7 @@ model Municipality {
   stateId      String
   name         String
   officialCode String   @unique
+  isCoverage   Boolean  @default(false)
   zones        PollingZone[]
   state        State    @relation(fields: [stateId], references: [id])
 }
