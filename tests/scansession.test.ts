@@ -13,17 +13,17 @@ describe('Gerenciamento de ScanSession', () => {
       data: { sessionId: session.id, partIndex: 1, totalParts: 3, rawContent: 'parte1', contentHash: 'hash1' }
     });
 
-    let error = null;
+    let error: unknown = null;
     try {
       await prisma.ballotReportPart.create({
         data: { sessionId: session.id, partIndex: 1, totalParts: 3, rawContent: 'parte1_dup', contentHash: 'hash1_dup' }
       });
-    } catch (e: any) {
+    } catch (e: unknown) {
       error = e;
     }
 
     // Espera falha de UNIQUE constraint em sessionId_partIndex
     expect(error).not.toBeNull();
-    expect(error.code).toBe('P2002');
+    expect((error as { code: string }).code).toBe('P2002');
   });
 });

@@ -161,43 +161,50 @@ describe('TSE 2026 QR Code Parser', () => {
 });
 
 import { Tse2026SemanticParser } from '../src/lib/parser/tse2026/Tse2026SemanticParser';
+import { Tse2026QrToken } from '../src/lib/parser/tse2026/Tse2026QrTokenizer';
+import { ParseError, BallotReportData } from '../src/lib/parser';
+
 describe('TSE 2026 Semantic Parser', () => {
   const semParser = new Tse2026SemanticParser();
-  const baseTokens = [
-    { key: 'ORIG', value: 'BU' }, { key: 'MUNI', value: '123' }, { key: 'ZONA', value: '1' }, 
-    { key: 'SECA', value: '1' }, { key: 'IDUE', value: 'U1' }, { key: 'PLEI', value: '123' }, 
-    { key: 'TURN', value: '1' }
+  const baseTokens: Tse2026QrToken[] = [
+    { key: 'ORIG', value: 'BU', position: 0, raw: '' },
+    { key: 'MUNI', value: '123', position: 0, raw: '' },
+    { key: 'ZONA', value: '1', position: 0, raw: '' }, 
+    { key: 'SECA', value: '1', position: 0, raw: '' },
+    { key: 'IDUE', value: 'U1', position: 0, raw: '' },
+    { key: 'PLEI', value: '123', position: 0, raw: '' }, 
+    { key: 'TURN', value: '1', position: 0, raw: '' }
   ];
 
   it('deve rejeitar voto com quantity negativa', () => {
-    const tokens = [...baseTokens, { key: 'CARG', value: '11' }, { key: 'NULO', value: '-10' }];
-    const result = semParser.parse(tokens as any) as any;
+    const tokens: Tse2026QrToken[] = [...baseTokens, { key: 'CARG', value: '11', position: 0, raw: '' }, { key: 'NULO', value: '-10', position: 0, raw: '' }];
+    const result = semParser.parse(tokens) as ParseError;
     expect(result.code).toBe('INVALID_VOTE_DATA');
   });
 
   it('deve rejeitar voto NOMINAL sem número do candidato', () => {
-    const tokens = [...baseTokens, { key: 'CARG', value: '11' }, { key: 'NOMI', value: ',50' }];
-    const result = semParser.parse(tokens as any) as any;
+    const tokens: Tse2026QrToken[] = [...baseTokens, { key: 'CARG', value: '11', position: 0, raw: '' }, { key: 'NOMI', value: ',50', position: 0, raw: '' }];
+    const result = semParser.parse(tokens) as ParseError;
     expect(result.code).toBe('INVALID_VOTE_DATA');
   });
 
   it('deve rejeitar voto LEGENDA sem número do partido', () => {
-    const tokens = [...baseTokens, { key: 'CARG', value: '11' }, { key: 'PART', value: ',20' }];
-    const result = semParser.parse(tokens as any) as any;
+    const tokens: Tse2026QrToken[] = [...baseTokens, { key: 'CARG', value: '11', position: 0, raw: '' }, { key: 'PART', value: ',20', position: 0, raw: '' }];
+    const result = semParser.parse(tokens) as ParseError;
     expect(result.code).toBe('INVALID_VOTE_DATA');
   });
 
   it('deve rejeitar voto com quantidade não numérica', () => {
-    const tokens = [...baseTokens, { key: 'CARG', value: '11' }, { key: 'BRAN', value: 'ABC' }];
-    const result = semParser.parse(tokens as any) as any;
+    const tokens: Tse2026QrToken[] = [...baseTokens, { key: 'CARG', value: '11', position: 0, raw: '' }, { key: 'BRAN', value: 'ABC', position: 0, raw: '' }];
+    const result = semParser.parse(tokens) as ParseError;
     expect(result.code).toBe('INVALID_VOTE_DATA');
   });
 
   it('deve manter apenas WARNING para campos desconhecidos', () => {
-    const tokens = [...baseTokens, { key: 'XYZ', value: 'ABC' }];
-    const result = semParser.parse(tokens as any) as any;
+    const tokens: Tse2026QrToken[] = [...baseTokens, { key: 'XYZ', value: 'ABC', position: 0, raw: '' }];
+    const result = semParser.parse(tokens) as BallotReportData & { code?: string };
     expect(result.code).toBeUndefined(); // sem erro
-    expect(result.warnings.length).toBe(1);
-    expect(result.warnings[0]).toContain('XYZ');
+    expect(result.warnings?.length).toBe(1);
+    expect(result.warnings?.[0]).toContain('XYZ');
   });
 });

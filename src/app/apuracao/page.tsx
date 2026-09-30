@@ -3,36 +3,56 @@
 import { useEffect, useState } from 'react';
 
 export default function ApuracaoPage() {
-  const [totals, setTotals] = useState<any>(null);
+  interface TotalItem {
+    officeName?: string;
+    officeId?: string;
+    candidateNumber?: string | null;
+    partyNumber?: string | null;
+    voteType: string;
+    quantity: number;
+  }
+
+  interface TotalsData {
+    processedReports: number;
+    expectedReports: number;
+    totals: TotalItem[];
+  }
+
+  const [totals, setTotals] = useState<TotalsData | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const fetchTotals = async () => {
-    try {
-      const res = await fetch('/api/totals');
-      const data = await res.json();
-      setTotals(data);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
-    fetchTotals();
+    let mounted = true;
+    
+    const fetchTotals = async () => {
+      try {
+        const res = await fetch('/api/totals');
+        const data = await res.json();
+        if (mounted) setTotals(data);
+      } catch (e) {
+        console.error(e);
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+
+    void fetchTotals();
 
     const evtSource = new EventSource('/api/realtime');
     evtSource.onopen = () => {
-      fetchTotals();
+      void fetchTotals();
     };
     evtSource.onmessage = (event) => {
       const data = JSON.parse(event.data);
       if (data.type === 'BU_PROCESSED') {
-        fetchTotals();
+        void fetchTotals();
       }
     };
 
-    return () => evtSource.close();
+    return () => {
+      mounted = false;
+      evtSource.close();
+    };
   }, []);
 
   if (loading) return <div className="p-8 text-center">Carregando apuração...</div>;
@@ -86,7 +106,7 @@ export default function ApuracaoPage() {
                 </tr>
               </thead>
               <tbody>
-                {totals?.totals?.map((t: any, idx: number) => (
+                {totals?.totals?.map((t: TotalItem, idx: number) => (
                   <tr key={idx} className="border-b last:border-0 hover:bg-gray-50 transition-colors text-black">
                     <td className="p-3">{t.officeName || t.officeId}</td>
                     <td className="p-3">{t.candidateNumber || '-'}</td>

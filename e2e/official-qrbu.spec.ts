@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import fs from 'fs';
 import path from 'path';
 import { Tse2026BallotReportParser } from '../src/lib/parser/Tse2026BallotReportParser';
+import { BallotReportData } from '../src/lib/parser';
 
 test.describe('E2E OFFICIAL FIXTURE', () => {
   const examplesDir = path.join(__dirname, '../tests/fixtures/tse-2026/official/examples');
@@ -31,11 +32,11 @@ test.describe('E2E OFFICIAL FIXTURE', () => {
     // Vamos ler manualmente pra setup:
     const setupParser = new Tse2026BallotReportParser();
     const full = setupParser.reconstruct(partsPayloads) as string;
-    const parsed = setupParser.parseReport(full, partsPayloads) as any;
+    const parsed = setupParser.parseReport(full, partsPayloads) as BallotReportData;
     expect(parsed.electionId).toBeDefined();
 
     // 2. Setup Election DB context
-    const { PrismaClient } = require('@prisma/client');
+    const { PrismaClient } = await import('@prisma/client');
     const prisma = new PrismaClient();
 
     // Limpar o banco de dados inteiro para E2E
@@ -115,12 +116,20 @@ test.describe('E2E OFFICIAL FIXTURE', () => {
       expectedAgg[key] += v.quantity;
     }
 
+    interface TotalRow {
+      officeName: string;
+      candidateNumber: string | null;
+      partyNumber: string | null;
+      voteType: string;
+      quantity: number;
+    }
+
     for (const [key, expectedQuantity] of Object.entries(expectedAgg)) {
       const [oName, cNumStr, pNumStr, vType] = key.split('|');
       const expectedCNum = cNumStr === 'null' ? null : cNumStr;
       const expectedPNum = pNumStr === 'null' ? null : pNumStr;
 
-      const found = totalsBody.totals.find((t: any) => 
+      const found = totalsBody.totals.find((t: TotalRow) => 
         t.officeName === oName &&
         (t.candidateNumber === expectedCNum || String(t.candidateNumber) === String(expectedCNum)) &&
         (t.partyNumber === expectedPNum || String(t.partyNumber) === String(expectedPNum)) &&

@@ -21,7 +21,7 @@ export async function requireAuthenticatedUser() {
   }
 
   try {
-    const payload = jwt.verify(token, getJwtSecret()) as any;
+    const payload = jwt.verify(token, getJwtSecret()) as jwt.JwtPayload;
     return { authenticated: true, user: payload };
   } catch (err) {
     return { authenticated: false, reason: 'INVALID_TOKEN' };

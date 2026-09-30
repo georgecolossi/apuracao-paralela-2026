@@ -18,7 +18,7 @@ export class Tse2026SemanticParser {
 
     let currentOfficeCode = '';
     let currentPartyCode = '';
-    const votes: any[] = [];
+    const votes: Array<{ officeName: string; candidateNumber?: string; partyNumber?: string; type: 'NOMINAL' | 'LEGENDA' | 'BRANCO' | 'NULO'; quantity: number }> = [];
 
     for (const token of tokens) {
       if (/^[A-Z]+$/.test(token.key)) {

@@ -46,7 +46,7 @@ export class Tse2026SimulationParser implements BallotReportParser {
 
     const roundNumber = parseInt(roundNumberStr, 10);
 
-    const votes: any[] = [];
+    const votes: Array<{ officeName: string; candidateNumber?: string; partyNumber?: string; type: 'NOMINAL' | 'LEGENDA' | 'BRANCO' | 'NULO'; quantity: number }> = [];
     if (votesStr) {
       const voteEntries = votesStr.split(';');
       for (const entry of voteEntries) {
@@ -58,7 +58,7 @@ export class Tse2026SimulationParser implements BallotReportParser {
           officeName,
           candidateNumber: candidateNumber || undefined,
           partyNumber: partyNumber || undefined,
-          type: type as any,
+          type: type as 'NOMINAL' | 'LEGENDA' | 'BRANCO' | 'NULO',
           quantity: isNaN(quantity) ? 0 : quantity,
         });
       }

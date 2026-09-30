@@ -36,7 +36,7 @@ describe('Totalization and Aggregation Service', () => {
     await prisma.$disconnect();
   });
 
-  async function insertBU(urnCode: string, votes: any[]) {
+  async function insertBU(urnCode: string, votes: { candidateNumber?: string; partyNumber?: string; voteType: string; quantity: number }[]) {
     const deterministicId = buildBallotReportIdentity({
       plei: '456', turn: '1', stateCode: 'BR', cityCode: 'BR', zoneCode: '0001', sectionCode: '0001', urnCode
     });
@@ -97,7 +97,7 @@ describe('Totalization and Aggregation Service', () => {
       await insertBU('URN001', [
         { candidateNumber: '13', partyNumber: '13', voteType: 'NOMINAL', quantity: 100 }
       ]);
-    } catch (e) {
+    } catch {
       duplicateFailed = true;
     }
     expect(duplicateFailed).toBe(true);

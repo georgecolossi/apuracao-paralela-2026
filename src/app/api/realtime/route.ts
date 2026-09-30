@@ -6,7 +6,7 @@ export async function GET(req: Request) {
       // Send initial connection event
       controller.enqueue('event: connected\ndata: {}\n\n');
 
-      const onUpdate = (data: any) => {
+      const onUpdate = (data: unknown) => {
         controller.enqueue(`data: ${JSON.stringify(data)}\n\n`);
       };
 

@@ -1,4 +1,4 @@
-import Link from 'next/link';
+﻿import Link from 'next/link';
 
 export default function MetodologiaPage() {
   return (
@@ -29,7 +29,7 @@ export default function MetodologiaPage() {
 
           <section>
             <h2 className="text-xl font-bold border-b pb-1">3. Tratamento de Inconsistências e Duplicidades</h2>
-            <p className="mt-2">O sistema é blindado arquiteturalmente contra "Double Count". Caso dois operadores bipem o mesmo Boletim de Urna em cidades diferentes simultaneamente, a plataforma aplica um algoritmo de <em>Constraint Atômica (Deterministic ID)</em> baseado na Hash combinada de UF, Município, Zona, Seção e Código de Urna. Apenas a primeira operação é aceita, a segunda recebe um erro de conflito amigável e é isolada (DUPLICADO).</p>
+            <p className="mt-2">O sistema é blindado arquiteturalmente contra &quot;Double Count&quot;. Caso dois operadores bipem o mesmo Boletim de Urna em cidades diferentes simultaneamente, a plataforma aplica um algoritmo de <em>Constraint Atômica (Deterministic ID)</em> baseado na Hash combinada de UF, Município, Zona, Seção e Código de Urna. Apenas a primeira operação é aceita, a segunda recebe um erro de conflito amigável e é isolada (DUPLICADO).</p>
           </section>
           
           <section>

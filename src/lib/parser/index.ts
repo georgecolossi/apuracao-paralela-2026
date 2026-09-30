@@ -3,7 +3,7 @@ import { SignatureVerifier, HashVerifier, VerificationState } from '../crypto';
 export type ParseError = {
   code: string;
   message: string;
-  details?: any;
+  details?: unknown;
 };
 
 export type BallotVote = {

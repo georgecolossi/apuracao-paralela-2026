@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 
 test.describe('APPLICATION E2E / SIMULATION', () => {
   test.beforeAll(async () => {
-    const { PrismaClient } = require('@prisma/client');
+    const { PrismaClient } = await import('@prisma/client');
     const prisma = new PrismaClient();
     await prisma.ballotVote.deleteMany({});
     await prisma.ballotReportPart.deleteMany({});
@@ -44,7 +44,7 @@ test.describe('APPLICATION E2E / SIMULATION', () => {
       }
     });
     expect(scanPart1.status()).toBe(200);
-    let res1 = await scanPart1.json();
+    const res1 = await scanPart1.json();
     expect(res1.status).toBe('PARCIAL');
 
     // Parte 2/2
@@ -55,7 +55,7 @@ test.describe('APPLICATION E2E / SIMULATION', () => {
         sessionId
       }
     });
-    let res2 = await scanPart2.json();
+    const res2 = await scanPart2.json();
     if (scanPart2.status() !== 200) {
       console.log('SIMULATION PART 2 ERROR:', res2);
     }

@@ -26,7 +26,7 @@ describe('Integração de Banco de Dados e Concorrência', () => {
     const fakeId = `TEST-DUP-${Date.now()}`;
     
     // Inserção do Operador A
-    const reportA = await prisma.ballotReport.create({
+    await prisma.ballotReport.create({
       data: {
         deterministicId: fakeId,
         electionId,
@@ -41,7 +41,7 @@ describe('Integração de Banco de Dados e Concorrência', () => {
     });
 
     // Inserção do Operador B (Simultâneo/Sequencial do mesmo BU)
-    let errorCatcher: any = null;
+    let errorCatcher: unknown = null;
     try {
       await prisma.ballotReport.create({
         data: {
@@ -56,13 +56,13 @@ describe('Integração de Banco de Dados e Concorrência', () => {
           status: 'PROCESSADO'
         }
       });
-    } catch (e: any) {
+    } catch (e: unknown) {
       errorCatcher = e;
     }
 
     // Deve lançar erro P2002 de Unique Constraint
     expect(errorCatcher).not.toBeNull();
-    expect(errorCatcher.code).toBe('P2002');
+    expect((errorCatcher as { code: string }).code).toBe('P2002');
   });
 
   it('Cálculo Dinâmico (Recálculo) ignora BUs cancelados', async () => {

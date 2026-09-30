@@ -5,7 +5,7 @@ import path from 'path';
 test.describe('TSE 2026 SYNTHETIC FIXTURE E2E', () => {
   test.beforeAll(async () => {
     // Limpa o BU caso já exista de execuções anteriores, pois a identidade é determinística e a fixture é constante
-    const { PrismaClient } = require('@prisma/client');
+    const { PrismaClient } = await import('@prisma/client');
     const prisma = new PrismaClient();
     await prisma.ballotVote.deleteMany({});
     await prisma.ballotReportPart.deleteMany({});
