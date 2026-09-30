@@ -92,7 +92,7 @@ test.describe('E2E OFFICIAL FIXTURE', () => {
     await expect(page.locator(`text=${parsed.cityCode}`).first()).toBeVisible();
     
     // 6. Confirma Processamento
-    await page.click('button:has-text("Confirmar Processamento")');
+    await page.click('button:has-text("CONFIRMAR BOLETIM")');
     await expect(page).toHaveURL('/admin/scanner');
 
     // 7. Confirma que apareceu no Painel

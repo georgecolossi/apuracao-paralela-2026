@@ -69,7 +69,7 @@ test.describe('APPLICATION E2E / SIMULATION', () => {
     await expect(page.locator('text=SIMULAÇÃO')).toBeVisible();
     
     // Confirma
-    await page.click('button:has-text("Confirmar Processamento")');
+    await page.click('button:has-text("CONFIRMAR BOLETIM")');
     await expect(page).toHaveURL('/admin/scanner');
 
     // 4. Checa Apuração Pública
