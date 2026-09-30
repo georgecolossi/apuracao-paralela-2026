@@ -76,6 +76,8 @@ export default function ApuracaoPage() {
               <thead>
                 <tr className="border-b bg-gray-50 text-black">
                   <th className="p-3">Cargo</th>
+                  <th className="p-3">Candidato</th>
+                  <th className="p-3">Partido</th>
                   <th className="p-3">Tipo de Voto</th>
                   <th className="p-3 text-right">Quantidade</th>
                 </tr>
@@ -83,9 +85,11 @@ export default function ApuracaoPage() {
               <tbody>
                 {totals?.totals?.map((t: any, idx: number) => (
                   <tr key={idx} className="border-b last:border-0 hover:bg-gray-50 transition-colors text-black">
-                    <td className="p-3">{t.officeId /* Precisaríamos dar JOIN no officeName */}</td>
+                    <td className="p-3">{t.officeName || t.officeId}</td>
+                    <td className="p-3">{t.candidateNumber || '-'}</td>
+                    <td className="p-3">{t.partyNumber || '-'}</td>
                     <td className="p-3">{t.voteType}</td>
-                    <td className="p-3 text-right font-mono font-bold">{t._sum.quantity}</td>
+                    <td className="p-3 text-right font-mono font-bold">{t.quantity}</td>
                   </tr>
                 ))}
               </tbody>

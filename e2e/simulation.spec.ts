@@ -18,6 +18,7 @@ test.describe('APPLICATION E2E / SIMULATION', () => {
       data: {
         content: `SIMULATION|1|2|${sessionId}|ELEC1|1|SP|SAO PAULO|123|456|${urnCode}|Prefeito,10,10,nominal,50;Vereador,12345,12,nominal,30|hash123|sig123`,
         isSimulation: true,
+        sessionId
       }
     });
     expect(scanPart1.status()).toBe(200);
@@ -29,6 +30,7 @@ test.describe('APPLICATION E2E / SIMULATION', () => {
       data: {
         content: `SIMULATION|2|2|${sessionId}|`, // Continuação vazia pra fechar a sessão
         isSimulation: true,
+        sessionId
       }
     });
     expect(scanPart2.status()).toBe(200);

@@ -10,9 +10,9 @@ describe('TSE 2026 QR Code Parser', () => {
   const p2Path = path.join(__dirname, 'fixtures/tse-2026/derived-invalid/bu-example-part2.txt');
   const p2CorruptPath = path.join(__dirname, 'fixtures/tse-2026/derived-invalid/bu-example-part2-corrupt.txt');
   
-  const p1 = fs.readFileSync(p1Path, 'utf8');
-  const p2 = fs.readFileSync(p2Path, 'utf8');
-  const p2Corrupt = fs.readFileSync(p2CorruptPath, 'utf8');
+  const p1 = fs.readFileSync(p1Path, 'utf8').trim();
+  const p2 = fs.readFileSync(p2Path, 'utf8').trim();
+  const p2Corrupt = fs.readFileSync(p2CorruptPath, 'utf8').trim();
 
   it('deve extrair o cabeçalho QRBU corretamente', () => {
     const info = parser.parsePart(p1);
@@ -32,7 +32,7 @@ describe('TSE 2026 QR Code Parser', () => {
   it('deve reconstruir o payload ordenando as partes', () => {
     const full = parser.reconstruct([p2, p1]);
     expect(typeof full).toBe('string');
-    expect(full as string).toContain('HASH:hash123');
+    expect(full as string).toContain('HASH:C56D7');
   });
 
   it('deve rejeitar reconstrução com partes faltantes', () => {
@@ -45,8 +45,8 @@ describe('TSE 2026 QR Code Parser', () => {
 
   it('deve validar HASH e extrair votos corretamente (Semantic & Validator)', () => {
     const fullPayload = parser.reconstruct([p1, p2]) as string;
-    const report = parser.parseReport(fullPayload);
-    if ('code' in report) console.log(report);
+    const report = parser.parseReport(fullPayload, [p1, p2]);
+    if ('code' in report) console.log('DEBUG:', report);
     expect('code' in report).toBe(false);
     if (!('code' in report)) {
       expect(report.hashStatus).toBe('VERIFIED');
@@ -61,67 +61,99 @@ describe('TSE 2026 QR Code Parser', () => {
 
   it('deve invalidar HASH se conteúdo for adulterado', () => {
     const fullPayload = parser.reconstruct([p1, p2Corrupt]) as string;
-    const report = parser.parseReport(fullPayload);
+    const report = parser.parseReport(fullPayload, [p1, p2Corrupt]);
     
     expect('code' in report).toBe(true);
     if ('code' in report) {
       expect(report.code).toBe('INVALID_HASH');
     }
   });
-  describe('Auditoria de HASH Criptográfico (Fase 5.1)', () => {
+
+  describe('Auditoria de HASH Criptográfico (Fase 5.1 e 5.3)', () => {
     it('A. hash oficial válido -> VERIFIED', () => {
       const full = parser.reconstruct([p1, p2]) as string;
-      const report = parser.parseReport(full);
+      const report = parser.parseReport(full, [p1, p2]);
       expect('code' in report).toBe(false);
       if (!('code' in report)) expect(report.hashStatus).toBe('VERIFIED');
     });
 
     it('B. primeiro caractere alterado -> INVALID', () => {
-      const full = parser.reconstruct([p1, p2]) as string;
-      const modified = full.replace(/HASH:f/, 'HASH:a');
-      const report = parser.parseReport(modified);
+      const p2Mod = p2.replace(/HASH:C/, 'HASH:D');
+      const full = parser.reconstruct([p1, p2Mod]) as string;
+      const report = parser.parseReport(full, [p1, p2Mod]);
+      expect('code' in report).toBe(true);
       if ('code' in report) expect(report.code).toBe('INVALID_HASH');
     });
 
     it('C. último caractere alterado -> INVALID', () => {
-      const full = parser.reconstruct([p1, p2]) as string;
-      const modified = full.replace(/ae ASSI:/, 'af ASSI:');
-      const report = parser.parseReport(modified);
+      const p2Mod = p2.replace(/A4 ASSI:/, 'A5 ASSI:');
+      const full = parser.reconstruct([p1, p2Mod]) as string;
+      const report = parser.parseReport(full, [p1, p2Mod]);
+      expect('code' in report).toBe(true);
       if ('code' in report) expect(report.code).toBe('INVALID_HASH');
     });
 
-    it('D. hash truncado -> INVALID (não aceitar startsWith)', () => {
-      const full = parser.reconstruct([p1, p2]) as string;
-      const modified = full.replace(/HASH:[a-f0-9]+ ASSI:/, 'HASH:fb054add11d75292ba47f483e1732ffe16935ee6d844ee65036ee8845ac1c4c0da715e5af638ab1ac49090a4118ef11147a83e2b2125f52d38a2376a216bb9 ASSI:');
-      const report = parser.parseReport(modified);
+    it('D. hash truncado -> INVALID', () => {
+      const p2Mod = p2.replace(/A4 ASSI:/, ' ASSI:'); // Removed 1 char
+      const full = parser.reconstruct([p1, p2Mod]) as string;
+      const report = parser.parseReport(full, [p1, p2Mod]);
+      expect('code' in report).toBe(true);
       if ('code' in report) expect(report.code).toBe('INVALID_HASH');
     });
 
-    it('E. hash vazio -> UNAVAILABLE', () => {
-      const full = parser.reconstruct([p1, p2]) as string;
-      const modified = full.replace(/HASH:[a-f0-9]+ ASSI:/, 'ASSI:');
-      const report = parser.parseReport(modified);
-      // Fails validation but does it return UNAVAILABLE? The semantic parser puts UNAVAILABLE if missing.
+    it('E. hash curto -> INVALID', () => {
+      const p2Mod = p2.replace(/HASH:[A-F0-9]+ ASSI:/, 'HASH:12345 ASSI:');
+      const full = parser.reconstruct([p1, p2Mod]) as string;
+      const report = parser.parseReport(full, [p1, p2Mod]);
+      expect('code' in report).toBe(true);
+      if ('code' in report) expect(report.code).toBe('INVALID_HASH');
+    });
+
+    it('F. hash123 -> INVALID', () => {
+      const p2Mod = p2.replace(/HASH:[A-F0-9]+ ASSI:/, 'HASH:hash123 ASSI:');
+      const full = parser.reconstruct([p1, p2Mod]) as string;
+      const report = parser.parseReport(full, [p1, p2Mod]);
+      expect('code' in report).toBe(true);
+      if ('code' in report) expect(report.code).toBe('INVALID_HASH');
+    });
+
+    it('G. conteúdo do BU alterado -> INVALID', () => {
+      const p2Mod = p2.replace('TOTC:230', 'TOTC:231');
+      const full = parser.reconstruct([p1, p2Mod]) as string;
+      const report = parser.parseReport(full, [p1, p2Mod]);
+      expect('code' in report).toBe(true);
+      if ('code' in report) expect(report.code).toBe('INVALID_HASH');
+    });
+
+    it('H. espaço relevante alterado -> INVALID', () => {
+      const p2Mod = p2.replace('TOTC:230 HASH:', 'TOTC:230  HASH:');
+      const full = parser.reconstruct([p1, p2Mod]) as string;
+      const report = parser.parseReport(full, [p1, p2Mod]);
+      expect('code' in report).toBe(true);
+      if ('code' in report) expect(report.code).toBe('INVALID_HASH');
+    });
+
+    it('I. parte multipart alterada -> INVALID', () => {
+      const p1Mod = p1.replace('BRAN:10', 'BRAN:11');
+      const full = parser.reconstruct([p1Mod, p2]) as string;
+      const report = parser.parseReport(full, [p1Mod, p2]);
+      expect('code' in report).toBe(true);
+      if ('code' in report) expect(report.code).toBe('INVALID_HASH');
+    });
+
+    it('J. hash ausente -> UNAVAILABLE', () => {
+      const p2Mod = p2.replace(/HASH:[A-F0-9]+ ASSI:/, 'ASSI:');
+      const full = parser.reconstruct([p1, p2Mod]) as string;
+      const report = parser.parseReport(full, [p1, p2Mod]);
+      // Semantic parser will still return the data but HashValidator sets UNAVAILABLE
+      expect('code' in report).toBe(false);
       if (!('code' in report)) expect(report.hashStatus).toBe('UNAVAILABLE');
     });
 
-    it('F. payload alterado -> INVALID', () => {
-      const full = parser.reconstruct([p1, p2]) as string;
-      const modified = full.replace('TOTC:200', 'TOTC:201');
-      const report = parser.parseReport(modified);
-      if ('code' in report) expect(report.code).toBe('INVALID_HASH');
-    });
-
-    it('G. alteração de espaço relevante -> INVALID', () => {
-      const full = parser.reconstruct([p1, p2]) as string;
-      const modified = full.replace('TOTC:200 HASH:', 'TOTC:200  HASH:');
-      const report = parser.parseReport(modified);
-      if ('code' in report) expect(report.code).toBe('INVALID_HASH');
-    });
-
-    it('H. partes invertidas antes da reconstrução -> hash permanece válido', () => {
+    it('K. partes fornecidas fora de ordem, mas corretamente remontadas -> VERIFIED', () => {
+      // Reconstruct automatically orders them, but we pass out of order to rawParts as well
       const full = parser.reconstruct([p2, p1]) as string;
-      const report = parser.parseReport(full);
+      const report = parser.parseReport(full, [p2, p1]);
       expect('code' in report).toBe(false);
       if (!('code' in report)) expect(report.hashStatus).toBe('VERIFIED');
     });

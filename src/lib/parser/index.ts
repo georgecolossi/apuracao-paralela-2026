@@ -27,6 +27,7 @@ export type BallotReportData = {
   signature: string;
   hashStatus?: VerificationState;
   sigStatus?: VerificationState;
+  warnings?: string[];
 };
 
 export interface BallotReportParser {

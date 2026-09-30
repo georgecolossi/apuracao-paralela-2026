@@ -4,16 +4,18 @@ export async function getElectionTotals(electionId: string) {
   const processedReportsCount = await prisma.ballotReport.count({
     where: {
       electionId,
-      status: 'PROCESSADO'
+      status: 'PROCESSADO',
+      isSimulation: false
     }
   });
 
   const totals = await prisma.ballotVote.groupBy({
-    by: ['officeId', 'candidateId', 'partyId', 'voteType'],
+    by: ['officeId', 'candidateNumber', 'partyNumber', 'voteType'],
     where: {
       report: {
         electionId,
-        status: 'PROCESSADO'
+        status: 'PROCESSADO',
+        isSimulation: false
       }
     },
     _sum: {
@@ -32,17 +34,19 @@ export async function getElectionTotalsByMunicipality(electionId: string, cityCo
     where: {
       electionId,
       cityCode,
-      status: 'PROCESSADO'
+      status: 'PROCESSADO',
+      isSimulation: false
     }
   });
 
   const totals = await prisma.ballotVote.groupBy({
-    by: ['officeId', 'candidateId', 'partyId', 'voteType'],
+    by: ['officeId', 'candidateNumber', 'partyNumber', 'voteType'],
     where: {
       report: {
         electionId,
         cityCode,
-        status: 'PROCESSADO'
+        status: 'PROCESSADO',
+        isSimulation: false
       }
     },
     _sum: {

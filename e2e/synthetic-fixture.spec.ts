@@ -8,7 +8,7 @@ test.describe('TSE 2026 SYNTHETIC FIXTURE E2E', () => {
     const { PrismaClient } = require('@prisma/client');
     const prisma = new PrismaClient();
     await prisma.ballotReport.deleteMany({
-      where: { deterministicId: 'SP-71072-0001-0001-1234567' }
+      where: { deterministicId: '123-1-SP-71072-0001-0001-1234567' }
     });
     await prisma.$disconnect();
   });

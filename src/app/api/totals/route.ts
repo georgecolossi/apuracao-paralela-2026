@@ -9,17 +9,18 @@ export async function GET() {
     const processedReportsCount = await prisma.ballotReport.count({
       where: {
         electionId: election.id,
-        status: 'PROCESSADO'
+        status: 'PROCESSADO',
+        isSimulation: false
       }
     });
 
-    // Como o groupBy não permite incluir relações facilmente, vamos buscar manual para simplificar e dar a UI bonita
     const rawTotals = await prisma.ballotVote.groupBy({
-      by: ['officeId', 'voteType'],
+      by: ['officeId', 'candidateNumber', 'partyNumber', 'voteType'],
       where: {
         report: {
           electionId: election.id,
-          status: 'PROCESSADO'
+          status: 'PROCESSADO',
+          isSimulation: false
         }
       },
       _sum: {
@@ -27,16 +28,17 @@ export async function GET() {
       }
     });
 
-    // Mapear officeId para nome
     const offices = await prisma.office.findMany();
     const officeMap = Object.fromEntries(offices.map(o => [o.id, o.name]));
 
     const totals = rawTotals.map(t => ({
-      ...t,
-      officeId: officeMap[t.officeId] || t.officeId
+      officeName: officeMap[t.officeId] || t.officeId,
+      candidateNumber: t.candidateNumber,
+      partyNumber: t.partyNumber,
+      voteType: t.voteType,
+      quantity: t._sum.quantity || 0
     }));
 
-    // Calculate expected BUs from sections
     const expectedAgg = await prisma.pollingSection.aggregate({
       _sum: { expectedBUs: true }
     });

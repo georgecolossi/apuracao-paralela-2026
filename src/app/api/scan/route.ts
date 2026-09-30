@@ -22,8 +22,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: partInfo.code || partInfo.message }, { status: 400 });
     }
 
+    if (!sessionId) {
+      return NextResponse.json({ error: 'SCAN_SESSION_REQUIRED' }, { status: 400 });
+    }
+
     const { partIndex, totalParts, payload } = partInfo;
-    const sequenceId = sessionId || partInfo.sequenceId;
+    const sequenceId = sessionId;
 
     // Resolve ScanSession
     let session = await prisma.scanSession.findUnique({
@@ -54,7 +58,14 @@ export async function POST(req: Request) {
     const crypto = require('crypto');
     const contentHashStr = crypto.createHash('sha256').update(content).digest('hex');
 
-    if (!existingPart) {
+    if (existingPart) {
+      if (existingPart.contentHash === contentHashStr) {
+        // It's the exact same part, we can just treat it as ALREADY_SCANNED but return PARCIAL or COMPLETO to keep the flow alive
+        // Just let it pass through to the count check
+      } else {
+        return NextResponse.json({ error: 'CONFLICTING_PART', message: 'Parte lida diverge da lida anteriormente' }, { status: 409 });
+      }
+    } else {
       await prisma.ballotReportPart.create({
         data: {
           sessionId: session.id,
@@ -103,8 +114,16 @@ export async function POST(req: Request) {
 
     const { buildBallotReportIdentity } = require('@/lib/identity');
     // Determina DeterministicID real a partir do parser
-    const { stateCode, cityCode, zoneCode, sectionCode, urnCode } = reportData;
-    const deterministicId = buildBallotReportIdentity({ stateCode, cityCode, zoneCode, sectionCode, urnCode });
+    const { electionId, roundNumber, stateCode, cityCode, zoneCode, sectionCode, urnCode } = reportData;
+    const deterministicId = buildBallotReportIdentity({ 
+      plei: electionId, 
+      turn: String(roundNumber), 
+      stateCode, 
+      cityCode, 
+      zoneCode, 
+      sectionCode, 
+      urnCode 
+    });
 
     // Checar Duplicidade real
     const duplicate = await prisma.ballotReport.findUnique({
