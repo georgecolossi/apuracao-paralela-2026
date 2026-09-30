@@ -17,7 +17,7 @@ export async function POST(req: Request) {
     }
 
     // 3. Verificar payload de confirmação (strict)
-    let body: any = {};
+    let body: { confirmationText?: string } = {};
     try {
       body = await req.json();
     } catch (e) {

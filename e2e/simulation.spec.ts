@@ -38,7 +38,7 @@ test.describe('APPLICATION E2E / SIMULATION', () => {
     // Parte 1/2
     const scanPart1 = await page.request.post('/api/scan', {
       data: {
-        content: `SIMULATION|1|2|${sessionId}|123|1|SP|SAO PAULO|123|456|${urnCode}|Prefeito,10,10,nominal,50;Vereador,12345,12,nominal,30|hash123|sig123`,
+        content: `SIMULATION|1|2|${sessionId}|123|1|SP|71072|123|456|${urnCode}|Prefeito,10,10,nominal,50;Vereador,12345,12,nominal,30|hash123|sig123`,
         isSimulation: true,
         sessionId
       }
@@ -65,7 +65,7 @@ test.describe('APPLICATION E2E / SIMULATION', () => {
 
     // 3. Conferência e Confirmação
     await page.goto(`/admin/conferir/${reportId}`);
-    await expect(page.locator('text=SAO PAULO')).toBeVisible();
+    await expect(page.locator('text=71072')).toBeVisible();
     await expect(page.locator('text=SIMULAÇÃO')).toBeVisible();
     
     // Confirma
@@ -84,7 +84,7 @@ test.describe('APPLICATION E2E / SIMULATION', () => {
     
     // Vamos validar no admin/conferencia
     await page.goto('/admin/conferencia');
-    await expect(page.locator('text=SAO PAULO').first()).toBeVisible();
+    await expect(page.locator('text=71072').first()).toBeVisible();
     await expect(page.locator('text=PROCESSADO').first()).toBeVisible();
   });
 });

@@ -21,7 +21,7 @@ export default defineConfig({
     url: 'http://localhost:3000',
     reuseExistingServer: !process.env.CI,
     env: {
-      COVERAGE_CITY_CODES: '1392,SAO PAULO,71072'
+      COVERAGE_CITY_CODES: '1392,71072'
     }
   },
 });

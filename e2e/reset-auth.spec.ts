@@ -25,7 +25,7 @@ test.describe('E2E ADMINISTRATIVO / SEGURANÇA DO RESET', () => {
 
     // Garantir que operator exista
     const opEmail = 'operator@apuracao.local';
-    let operator = await prisma.user.findUnique({ where: { email: opEmail }});
+    const operator = await prisma.user.findUnique({ where: { email: opEmail }});
     if (!operator) {
       const passwordHash = await bcrypt.hash('operator123', 10);
       await prisma.user.create({

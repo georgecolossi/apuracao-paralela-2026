@@ -1,9 +1,10 @@
 import { test, expect } from '@playwright/test';
 import fs from 'fs';
 import path from 'path';
+import { Tse2026BallotReportParser } from '../src/lib/parser/Tse2026BallotReportParser';
 
 test.describe('E2E ADMINISTRATIVO / RESET DA APURAÇÃO', () => {
-  let sessionId = `E2E-RESET-${Date.now()}`;
+  const sessionId = `E2E-RESET-${Date.now()}`;
   let officialPayload = "";
 
   test.beforeAll(async () => {
@@ -66,25 +67,47 @@ test.describe('E2E ADMINISTRATIVO / RESET DA APURAÇÃO', () => {
       data: { content: officialPayload, isSimulation: false, sessionId: sessionId + '-B' }
     });
     const newScanData = await newScanRes.json();
-    console.log('NEW SCAN DATA:', newScanData);
     expect(newScanRes.status()).toBe(200);
     const newReportId = newScanData.reportId;
     
     // Confirma
     const confRes = await page.request.post(`/api/reports/${newReportId}/confirm`);
-    console.log('CONFIRM DATA:', await confRes.text());
     expect(confRes.status()).toBe(200);
     
-    // Validar Totais gerados
+    // Validar Totais gerados contra o parser oficial
     const finalTotalsRes = await page.request.get('/api/totals');
     const finalTotals = await finalTotalsRes.json();
-    console.log('FINAL TOTALS:', finalTotals);
-    expect(finalTotals.totals.length).toBeGreaterThan(0);
     
-    // No fixture 'Pres-T2_s02202ac0139200090013-imgbu', existe o voto NOMI: 2.
-    // Vamos garantir que algum item reflete isso (ex: candidato 13 ou 22 etc)
-    const totalVotes = finalTotals.totals.reduce((sum: number, voteGroup: any) => sum + (voteGroup.quantity || 0), 0);
-    expect(totalVotes).toBeGreaterThan(0);
+    const parser = new Tse2026BallotReportParser();
+    const parsed = parser.parseReport(officialPayload, [officialPayload]);
+    if ('code' in parsed) throw new Error('Failed to parse official payload');
+    const expectedAgg: Record<string, number> = {};
+    for (const v of parsed.votes) {
+      const key = `${v.officeName}|${v.candidateNumber || null}|${v.partyNumber || null}|${v.type}`;
+      expectedAgg[key] = (expectedAgg[key] || 0) + v.quantity;
+    }
+
+    interface TotalRow {
+      officeName: string;
+      candidateNumber: string | null;
+      partyNumber: string | null;
+      voteType: string;
+      quantity: number;
+    }
+
+    for (const [key, expectedQty] of Object.entries(expectedAgg)) {
+      const [oName, cNum, pNum, vType] = key.split('|');
+      const expectedC = cNum === 'null' ? null : cNum;
+      const expectedP = pNum === 'null' ? null : pNum;
+      const found = finalTotals.totals.find((t: TotalRow) => 
+        t.officeName === oName &&
+        String(t.candidateNumber) === String(expectedC) &&
+        String(t.partyNumber) === String(expectedP) &&
+        t.voteType === vType
+      );
+      expect(found).toBeDefined();
+      expect(found.quantity).toBe(expectedQty);
+    }
 
     // Painel reflete
     await page.goto('/apuracao');

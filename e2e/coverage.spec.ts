@@ -20,6 +20,18 @@ test.describe('E2E ADMINISTRATIVO / COBERTURA GEOGRÁFICA', () => {
         }
       });
     }
+    const simExists = await prisma.election.findFirst({ where: { plei: 'SIM-2202' }});
+    if (!simExists) {
+      await prisma.election.create({
+        data: {
+          plei: 'SIM-2202',
+          name: 'Simulação Acrelandia',
+          year: 2026,
+          status: 'ACTIVE',
+          rounds: { create: [{ roundNumber: 1, status: 'ACTIVE' }] }
+        }
+      });
+    }
     await prisma.$disconnect();
   });
   
@@ -43,25 +55,47 @@ test.describe('E2E ADMINISTRATIVO / COBERTURA GEOGRÁFICA', () => {
     expect(scanRes.status()).toBe(403);
     const data = await scanRes.json();
     expect(data.error).toBe('OUT_OF_COVERAGE');
+
+    // Verificar banco de dados
+    const { PrismaClient } = await import('@prisma/client');
+    const prisma = new PrismaClient();
+    
+    // Provar que o relatório não foi criado
+    const reportCount = await prisma.ballotReport.count({
+      where: { hash: 'hash_test' }
+    });
+    expect(reportCount).toBe(0);
+
+    // Provar que nenhum voto foi registrado
+    const voteCount = await prisma.ballotVote.count({
+      where: { report: { hash: 'hash_test' } }
+    });
+    expect(voteCount).toBe(0);
+
+    // Provar que o AuditLog foi registrado
+    const log = await prisma.auditLog.findFirst({
+      where: { action: 'SCAN_OUT_OF_COVERAGE' }
+    });
+    expect(log).not.toBeNull();
+    
+    await prisma.$disconnect();
   });
 
-  test('B) Aceitar BU dentro da cobertura (oficial TSE AC)', async ({ page }) => {
-    // 1. Logar
+  test('B) Aceitar BU dentro da cobertura (MUNI permitido)', async ({ page }) => {
     await page.goto('/login');
     await page.fill('input[type="email"]', 'admin@apuracao.local');
     await page.fill('input[type="password"]', 'admin123');
     await page.click('button[type="submit"]');
     await expect(page).toHaveURL(/.*admin.*/);
 
-    // 2. Ler o BU oficial (MUNI: 1392)
-    const examplesDir = path.join(__dirname, '../tests/fixtures/tse-2026/official/examples');
-    const qrbuContent = fs.readFileSync(path.join(examplesDir, 'Pres-T2_s02202ac0139200090013-imgbu', 'decoded', 'qrbu-01-of-01.txt'), 'utf-8');
+    // MUNI 71072 (São Paulo, capital simulado) está configurado no COVERAGE_CITY_CODES
+    const uniqueHash = 'hash_cov_' + Date.now();
+    const inCoveragePayload = `SIMULATION|1|1|E2E-TEST|2202|1|SP|71072|90|100|1234567|Presidente,901,13,NOMINAL,50|${uniqueHash}|sig_test`;
     
     const scanRes = await page.request.post('/api/scan', {
-      data: { content: qrbuContent, isSimulation: false, sessionId: sessionId + '-IN' }
+      data: { content: inCoveragePayload, isSimulation: true, sessionId: sessionId + '-IN' }
     });
     
-    // 1392 está no COVERAGE_CITY_CODES, então passa
-    expect([200, 400, 409]).toContain(scanRes.status());
+    expect(scanRes.status()).toBe(200);
   });
 });
