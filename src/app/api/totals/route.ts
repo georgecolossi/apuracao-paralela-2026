@@ -34,20 +34,7 @@ export async function GET() {
     // Configura o resolver
     const { CandidateResolver } = await import('@/lib/metadata/CandidateResolver');
     const resolver = new CandidateResolver();
-    // Usa uma lógica simplificada para extrair o electionCode dos reports já processados.
-    // Como a cobertura garante a mesma eleição/estado, pegamos um report genérico para contexto.
-    const sampleReport = await prisma.ballotReport.findFirst({
-      where: { electionId: election.id, status: 'PROCESSADO', isSimulation: false },
-      select: { stateCode: true, deterministicId: true }
-    });
-    
-    // Se existir report, extraímos os códigos do pleito a partir da tabela
-    if (sampleReport) {
-      // O TSE deterministicId contém PLEI (ex: "PLEI:6257"). Mas podemos abstrair carregando para "SC" e "BR".
-      // Para as Eleições Gerais de 2026, sabemos que as eleições oficiais estão nos arquivos importados.
-      // E para testes simplificamos carregando metadados ignorando electionCode stricto sensu, focando no estado.
-      await resolver.load('', sampleReport.stateCode); 
-    }
+    await resolver.load(election.year);
 
     const officeNameToCode: Record<string, string> = {
       'Presidente': '1',
@@ -65,10 +52,13 @@ export async function GET() {
       let metadata: { status: string; candidateName?: string; partyAbbreviation?: string; partyNumber?: string } = { status: 'NOT_FOUND' };
 
       if (officeCode) {
+        // Presidente é sempre BR (Nacional), demais cargos usam contexto SC (Estado-alvo da plataforma)
+        const stateContext = officeCode === '1' ? 'BR' : 'SC';
+        
         if (t.voteType === 'NOMINAL' && t.candidateNumber) {
-          metadata = resolver.resolveNominal(officeCode, t.candidateNumber);
+          metadata = resolver.resolveNominal(election.year, stateContext, officeCode, t.candidateNumber);
         } else if (t.voteType === 'LEGENDA' && t.partyNumber) {
-          metadata = resolver.resolveLegenda(officeCode, t.partyNumber);
+          metadata = resolver.resolveLegenda(election.year, stateContext, officeCode, t.partyNumber);
         }
       }
 

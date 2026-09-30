@@ -32,7 +32,7 @@ function parseCsvLine(text: string): string[] {
 async function processFile(filePath: string, allowedRoles: Set<string>) {
   if (!fs.existsSync(filePath)) {
     console.error(`Arquivo não encontrado: ${filePath}`);
-    return;
+    process.exit(1);
   }
 
   console.log(`\nProcessando ${filePath}...`);
@@ -45,6 +45,12 @@ async function processFile(filePath: string, allowedRoles: Set<string>) {
   let header: string[] = [];
   let count = 0;
 
+  const REQUIRED_HEADERS = [
+    'ANO_ELEICAO', 'NR_TURNO', 'CD_ELEICAO', 'SG_UF',
+    'CD_CARGO', 'DS_CARGO', 'SQ_CANDIDATO', 'NR_CANDIDATO',
+    'NM_URNA_CANDIDATO', 'NR_PARTIDO', 'SG_PARTIDO', 'NM_PARTIDO'
+  ];
+
   for await (const line of rl) {
     if (line.trim() === '') continue;
 
@@ -52,6 +58,12 @@ async function processFile(filePath: string, allowedRoles: Set<string>) {
     
     if (header.length === 0) {
       header = cols.map(c => c.trim().toUpperCase());
+      for (const req of REQUIRED_HEADERS) {
+        if (!header.includes(req)) {
+           console.error(`Coluna obrigatória ausente no cabeçalho: ${req}`);
+           process.exit(1);
+        }
+      }
       continue;
     }
 
@@ -66,14 +78,29 @@ async function processFile(filePath: string, allowedRoles: Set<string>) {
     }
 
     const candidateSequence = row['SQ_CANDIDATO'];
-    if (!candidateSequence) continue;
+    if (!candidateSequence) {
+      console.error(`SQ_CANDIDATO obrigatório ausente em linha processável.`);
+      process.exit(1);
+    }
+
+    const electionYear = parseInt(row['ANO_ELEICAO'], 10);
+    if (isNaN(electionYear)) {
+      console.error(`ANO_ELEICAO inválido no SQ_CANDIDATO ${candidateSequence}`);
+      process.exit(1);
+    }
+
+    const round = parseInt(row['NR_TURNO'], 10);
+    if (isNaN(round)) {
+      console.error(`NR_TURNO inválido no SQ_CANDIDATO ${candidateSequence}`);
+      process.exit(1);
+    }
 
     await prisma.candidateMetadata.upsert({
       where: { candidateSequence },
       update: {
-        electionYear: parseInt(row['ANO_ELEICAO'], 10) || 2026,
+        electionYear,
         electionCode: row['CD_ELEICAO'] || '',
-        round: parseInt(row['NR_TURNO'], 10) || 1,
+        round,
         state: row['SG_UF'] || '',
         officeCode,
         officeName: row['DS_CARGO'] || '',
@@ -86,9 +113,9 @@ async function processFile(filePath: string, allowedRoles: Set<string>) {
       },
       create: {
         candidateSequence,
-        electionYear: parseInt(row['ANO_ELEICAO'], 10) || 2026,
+        electionYear,
         electionCode: row['CD_ELEICAO'] || '',
-        round: parseInt(row['NR_TURNO'], 10) || 1,
+        round,
         state: row['SG_UF'] || '',
         officeCode,
         officeName: row['DS_CARGO'] || '',

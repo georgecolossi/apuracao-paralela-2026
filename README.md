@@ -83,15 +83,17 @@ O sistema integra metadados oficiais de candidaturas para enriquecer a apresenta
 **Origem dos dados**: Portal de Dados Abertos do TSE ([Candidatos - 2026](https://dadosabertos.tse.jus.br/pt_BR/dataset/candidatos-2026)).
 **Arquivos utilizados**: O dataset já encontra-se armazenado localmente no repositório na pasta `consulta_cand_2026/`, sendo utilizados estritamente os recortes `BR.csv` e `SC.csv`. O sistema não realiza downloads em runtime.
 
+
 **Características da integração**:
 - **Fonte da verdade dos votos**: O QRBU continua sendo a única fonte dos votos contabilizados.
 - **Isolamento de quantidades**: O metadata não cria, altera, valida ou remove votos, nem afeta quantidades ou altera o resultado da apuração. Trata-se de uma camada estrita de apresentação visual (Nome e Sigla).
 - **Cargos importados**: Presidente (1), Governador (3), Senador (5), Deputado Federal (6) e Deputado Estadual (7). Cargos de vice e suplência não são importados como entidades votáveis separadas.
-- **Importação**: Realizada via o comando `npm run import:candidates`. O processo é completamente idempotente (utiliza upsert com a chave oficial `SQ_CANDIDATO`), impedindo duplicação de dados ou exclusão acidental de registros distintos que compartilhem o mesmo número.
-- **Resolução de Ambiguidade**: A apresentação opera com três estados de resolução:
-  - `FOUND`: Candidato inequivocamente identificado.
-  - `NOT_FOUND`: Número não encontrado no dataset.
-  - `AMBIGUOUS`: Múltiplos candidatos com a mesma chave cargo+número. O sistema não atribui o voto arbitrariamente e mantém o registro neutro.
+- **Importação (Fail-Closed)**: Realizada via o comando `npm run import:candidates`. O script é estritamente *fail-closed* e aborta a importação caso arquivos obrigatórios (`BR.csv` e `SC.csv`) ou colunas necessárias faltem, além de rejeitar linhas com dados estruturais vitais ausentes ou inválidos. O processo é completamente idempotente (utiliza upsert com a chave oficial `SQ_CANDIDATO`), impedindo duplicação de dados.
+- **Resolução Contextual e Ambiguidade**: A apresentação opera com três estados de resolução:
+  - `FOUND`: Candidato inequivocamente identificado no contexto exato.
+  - `NOT_FOUND`: Número não encontrado no dataset para o contexto específico.
+  - `AMBIGUOUS`: Múltiplos candidatos com a mesma chave cargo+número *dentro do mesmo contexto*.
+  O resolver utiliza o contexto eleitoral estrito (`electionYear`, `state`, `officeCode` e `candidateNumber`) extraído da eleição vigente, evitando falsas ambiguidades entre candidatos com o mesmo número em estados diferentes.
 - **Fallback Visual**: Casos não resolvidos (`NOT_FOUND` e `AMBIGUOUS`) recebem o fallback visual "Nome não identificado", preservando integralmente o voto computado do QRBU.
 - **Limitações**: Ausência deliberada de fotografias, dados pessoais ou biográficos. O sistema não faz requisições externas para baixar ativos visuais e se mantém restrito a metadados textuais vitais (Nome/Número/Sigla).
 
@@ -113,7 +115,7 @@ Para evitar o registro de urnas distantes da área de foco do portal da apuraç�
 ## Modo de simulação
 Com foco em possibilitar testes operacionais durante o dia da eleição antes da abertura das urnas, a arquitetura distingue BUs oficiais de _BUs de simulação_ via a flag `isSimulation`.
 
-Se for acionado o fluxo de simulação, um prefixo virtual `SIM-` será atrelado àquela eleição no registro e no código da urna, os dados de simulação são excluídos da totalização pública, mas continuem disponíveis para os fluxos administrativos pertinentes.
+Se for acionado o fluxo de simulação, um prefixo virtual `SIM-` será atrelado àquela eleição no registro e no código da urna, os dados de simulação são excluídos da totalização pública, mas continuam disponíveis para os fluxos administrativos pertinentes.
 
 ## Preparação para a apuração real
 Uma operação destrutiva está presente sob a rota administrativa `/admin/preparar` para realizar a higiene final do banco de dados antes da apuração.

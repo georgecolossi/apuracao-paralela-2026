@@ -10,33 +10,24 @@ export interface ResolvedCandidate {
 }
 
 export class CandidateResolver {
-  private metadataMap: Map<string, { officeCode: string; candidateNumber: string; ballotName: string; partyNumber: string; partyAbbreviation: string; }[]> = new Map();
+  // key: `${electionYear}|${state}|${officeCode}|${candidateNumber}`
+  private metadataMap: Map<string, { officeCode: string; candidateNumber: string; ballotName: string; partyNumber: string; partyAbbreviation: string; state: string; electionYear: number; }[]> = new Map();
 
-  async load(electionCode: string, state: string) {
-    const whereClause: Record<string, unknown> = {
-      state: { in: [state, 'BR'] }
-    };
-    if (electionCode) {
-      whereClause.electionCode = electionCode;
-    }
-
+  async load(electionYear: number) {
     const records = await prisma.candidateMetadata.findMany({
-      where: whereClause
+      where: { electionYear }
     });
 
     for (const record of records) {
-      // Chave baseada no contexto + cargo + número (se disponível)
-      // O partyNumber para legenda não tem candidateNumber, então criamos uma chave
-      // específica se precisarmos de fallback, mas a prioridade da Fase 7.3 é voto NOMINAL.
-      const key = `${record.officeCode}|${record.candidateNumber}`;
+      const key = `${record.electionYear}|${record.state}|${record.officeCode}|${record.candidateNumber}`;
       const list = this.metadataMap.get(key) || [];
       list.push(record);
       this.metadataMap.set(key, list);
     }
   }
 
-  resolveNominal(officeCode: string, candidateNumber: string): ResolvedCandidate {
-    const key = `${officeCode}|${candidateNumber}`;
+  resolveNominal(electionYear: number, state: string, officeCode: string, candidateNumber: string): ResolvedCandidate {
+    const key = `${electionYear}|${state}|${officeCode}|${candidateNumber}`;
     const matches = this.metadataMap.get(key);
 
     if (!matches || matches.length === 0) {
@@ -56,16 +47,12 @@ export class CandidateResolver {
     };
   }
 
-  // Legenda fallback - busca pelo número do partido para tentar extrair a sigla
-  resolveLegenda(officeCode: string, partyNumber: string): ResolvedCandidate {
-    // Como um partido pode ter N candidatos com o mesmo officeCode, iteramos
-    // para encontrar qualquer registro que contenha a sigla desse partido.
-    // Isso é um fallback seguro para legenda sem inventar candidatos fictícios.
+  resolveLegenda(electionYear: number, state: string, officeCode: string, partyNumber: string): ResolvedCandidate {
     let partyAbbreviation = '';
     
     for (const list of this.metadataMap.values()) {
       for (const record of list) {
-        if (record.officeCode === officeCode && record.partyNumber === partyNumber) {
+        if (record.electionYear === electionYear && record.state === state && record.officeCode === officeCode && record.partyNumber === partyNumber) {
           partyAbbreviation = record.partyAbbreviation;
           break;
         }
