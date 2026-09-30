@@ -38,12 +38,15 @@ export default function ApuracaoPage() {
           setError(false);
           
           // Set initial active office if none selected
-          if (!activeOffice && data.totals?.length > 0) {
-            const offices = Array.from(new Set(data.totals.map((t: TotalItem) => t.officeName))) as string[];
-            if (offices.length > 0) {
-              setActiveOffice(offices[0]);
+          setActiveOffice(prev => {
+            if (!prev && data.totals?.length > 0) {
+              const offices = Array.from(new Set(data.totals.map((t: TotalItem) => t.officeName))) as string[];
+              if (offices.length > 0) {
+                return offices[0];
+              }
             }
-          }
+            return prev;
+          });
         }
       } catch (e) {
         if (mounted) setError(true);
@@ -77,7 +80,7 @@ export default function ApuracaoPage() {
       mounted = false;
       evtSource.close();
     };
-  }, [activeOffice]);
+  }, []);
 
   if (loading) {
     return (

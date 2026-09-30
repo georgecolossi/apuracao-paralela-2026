@@ -1,0 +1,76 @@
+
+> apuracao-paralela-2026@0.1.0 lint
+> eslint
+
+
+C:\Users\Smart\.gemini\antigravity\scratch\apuracao-paralela-2026\e2e\official-qrbu.spec.ts
+   10:67  warning  'request' is defined but never used                 @typescript-eslint/no-unused-vars
+  144:11  warning  'duplicateScan' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\Smart\.gemini\antigravity\scratch\apuracao-paralela-2026\e2e\simulation.spec.ts
+  26:79  warning  'request' is defined but never used            @typescript-eslint/no-unused-vars
+  81:11  warning  'pageText' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\Smart\.gemini\antigravity\scratch\apuracao-paralela-2026\hash-bruteforce.ts
+  56:7  warning  'allPartsCombined' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\Smart\.gemini\antigravity\scratch\apuracao-paralela-2026\prisma\seed.ts
+  47:9  warning  'city' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\Smart\.gemini\antigravity\scratch\apuracao-paralela-2026\src\app\admin\conferir\[id]\ConfirmButton.tsx
+  30:14  warning  'e' is defined but never used  @typescript-eslint/no-unused-vars
+  46:14  warning  'e' is defined but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\Smart\.gemini\antigravity\scratch\apuracao-paralela-2026\src\app\admin\conferir\[id]\page.tsx
+  45:12  warning  'e' is defined but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\Smart\.gemini\antigravity\scratch\apuracao-paralela-2026\src\app\admin\scanner\page.tsx
+  87:14  warning  'err' is defined but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\Smart\.gemini\antigravity\scratch\apuracao-paralela-2026\src\app\api\export\route.ts
+  13:12  warning  'e' is defined but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\Smart\.gemini\antigravity\scratch\apuracao-paralela-2026\src\app\api\reports\[id]\cancel\route.ts
+  37:12  warning  'error' is defined but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\Smart\.gemini\antigravity\scratch\apuracao-paralela-2026\src\app\api\reports\[id]\confirm\route.ts
+  42:12  warning  'error' is defined but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\Smart\.gemini\antigravity\scratch\apuracao-paralela-2026\src\app\api\scan\route.ts
+  29:36  warning  'payload' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\Smart\.gemini\antigravity\scratch\apuracao-paralela-2026\src\app\api\totals\route.ts
+  52:12  warning  'error' is defined but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\Smart\.gemini\antigravity\scratch\apuracao-paralela-2026\src\app\apuracao\page.tsx
+  51:16  warning  'e' is defined but never used  @typescript-eslint/no-unused-vars
+  74:16  warning  'e' is defined but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\Smart\.gemini\antigravity\scratch\apuracao-paralela-2026\src\lib\auth.ts
+  56:12  warning  'err' is defined but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\Smart\.gemini\antigravity\scratch\apuracao-paralela-2026\src\lib\crypto\index.ts
+   4:10  warning  'payload' is defined but never used    @typescript-eslint/no-unused-vars
+   4:27  warning  'signature' is defined but never used  @typescript-eslint/no-unused-vars
+  12:10  warning  'payload' is defined but never used    @typescript-eslint/no-unused-vars
+  12:27  warning  'hash' is defined but never used       @typescript-eslint/no-unused-vars
+
+C:\Users\Smart\.gemini\antigravity\scratch\apuracao-paralela-2026\src\lib\parser\Tse2026SimulationParser.ts
+  30:36  warning  'rawParts' is defined but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\Smart\.gemini\antigravity\scratch\apuracao-paralela-2026\src\lib\parser\index.ts
+  1:10  warning  'SignatureVerifier' is defined but never used  @typescript-eslint/no-unused-vars
+  1:29  warning  'HashVerifier' is defined but never used       @typescript-eslint/no-unused-vars
+
+C:\Users\Smart\.gemini\antigravity\scratch\apuracao-paralela-2026\src\lib\parser\tse2026\Tse2026SignatureValidator.ts
+  2:65  warning  'cert' is defined but never used  @typescript-eslint/no-unused-vars
+
+C:\Users\Smart\.gemini\antigravity\scratch\apuracao-paralela-2026\src\lib\validators\index.ts
+   4:12  warning  'asn1Decoded' is defined but never used  @typescript-eslint/no-unused-vars
+  11:12  warning  'parsedData' is defined but never used   @typescript-eslint/no-unused-vars
+
+C:\Users\Smart\.gemini\antigravity\scratch\apuracao-paralela-2026\tests\official-fixture.integration.test.ts
+  4:8  warning  'crypto' is defined but never used  @typescript-eslint/no-unused-vars
+
+✖ 29 problems (0 errors, 29 warnings)
+

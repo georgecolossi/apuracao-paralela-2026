@@ -25,7 +25,9 @@ export default function ScannerPage() {
   };
 
   useEffect(() => {
-    resetSession();
+    // Generate initial session ID on client side to avoid hydration mismatch
+    // eslint-disable-next-line
+    setSessionId(`UI-${Date.now()}-${Math.floor(Math.random() * 10000)}`);
   }, []);
 
   const processQrContent = async (decodedText: string) => {

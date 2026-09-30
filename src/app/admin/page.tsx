@@ -40,20 +40,9 @@ export default async function AdminDashboard() {
             <p className="text-blue-200 font-normal">Acessar o scanner e coletar QR Codes</p>
           </Link>
           
-          <div className="bg-white p-6 shadow-sm rounded-lg border">
-            <h3 className="font-semibold text-gray-500 uppercase text-xs tracking-wider mb-4">Status do Sistema</h3>
-            <div className="flex items-center mb-2">
-              <div className="w-3 h-3 bg-green-500 rounded-full mr-2"></div>
-              <span className="text-sm font-bold text-gray-800">Motor de Apuração Ativo</span>
-            </div>
-            <div className="flex items-center mb-2">
-              <div className="w-3 h-3 bg-green-500 rounded-full mr-2"></div>
-              <span className="text-sm font-bold text-gray-800">Banco de Dados Conectado</span>
-            </div>
-            <div className="flex items-center mt-4">
-              <span className="text-sm text-gray-600">Operadores Ativos:</span>
-              <span className="font-bold text-gray-900 ml-2">{activeOperators}</span>
-            </div>
+          <div className="bg-white p-6 shadow-sm rounded-lg border flex flex-col justify-center items-center">
+            <h3 className="font-semibold text-gray-500 uppercase text-xs tracking-wider mb-2">Operadores Ativos</h3>
+            <span className="text-4xl font-bold text-gray-900">{activeOperators}</span>
           </div>
 
           <div className="md:col-span-2 bg-white p-6 shadow-sm rounded-lg border">
