@@ -107,14 +107,14 @@ Se um QRBU correspondente a este identificador for escaneado em uma tentativa po
 O sistema possui proteção _fail-closed_ para a área de cobertura: BUs reais lidos de municípios não autorizados são imediatamente rejeitados com `HTTP 403 OUT_OF_COVERAGE`, gerando um `AuditLog`.
 
 - A **única** fonte operacional para a cobertura geográfica é o **Banco de Dados**.
-- Se a cobertura estiver **vazia**, **nenhum BU real será aceito** (fail-closed).
+- Se a cobertura estiver **vazia**, **nenhum BU real será aceito** (fail-closed). O sistema **não** aceita BUs automaticamente.
 - A seleção de cobertura pode ser alterada apenas por usuários com a role **ADMIN** através do painel de administração da interface (`/admin/cobertura`).
 - Apenas códigos de município pertencentes ao estado de **SC** são aceitos, mediante validação contra o catálogo oficial do TSE.
 - Usuários com role **OPERATOR** não possuem acesso ou autorização para modificar essa configuração.
 - O reset ("Zerar Apuração") ou reimportações de catálogo não sobrescrevem as seleções efetuadas previamente pelo administrador.
 - Como mecanismo de integridade, municípios que já possuam dados de BUs reais processados não podem ser removidos da cobertura silenciosamente (rejeitado com HTTP 409).
 
-**Nota Operacional**: A apuração será realizada **somente para Concórdia/SC, código TSE 80837** (embora a arquitetura técnica permita ao administrador configurar outras áreas de cobertura).
+**Nota Operacional**: O banco é criado vazio. A apuração final e em produção será realizada **somente para Concórdia/SC, código TSE 80837**. Essa cobertura deverá ser ativada manualmente pelo administrador no ambiente (`/admin/cobertura`) antes do início oficial. Durante o desenvolvimento, o administrador pode habilitar temporariamente a cobertura do município que consta no fixture oficial a ser testado.
 
 ## Modo de simulação
 Com foco em possibilitar testes operacionais durante o dia da eleição antes da abertura das urnas, a arquitetura distingue BUs oficiais de _BUs de simulação_ via a flag `isSimulation`.
@@ -194,8 +194,9 @@ ADMIN_INITIAL_PASSWORD="admin_password"
 1. Realize a clonagem deste repositório.
 2. Configure suas variáveis copiando `.env.example` para `.env`.
 3. Instale as dependências: `npm install`
-4. Sincronize o schema e o banco de dados: `npx prisma db push`
-5. Popule pleitos virtuais utilizando: `npx prisma db seed`
+4. Prepare o banco de dados (SQLite local): `npm run db:setup`
+   > **Atenção**: O arquivo `prisma/dev.db` é estritamente local e **não é versionado**. A fonte de verdade estrutural é o arquivo `prisma/schema.prisma`. O comando de setup sincroniza o schema, importa municípios, candidatos e cria o usuário de desenvolvimento `admin@apuracao.local`.
+5. **Configuração de Cobertura**: O bootstrap NÃO impõe uma cobertura geográfica automaticamente. Para a rádio, acesse `/admin/cobertura` com o usuário admin e selecione explicitamente "Concórdia/SC (80837)". Para testar fixtures, você pode alterar temporariamente. Sem cobertura válida, o sistema opera de modo *fail-closed* e recusa BUs.
 6. Inicie o Server de desenvolvimento: `npm run dev`
 
 ## Testes

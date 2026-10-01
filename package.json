@@ -9,10 +9,11 @@
     "lint": "eslint",
     "test": "vitest run --exclude e2e",
     "test:unit": "vitest run --exclude e2e",
-    "test:e2e": "tsx seed-test-coverage.ts && playwright test",
+    "test:e2e": "node scripts/run-e2e.mjs",
     "typecheck": "tsc --noEmit",
     "import:candidates": "tsx scripts/import-candidates.ts",
-    "import:municipalities": "tsx scripts/import-municipalities.ts"
+    "import:municipalities": "tsx scripts/import-municipalities.ts",
+    "db:setup": "npx prisma db push && tsx prisma/seed.ts && tsx scripts/import-municipalities.ts && tsx scripts/import-candidates.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

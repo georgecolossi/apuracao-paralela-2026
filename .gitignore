@@ -44,3 +44,13 @@ next-env.d.ts
 *.log
 
 test-results/
+
+# Banco de Dados Local (Fase 7.6)
+prisma/dev.db
+prisma/*.db-journal
+prisma/*.db-wal
+prisma/*.db-shm
+prisma/e2e.db
+prisma/e2e.db-journal
+prisma/e2e.db-wal
+prisma/e2e.db-shm

@@ -34,7 +34,7 @@ Este workspace é o próprio repositório Git oficial do projeto.
 8. **Itens Proibidos no Commit**: Não incluir:
    - logs (ex: *.log);
    - sedXXXXX;
-   - bancos modificados por testes;
+   - bancos de dados locais (`prisma/dev.db`);
    - arquivos temporários;
    - artefatos acidentais.
 

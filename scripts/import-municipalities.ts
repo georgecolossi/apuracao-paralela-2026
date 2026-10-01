@@ -93,34 +93,20 @@ async function main() {
     });
   }
 
-  // Verifica cobertura existente
-  const existingCoverage = await prisma.municipality.count({
-    where: { isCoverage: true }
+    // Fase 7.6: O catálogo oficial de municípios é importado sem forçar a cobertura.
+  // Concórdia/SC (80837) estará presente, mas isCoverage permanecerá falso até
+  // que o ADMIN configure explicitamente através do mecanismo de configuração.
+  const concordiaMatches = await prisma.municipality.findMany({ 
+    where: { 
+      officialCode: '80837',
+      state: { abbreviation: 'SC' }
+    } 
   });
 
-  if (existingCoverage === 0) {
-    console.log('Nenhuma cobertura definida. Procurando Concórdia/SC (80837) para configurar como padrão...');
-    
-    const concordiaMatches = await prisma.municipality.findMany({ 
-      where: { 
-        officialCode: '80837',
-        name: 'CONCÓRDIA',
-        state: { abbreviation: 'SC' }
-      } 
-    });
-
-    if (concordiaMatches.length === 1) {
-      await prisma.municipality.update({
-        where: { id: concordiaMatches[0].id },
-        data: { isCoverage: true }
-      });
-      console.log('Concórdia configurada como cobertura padrão.');
-    } else {
-      console.error('ERRO: Não foi possível identificar inequivocamente Concórdia/SC (80837) no dataset para configurar a cobertura padrão. Falhando de modo fail-closed.');
-      process.exit(1);
-    }
+  if (concordiaMatches.length === 1) {
+    console.log('Concórdia/SC (80837) importada com sucesso. (Cobertura geográfica precisa ser configurada pelo ADMIN).');
   } else {
-    console.log('Aviso: Cobertura administrativa já configurada. Nenhuma alteração foi feita.');
+    console.warn('Atenção: Concórdia/SC (80837) não foi inequivocamente identificada no dataset!');
   }
 
   console.log('Importação de municípios concluída.');
