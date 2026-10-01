@@ -114,7 +114,81 @@ O sistema possui proteção _fail-closed_ para a área de cobertura: BUs reais l
 - O reset ("Zerar Apuração") ou reimportações de catálogo não sobrescrevem as seleções efetuadas previamente pelo administrador.
 - Como mecanismo de integridade, municípios que já possuam dados de BUs reais processados não podem ser removidos da cobertura silenciosamente (rejeitado com HTTP 409).
 
-## Instalação para desenvolvimento
+**Nota Operacional**: A apuração será realizada **somente para Concórdia/SC, código TSE 80837** (embora a arquitetura técnica permita ao administrador configurar outras áreas de cobertura).
+
+## Modo de simulação
+Com foco em possibilitar testes operacionais durante o dia da eleição antes da abertura das urnas, a arquitetura distingue BUs oficiais de _BUs de simulação_ via a flag `isSimulation`.
+
+Se for acionado o fluxo de simulação, um prefixo virtual `SIM-` será atrelado àquela eleição no registro e no código da urna, os dados de simulação são excluídos da totalização pública, mas continuam disponíveis para os fluxos administrativos pertinentes.
+
+## Preparação para a apuração real
+Uma operação destrutiva está presente sob a rota administrativa `/admin/preparar` para realizar a higiene final do banco de dados antes da apuração.
+
+- Requer permissão restrita de ADMIN.
+- Exige inserção literal do texto `ZERAR APURAÇÃO` para confirmação destrutiva.
+- Executa limpeza transacional que exclui resultados, votos, sessões de scan e relatórios (reports).
+- Preserva as configurações estruturais de eleições e turnos definidas no banco de dados.
+- Após o processo, uma entrada `SYSTEM_RESET` é incluída na tabela `AuditLog`.
+
+## Arquitetura
+Este projeto foi desenvolvido utilizando a seguinte Stack:
+- **Next.js (16.3.7)**: Server-rendered React framewok para as rotas da Web, Server Components e API routes.
+- **React (19.2.8)**.
+- **TypeScript (5)**.
+- **Prisma (5.22.0)**: ORM utilizado para gerenciar as persistências de dados. O provider configurado localmente/em desenvolvimento é o `sqlite`.
+- **TailwindCSS (4)**.
+- **Playwright (1.63.0)**: Suite oficial do projeto para testes End-To-End (E2E).
+- **Vitest (2.1.9)**: Motor ultrarrápido para testes unitários e de integração.
+- **html5-qrcode**: Biblioteca subjacente utilizada para acionar o uso do dispositivo óptico nos painéis administrativos.
+
+## Estrutura do projeto
+Resumo direcional do repositório:
+```text
+src/
+  app/       # Páginas web, Server Components e rotas Next.js App Router
+  lib/       # Lógica central e abstrações compartilhadas
+    parser/  # Motor especializado para extração e validação de QRBU
+prisma/      # Schema descritivo do ORM e seed data
+tests/       # Testes unitários e testes de integração com banco
+e2e/         # Rotinas E2E rigorosas utilizando Playwright em Chromium
+external-fixtures/ # Arquivos brutos de payloads oficiais do TSE (testes)
+```
+
+## Rotas principais
+| Rota | Finalidade | Acesso |
+| --- | --- | --- |
+| `/` | Home ou roteador inicial | Público |
+| `/apuracao` | Painel de visualização pública com totalizações | Público |
+| `/login` | Acesso aos portais administrativos | Público |
+| `/admin` | Dashboard interno / listagem de sessões escaneadas | ADMIN / OPERATOR |
+| `/admin/scanner` | Interface para acionar a câmera e escanear o QRBU | ADMIN / OPERATOR |
+| `/admin/conferir/[id]` | Formulário para revisão final do resultado lido | ADMIN / OPERATOR |
+| `/admin/conferencia` | Listagem global para auditoria visual de resultados | ADMIN / OPERATOR |
+| `/admin/audit` | Timeline centralizada de acessos, erros e atividades | ADMIN / OPERATOR |
+| `/admin/recalcular` | Página informativa sobre a integridade da totalização | ADMIN / OPERATOR |
+| `/admin/preparar` | Interface destrutiva para resetar sistema | ADMIN |
+| `/metodologia` | Página contendo contexto explicativo | Público |
+
+## APIs principais
+| Método | Endpoint | Finalidade |
+| --- | --- | --- |
+| POST | `/api/login` | Emissão do token JWT (Público) |
+| POST | `/api/scan` | Recebe payloads, particionamentos e faz parser/validação do BU (Autenticado) |
+| POST | `/api/reports/[id]/confirm` | Processa os resultados de um scan pendente, salvando no DB (Autenticado) |
+| POST | `/api/reports/[id]/cancel` | Cancela/Aborta uma sessão pendente que falhou (Autenticado) |
+| GET | `/api/totals` | Disponibiliza a agregação final para exibição pública e SSE (Público) |
+| GET | `/api/realtime` | SSE - Tópico de eventos para re-renderização nativa (Público) |
+| POST | `/api/admin/reset` | Deleta as tabelas e preserva eleições/rounds (ADMIN) |
+| GET | `/api/export` | Exportação estruturada das totalizações atuais (Autenticado) |
+
+## Configuração
+O arquivo `.env.example` acompanha o repositório contendo exemplos técnicos estruturais seguros. Copie-o para `.env`:
+
+```env
+DATABASE_URL="file:./dev.db"
+JWT_SECRET="secret_for_local_dev"
+ADMIN_INITIAL_PASSWORD="admin_password"
+```
 
 ## Instalação para desenvolvimento
 1. Realize a clonagem deste repositório.
