@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from 'react';
 import { Html5Qrcode, CameraDevice } from 'html5-qrcode';
 import { useRouter } from 'next/navigation';
 import { ScanLine, AlertCircle, RefreshCcw, CheckCircle2, ChevronDown, MonitorPlay, Camera, Play, Square } from 'lucide-react';
+import { ScannerDeduplicator } from '@/lib/scanner-deduplicator';
 
 export default function ScannerPage() {
   const [status, setStatus] = useState<string>('Aguardando inicialização da câmera...');
@@ -12,7 +13,7 @@ export default function ScannerPage() {
   const [sessionId, setSessionId] = useState<string>('');
   const [manualInput, setManualInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
-  const processedRef = useRef<Set<string>>(new Set());
+  const deduplicatorRef = useRef(new ScannerDeduplicator());
   
   // Custom camera states
   const [cameras, setCameras] = useState<CameraDevice[]>([]);
@@ -27,7 +28,7 @@ export default function ScannerPage() {
     setPartsInfo(null);
     setErrorMsg(null);
     setStatus('Aguardando leitura do QR Code...');
-    processedRef.current.clear();
+    deduplicatorRef.current.clear();
   };
 
   useEffect(() => {
@@ -87,9 +88,9 @@ export default function ScannerPage() {
     }
   };
 
-  const processQrContent = async (decodedText: string) => {
-    if (processedRef.current.has(decodedText)) return;
-    if (isProcessing) return;
+    const processQrContent = async (decodedText: string) => {
+    // 1. Deduplicação física imediata síncrona
+    if (!deduplicatorRef.current.shouldProcess(decodedText)) return;
     
     setIsProcessing(true);
     setErrorMsg(null);
@@ -105,17 +106,17 @@ export default function ScannerPage() {
       const data = await res.json();
       
       if (res.ok) {
-        processedRef.current.add(decodedText);
         if (data.status === 'COMPLETO') {
           setStatus('Boletim LIDO COMPLETO!');
-          // Se estava usando a câmera, para ela para nǜo ler o prximo enquanto redireciona
           if (html5QrCodeRef.current && html5QrCodeRef.current.isScanning) {
             await html5QrCodeRef.current.stop();
           }
           router.push(`/admin/conferir/${data.reportId}`);
         } else if (data.status === 'PARCIAL') {
-          setStatus(`Parte Lida. Lidos: ${data.partsRead} de ${data.partsTotal}`);
-          setPartsInfo({ read: data.partsRead, total: data.partsTotal });
+          // data.partsTotal was in the old code, using data.totalParts or partsTotal safely
+          const tParts = data.totalParts || data.partsTotal;
+          setStatus(`Parte Lida. Lidos: ${data.partsRead} de ${tParts}`);
+          setPartsInfo({ read: data.partsRead, total: tParts });
         }
       } else {
         const displayError = data.error || 'Erro desconhecido';
@@ -130,15 +131,16 @@ export default function ScannerPage() {
         }
         
         setStatus('Aguardando leitura...');
+        // Em caso de erro, permitir que a câmera releia o mesmo QR após um tempo
         setTimeout(() => {
-          processedRef.current.delete(decodedText);
+          deduplicatorRef.current.clearIfMatches(decodedText);
         }, 3000);
       }
     } catch {
       setErrorMsg('Falha de conexão com o servidor. Tente novamente.');
       setStatus('Aguardando leitura...');
       setTimeout(() => {
-        processedRef.current.delete(decodedText);
+        deduplicatorRef.current.clearIfMatches(decodedText);
       }, 3000);
     } finally {
       setIsProcessing(false);
