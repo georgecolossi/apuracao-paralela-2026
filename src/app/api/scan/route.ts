@@ -35,14 +35,25 @@ export async function POST(req: Request) {
     });
 
     if (!session) {
-      session = await prisma.scanSession.create({
-        data: {
-          sequenceId,
-          expectedParts: totalParts,
-          operatorId,
-          isSimulation
+      try {
+        session = await prisma.scanSession.create({
+          data: {
+            sequenceId,
+            expectedParts: totalParts,
+            operatorId,
+            isSimulation
+          }
+        });
+      } catch (dbError: unknown) {
+        if (dbError && typeof dbError === 'object' && 'code' in dbError && dbError.code === 'P2002') {
+          session = await prisma.scanSession.findUnique({
+            where: { sequenceId }
+          });
+          if (!session) throw dbError;
+        } else {
+          throw dbError;
         }
-      });
+      }
     }
 
     // Ignore duplicate part
@@ -66,15 +77,35 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: 'CONFLICTING_PART', message: 'Parte lida diverge da lida anteriormente' }, { status: 409 });
       }
     } else {
-      await prisma.ballotReportPart.create({
-        data: {
-          sessionId: session.id,
-          partIndex,
-          totalParts,
-          rawContent: content, // Full content with QRBU header
-          contentHash: contentHashStr,
+      try {
+        await prisma.ballotReportPart.create({
+          data: {
+            sessionId: session.id,
+            partIndex,
+            totalParts,
+            rawContent: content, // Full content with QRBU header
+            contentHash: contentHashStr,
+          }
+        });
+      } catch (dbError: unknown) {
+        if (dbError && typeof dbError === 'object' && 'code' in dbError && dbError.code === 'P2002') {
+          // Concorrência: outra requisição simultânea acabou de inserir esta parte.
+          const concurrentPart = await prisma.ballotReportPart.findUnique({
+            where: {
+              sessionId_partIndex: {
+                sessionId: session.id,
+                partIndex
+              }
+            }
+          });
+          if (concurrentPart && concurrentPart.contentHash !== contentHashStr) {
+            return NextResponse.json({ error: 'CONFLICTING_PART', message: 'Parte lida diverge da lida concorrentemente' }, { status: 409 });
+          }
+          // Se o hash for igual, a parte já está lá (idempotência), apenas prossegue
+        } else {
+          throw dbError; // Qualquer outro erro (banco caído, etc.)
         }
-      });
+      }
     }
 
     // Verifica completude
