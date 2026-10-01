@@ -16,6 +16,17 @@ vi.mock('jsonwebtoken', () => ({
   verify: vi.fn(),
 }));
 
+vi.mock('@/lib/db', () => ({
+  prisma: {
+    user: {
+      findUnique: vi.fn().mockImplementation(async ({ where }) => {
+        if (where.id === '123' || where.id === 'admin-id') return { id: where.id, role: 'ADMIN' };
+        return null;
+      }),
+    },
+  },
+}));
+
 describe('Auth validation', () => {
   it('should return valid user if JWT is valid and has userId', async () => {
     vi.mocked(jwt.verify).mockImplementationOnce(() => ({ userId: '123' }) as jwt.JwtPayload);

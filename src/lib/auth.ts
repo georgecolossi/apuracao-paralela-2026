@@ -46,11 +46,22 @@ export async function requireAuthenticatedUser(): Promise<AuthResult> {
       return { authenticated: false, reason: 'INVALID_TOKEN_IDENTITY' };
     }
 
+    const userId = (payload as jwt.JwtPayload).userId as string;
+
+    const { prisma } = await import('@/lib/db');
+    const userInDb = await prisma.user.findUnique({
+      where: { id: userId }
+    });
+
+    if (!userInDb) {
+      return { authenticated: false, reason: 'USER_DELETED' };
+    }
+
     return { 
       authenticated: true, 
       user: {
-        userId: (payload as jwt.JwtPayload).userId,
-        role: typeof (payload as jwt.JwtPayload).role === 'string' ? (payload as jwt.JwtPayload).role : undefined,
+        userId: userInDb.id,
+        role: userInDb.role,
       }
     };
   } catch (err) {
