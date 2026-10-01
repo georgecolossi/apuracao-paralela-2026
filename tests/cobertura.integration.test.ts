@@ -92,14 +92,14 @@ describe('API Admin Cobertura (Integration)', () => {
     expect(cvg.length).toBe(1);
   });
 
-  it('G) município fora de SC -> 400', async () => {
+  it('G) município fora de SC -> 200 (Permitido na Fase 7.7)', async () => {
     mockAuth(true, 'ADMIN');
     const req = new Request('http://localhost/api/admin/cobertura', { 
       method: 'POST', 
       body: JSON.stringify({ coverageCodes: ['71072'] }) 
     });
     const res = await POST(req);
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(200);
   });
 
   it('J) município com BU real processado -> 409', async () => {

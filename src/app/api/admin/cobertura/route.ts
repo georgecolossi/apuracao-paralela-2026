@@ -24,13 +24,12 @@ export async function POST(request: Request) {
     if (dedupedCodes.length > 0) {
       const validMunicipalities = await prisma.municipality.findMany({
         where: {
-          officialCode: { in: dedupedCodes },
-          state: { abbreviation: 'SC' }
+          officialCode: { in: dedupedCodes }
         }
       });
       
       if (validMunicipalities.length !== dedupedCodes.length) {
-        return NextResponse.json({ error: 'Invalid municipalities or not in SC' }, { status: 400 });
+        return NextResponse.json({ error: 'Invalid municipalities' }, { status: 400 });
       }
     }
 

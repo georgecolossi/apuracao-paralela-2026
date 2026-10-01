@@ -8,6 +8,7 @@ interface Municipality {
   name: string;
   officialCode: string;
   isCoverage: boolean;
+  state?: { abbreviation: string };
 }
 
 export default function CoverageManager({ initialMunicipalities }: { initialMunicipalities: Municipality[] }) {
@@ -46,9 +47,12 @@ export default function CoverageManager({ initialMunicipalities }: { initialMuni
     }
   };
 
-  const filtered = municipalities.filter(m => 
-    m.name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const filtered = municipalities.filter(m => {
+    const term = searchTerm.toLowerCase();
+    const uf = m.state?.abbreviation?.toLowerCase() || '';
+    const searchString = `${m.name.toLowerCase()} ${uf} ${m.officialCode}`;
+    return searchString.includes(term);
+  });
 
   const selectedCount = municipalities.filter(m => m.isCoverage).length;
 
@@ -103,7 +107,7 @@ export default function CoverageManager({ initialMunicipalities }: { initialMuni
             </div>
             <div>
               <div className={`font-medium ${m.isCoverage ? 'text-blue-900 dark:text-blue-100' : 'text-gray-700 dark:text-gray-300'}`}>
-                {m.name}
+                {m.name} / {m.state?.abbreviation}
               </div>
               <div className="text-xs text-gray-400">
                 TSE: {m.officialCode}

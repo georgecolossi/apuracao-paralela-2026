@@ -109,7 +109,8 @@ O sistema possui proteção _fail-closed_ para a área de cobertura: BUs reais l
 - A **única** fonte operacional para a cobertura geográfica é o **Banco de Dados**.
 - Se a cobertura estiver **vazia**, **nenhum BU real será aceito** (fail-closed). O sistema **não** aceita BUs automaticamente.
 - A seleção de cobertura pode ser alterada apenas por usuários com a role **ADMIN** através do painel de administração da interface (`/admin/cobertura`).
-- Apenas códigos de município pertencentes ao estado de **SC** são aceitos, mediante validação contra o catálogo oficial do TSE.
+- O **catálogo de municípios é nacional**, importado do dataset oficial, porém não equivale à cobertura operacional. Importação não ativa cobertura.
+- Qualquer município do catálogo (de qualquer UF) pode ser explicitamente selecionado pelo administrador na interface.
 - Usuários com role **OPERATOR** não possuem acesso ou autorização para modificar essa configuração.
 - O reset ("Zerar Apuração") ou reimportações de catálogo não sobrescrevem as seleções efetuadas previamente pelo administrador.
 - Como mecanismo de integridade, municípios que já possuam dados de BUs reais processados não podem ser removidos da cobertura silenciosamente (rejeitado com HTTP 409).

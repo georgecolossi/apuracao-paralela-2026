@@ -13,9 +13,9 @@ export default async function CoberturaPage() {
 
   // Busca todos os municípios de SC (que foram importados)
   const municipalities = await prisma.municipality.findMany({
-    where: { state: { abbreviation: 'SC' } },
+    
     orderBy: { name: 'asc' },
-    select: { id: true, name: true, officialCode: true, isCoverage: true }
+    select: { id: true, name: true, officialCode: true, isCoverage: true, state: { select: { abbreviation: true } } }
   });
 
   return (
