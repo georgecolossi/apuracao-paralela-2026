@@ -52,7 +52,7 @@ export default function LoginPage() {
 
         {/* Formulário */}
         <div className="bg-white p-8 rounded-3xl shadow-xl shadow-slate-200/50 border border-slate-100">
-          <form onSubmit={handleLogin} className="flex flex-col gap-5">
+          <form onSubmit={handleLogin} method="POST" className="flex flex-col gap-5">
             
             {errorMsg && (
               <div className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-xl text-sm flex items-start gap-3">
