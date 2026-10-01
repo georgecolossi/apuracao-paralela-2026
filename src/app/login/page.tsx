@@ -69,6 +69,9 @@ export default function LoginPage() {
                 </div>
                 <input 
                   type="email" 
+                  name="email"
+                  autoComplete="email"
+                  inputMode="email"
                   placeholder="operador@radio.com.br" 
                   value={email} 
                   onChange={e => setEmail(e.target.value)}
@@ -86,6 +89,8 @@ export default function LoginPage() {
                 </div>
                 <input 
                   type="password" 
+                  name="password"
+                  autoComplete="current-password"
                   placeholder="••••••••" 
                   value={password} 
                   onChange={e => setPassword(e.target.value)}
@@ -97,7 +102,7 @@ export default function LoginPage() {
             
             <button 
               type="submit" 
-              disabled={loading || !email || !password}
+              disabled={loading}
               className="mt-2 w-full bg-slate-900 text-white p-4 rounded-xl hover:bg-slate-800 font-bold uppercase tracking-wide transition-colors flex items-center justify-center gap-2 disabled:opacity-70"
             >
               {loading ? (
