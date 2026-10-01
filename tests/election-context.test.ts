@@ -7,32 +7,32 @@ describe('Election Context Resolution', () => {
   beforeAll(async () => {
     // Não limpa banco para evitar quebrar testes em paralelo, limpa apenas os específicos
     await prisma.ballotVote.deleteMany({
-      where: { report: { election: { plei: { in: ['PLEI-A', 'PLEI-STATUS', 'PLEI-INEXISTENTE', 'PLEI-AMBIGUO'] } } } }
+      where: { report: { election: { plei: { in: ['2110', 'PLEI-STATUS', '123', '2110MBIGUO'] } } } }
     });
     await prisma.ballotReport.deleteMany({
-      where: { election: { plei: { in: ['PLEI-A', 'PLEI-STATUS', 'PLEI-INEXISTENTE', 'PLEI-AMBIGUO'] } } }
+      where: { election: { plei: { in: ['2110', 'PLEI-STATUS', '123', '2110MBIGUO'] } } }
     });
     await prisma.electionRound.deleteMany({
-      where: { election: { plei: { in: ['PLEI-A', 'PLEI-STATUS', 'PLEI-INEXISTENTE', 'PLEI-AMBIGUO'] } } }
+      where: { election: { plei: { in: ['2110', 'PLEI-STATUS', '123', '2110MBIGUO'] } } }
     });
     await prisma.election.deleteMany({
-      where: { plei: { in: ['PLEI-A', 'PLEI-STATUS', 'PLEI-INEXISTENTE', 'PLEI-AMBIGUO'] } }
+      where: { plei: { in: ['2110', 'PLEI-STATUS', '123', '2110MBIGUO'] } }
     });
 
     // Eleição A
     const electionA = await prisma.election.create({
-      data: { plei: 'PLEI-A', name: 'Eleição A', year: 2026, status: 'ACTIVE' }
+      data: { plei: '2110', name: 'Eleição A', year: 2026, status: 'ACTIVE' }
     });
     await prisma.electionRound.create({ data: { electionId: electionA.id, roundNumber: 1, status: 'ACTIVE' } });
 
     // Eleição Ambígua (mesmo plei)
     const electionAmbigua = await prisma.election.create({
-      data: { plei: 'PLEI-AMBIGUO', name: 'Ambigua 1', year: 2026, status: 'ACTIVE' }
+      data: { plei: '2110MBIGUO', name: 'Ambigua 1', year: 2026, status: 'ACTIVE' }
     });
     await prisma.electionRound.create({ data: { electionId: electionAmbigua.id, roundNumber: 1, status: 'ACTIVE' } });
 
     const electionAmbigua2 = await prisma.election.create({
-      data: { plei: 'PLEI-AMBIGUO', name: 'Ambigua 2', year: 2026, status: 'ACTIVE' }
+      data: { plei: '2110MBIGUO', name: 'Ambigua 2', year: 2026, status: 'ACTIVE' }
     });
     await prisma.electionRound.create({ data: { electionId: electionAmbigua2.id, roundNumber: 1, status: 'ACTIVE' } });
   });
@@ -59,22 +59,22 @@ describe('Election Context Resolution', () => {
   }
 
   it('deve aceitar se PLEI e TURN baterem', async () => {
-    const res = await mockApiScanResolveContext('PLEI-A', 1);
+    const res = await mockApiScanResolveContext('2110', 1);
     expect(res.success).toBe(true);
   });
 
   it('deve rejeitar se PLEI for incorreto (não cadastrado)', async () => {
-    const res = await mockApiScanResolveContext('PLEI-INEXISTENTE', 1);
+    const res = await mockApiScanResolveContext('123', 1);
     expect(res.error).toBe('ELECTION_CONTEXT_MISMATCH');
   });
 
   it('deve rejeitar se TURN for incorreto', async () => {
-    const res = await mockApiScanResolveContext('PLEI-A', 2);
+    const res = await mockApiScanResolveContext('2110', 2);
     expect(res.error).toBe('ELECTION_CONTEXT_MISMATCH_TURN');
   });
 
   it('deve falhar de maneira previsível caso múltiplas eleições dividam o mesmo PLEI ACTIVE', async () => {
-    const res = await mockApiScanResolveContext('PLEI-AMBIGUO', 1);
+    const res = await mockApiScanResolveContext('2110MBIGUO', 1);
     expect(res.error).toBe('CONFIGURATION_ERROR');
   });
 

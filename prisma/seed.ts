@@ -18,37 +18,46 @@ async function main() {
     });
   }
 
-  const electionDb = await prisma.election.findFirst({ where: { plei: '123' }});
-  if (electionDb) {
-    console.log('Seed already ran.');
-    return;
+  // Usar 2110 (TSE Oficial Turno 1) em vez do mock 123
+  // Isso evita ter múltiplas eleições ACTIVE gerando ambiguidade no /api/totals
+  const electionDb = await prisma.election.findFirst({ where: { plei: '2110' }});
+  if (!electionDb) {
+    const election = await prisma.election.create({
+      data: {
+        plei: '2110',
+        name: 'Eleição Oficial TSE 2026 (Fixture)',
+        year: 2026,
+        description: 'Pleito correspondente aos payloads oficiais TSE para testes físicos E2E',
+        status: 'ACTIVE',
+        rounds: {
+          create: [
+            { roundNumber: 1, status: 'ACTIVE' },
+            { roundNumber: 2, status: 'PLANNED' }
+          ]
+        }
+      }
+    });
+    console.log('Eleição oficial (2110) configurada:', election.id);
+  } else {
+    console.log('Seed (2110) já existente.');
   }
 
-  const election = await prisma.election.create({
-    data: {
-      plei: '123',
-      name: 'Eleições Gerais 2026',
-      year: 2026,
-      description: 'Eleição para Presidente, Governador, Senador, Deputado Federal e Estadual',
-      status: 'ACTIVE',
-      rounds: {
-        create: [
-          { roundNumber: 1, status: 'ACTIVE' },
-          { roundNumber: 2, status: 'PLANNED' }
-        ]
-      }
-    }
-  });
+  // Idempotency check for state/city
+  let state = await prisma.state.findUnique({ where: { abbreviation: 'SP' } });
+  if (!state) {
+    state = await prisma.state.create({
+      data: { name: 'São Paulo', abbreviation: 'SP' }
+    });
+  }
 
-  const state = await prisma.state.create({
-    data: { name: 'São Paulo', abbreviation: 'SP' }
-  });
+  const city = await prisma.municipality.findUnique({ where: { officialCode: '71072' } });
+  if (!city) {
+    await prisma.municipality.create({
+      data: { name: 'São Paulo', officialCode: '71072', stateId: state.id }
+    });
+  }
 
-  const city = await prisma.municipality.create({
-    data: { name: 'São Paulo', officialCode: '71072', stateId: state.id }
-  });
-
-  console.log('Banco populado com dados básicos de eleição:', election.id);
+  console.log('Seed concluído.');
 }
 
 main()
