@@ -111,7 +111,7 @@ const createdElection = await prisma.election.create({
       },
       include: { rounds: true }
     });
-    const session = await prisma.scanSession.create({ data: { operatorId: 'user-1', sequenceId: 'seq1', expectedParts: 1 }});
+
     await prisma.ballotReport.create({
       data: {
         hash: 'abc', electionId: createdElection.id, roundId: createdElection.rounds[0].id, deterministicId: 'det1',
