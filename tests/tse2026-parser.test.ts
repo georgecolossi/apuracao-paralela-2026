@@ -165,6 +165,30 @@ import { Tse2026QrToken } from '../src/lib/parser/tse2026/Tse2026QrTokenizer';
 import { ParseError, BallotReportData } from '../src/lib/parser';
 
 describe('TSE 2026 Semantic Parser', () => {
+  
+  it('Normaliza cityCode garantindo padrao de 5 digitos com zeros a esquerda', () => {
+    const p1 = new Tse2026SemanticParser();
+    const rep1 = p1.parse([
+      { key: 'ORIG', value: 'VOTA', position: 0, raw: '' },
+      { key: 'MUNI', value: '1392', position: 0, raw: '' },
+      { key: 'ZONA', value: '9', position: 0, raw: '' },
+      { key: 'SECA', value: '110', position: 0, raw: '' },
+      { key: 'IDUE', value: '123', position: 0, raw: '' }
+    ]);
+    expect((rep1 as any).cityCode).toBe('01392');
+
+    const p2 = new Tse2026SemanticParser();
+    const rep2 = p2.parse([
+      { key: 'ORIG', value: 'VOTA', position: 0, raw: '' },
+      { key: 'MUNI', value: '80837', position: 0, raw: '' },
+      { key: 'ZONA', value: '9', position: 0, raw: '' },
+      { key: 'SECA', value: '110', position: 0, raw: '' },
+      { key: 'IDUE', value: '123', position: 0, raw: '' }
+    ]);
+    expect((rep2 as any).cityCode).toBe('80837');
+  });
+
+
   const semParser = new Tse2026SemanticParser();
   const baseTokens: Tse2026QrToken[] = [
     { key: 'ORIG', value: 'BU', position: 0, raw: '' },

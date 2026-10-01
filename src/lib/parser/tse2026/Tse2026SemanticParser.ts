@@ -106,7 +106,7 @@ export class Tse2026SemanticParser {
       electionId: map.get('PLEI') || 'DESCONHECIDO',
       roundNumber: parseInt(map.get('TURN') || '1', 10),
       stateCode: map.get('UNFE') || 'BR',
-      cityCode: map.get('MUNI') || '',
+      cityCode: map.get('MUNI') ? map.get('MUNI')!.padStart(5, '0') : '',
       zoneCode: map.get('ZONA') || '',
       sectionCode: map.get('SECA') || '',
       urnCode: map.get('IDUE') || '',
