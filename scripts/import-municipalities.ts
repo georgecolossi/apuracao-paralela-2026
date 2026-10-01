@@ -28,12 +28,7 @@ function parseCsvLine(line: string): string[] {
   return result;
 }
 
-// Map from ISO-8859-1 (often Windows-1252 context) to UTF-8 properly or just replace bad chars
-function decodeString(str: string): string {
-  // O arquivo fornecido possivelmente possui problemas de encoding nas fontes ("Conc?rdia").
-  // Vamos preservar como estǭ e substituir as mǭscaras conhecidas, ou usar latin1 original.
-  return str.replace(/Conc\?rdia/ig, 'Concórdia').replace(/S\?o /ig, 'São '); // simplificação pragmática
-}
+
 
 async function main() {
   const filePath = path.join(__dirname, '../municipio_tse_ibge/municipio_tse_ibge.csv');
@@ -78,14 +73,7 @@ async function main() {
     }
 
     if (row['SG_UF'] === 'SC') {
-      let nmMunicipio = row['NM_MUNICIPIO_TSE'];
-      if (nmMunicipio.includes('?')) {
-        nmMunicipio = nmMunicipio.replace(/Conc\?rdia/ig, 'Concórdia');
-        nmMunicipio = nmMunicipio.replace(/Florian\?polis/ig, 'Florianópolis');
-        nmMunicipio = nmMunicipio.replace(/Chapec\?/ig, 'Chapecó');
-        nmMunicipio = nmMunicipio.replace(/S\?o /ig, 'São ');
-        nmMunicipio = nmMunicipio.replace(/Joa\?aba/ig, 'Joaçaba');
-      }
+      const nmMunicipio = row['NM_MUNICIPIO_TSE'];
 
       municipalitiesSC.push({
         stateId: stateSC.id,
@@ -111,16 +99,24 @@ async function main() {
   });
 
   if (existingCoverage === 0) {
-    console.log('Nenhuma cobertura definida. Setando Concórdia/SC como padrão...');
-    const concordia = await prisma.municipality.findUnique({ where: { officialCode: '80837' } });
-    if (concordia) {
+    console.log('Nenhuma cobertura definida. Procurando Concórdia/SC (80837) para configurar como padrão...');
+    
+    const concordiaMatches = await prisma.municipality.findMany({ 
+      where: { 
+        officialCode: '80837',
+        name: 'CONCÓRDIA',
+        state: { abbreviation: 'SC' }
+      } 
+    });
+
+    if (concordiaMatches.length === 1) {
       await prisma.municipality.update({
-        where: { id: concordia.id },
+        where: { id: concordiaMatches[0].id },
         data: { isCoverage: true }
       });
       console.log('Concórdia configurada como cobertura padrão.');
     } else {
-      console.error('Concórdia (80837) não encontrada no banco após importação.');
+      console.error('ERRO: Não foi possível identificar inequivocamente Concórdia/SC (80837) no dataset para configurar a cobertura padrão. Falhando de modo fail-closed.');
       process.exit(1);
     }
   } else {

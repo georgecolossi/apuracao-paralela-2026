@@ -123,13 +123,17 @@ export async function POST(req: Request) {
       select: { officialCode: true }
     });
     
-    // Combina banco de dados com env (para testes E2E Playwright que injetam 1392, 71072)
-    let coverageCities = coverageMunicipalities.map(m => m.officialCode);
-    if (process.env.COVERAGE_CITY_CODES) {
-      const envCities = process.env.COVERAGE_CITY_CODES.split(',').map(c => c.trim());
-      coverageCities = Array.from(new Set([...coverageCities, ...envCities]));
-    }
+    const coverageCities = coverageMunicipalities.map(m => m.officialCode);
     
+    // 1. BU REAL e sem nenhuma cobertura configurada -> FAIL CLOSED
+    if (coverageCities.length === 0 && !isSimulation) {
+      return NextResponse.json({
+        error: 'OUT_OF_COVERAGE',
+        message: 'Área de cobertura ainda não configurada.'
+      }, { status: 403 });
+    }
+
+    // 2. Cobertura existente -> Rejeitar se não estiver nela
     if (coverageCities.length > 0 && !coverageCities.includes(cityCode)) {
       // Registrar tentativa fora de cobertura
       await prisma.auditLog.create({

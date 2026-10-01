@@ -9,7 +9,7 @@
     "lint": "eslint",
     "test": "vitest run --exclude e2e",
     "test:unit": "vitest run --exclude e2e",
-    "test:e2e": "playwright test",
+    "test:e2e": "tsx seed-test-coverage.ts && playwright test",
     "typecheck": "tsc --noEmit",
     "import:candidates": "tsx scripts/import-candidates.ts",
     "import:municipalities": "tsx scripts/import-municipalities.ts"
