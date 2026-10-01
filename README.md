@@ -242,3 +242,11 @@ A implementação de parsing é dependente dos padrões adotados e abertos pela 
 
 ## Licença
 Consulte o arquivo LICENSE, quando disponibilizado.
+
+## Resolução de Metadados de Candidatos
+
+O processamento e persistência dos votos é baseado estritamente no código do BU (QRBU), que se mantém como a fonte primária e irrefutável da verdade. A base local de `CandidateMetadata` atua única e exclusivamente como **enriquecimento visual de apresentação** para as interfaces gráficas.
+
+*   A ausência ou ambiguidade de metadados para um candidato (e.g. nomes fictícios de fixtures de teste ou ausência de atualização do banco do TSE) **nunca bloqueia o fluxo**, não altera o registro original e não impede o processamento do BU.
+*   Nomes de candidatos ou legendas partidárias não são forjados, deduzidos ou inseridos como fallbacks — na indisponibilidade confirmada do dado referencial oficial, apenas a identificação original de urna é exposta.
+*   Limitação técnica (Fase 7.7.3): A rota `/api/totals` atualmente utiliza um fallback fixo (Presidente -> BR, Demais Cargos -> SC) durante a agregação de dados no banco local devido à impossibilidade de aplicar o `groupBy` do Prisma sobre campos associados de outra relação sem introduzir alto acoplamento na modelagem da base de votos (`stateCode` vive no nível do relatório). O comportamento operacional projetado na Fase 1 é focado em SC, então não há impacto real imediato, mas uma adoção global para abranger múltiplas UFs na agregação demandará refatoração da query.

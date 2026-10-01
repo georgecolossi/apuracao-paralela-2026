@@ -36,23 +36,18 @@ export async function GET() {
     const resolver = new CandidateResolver();
     await resolver.load(election.year);
 
-    const officeNameToCode: Record<string, string> = {
-      'Presidente': '1',
-      'Governador': '3',
-      'Senador': '5',
-      'Deputado Federal': '6',
-      'Deputado Estadual': '7',
-      'Prefeito': '11',
-      'Vereador': '13'
-    };
+    const { OFFICE_NAME_TO_CODE } = await import('@/lib/metadata/voteEnricher');
 
     const totals = rawTotals.map(t => {
       const officeName = officeMap[t.officeId] || t.officeId;
-      const officeCode = officeNameToCode[officeName];
+      const officeCode = OFFICE_NAME_TO_CODE[officeName];
       let metadata: { status: string; candidateName?: string; partyAbbreviation?: string; partyNumber?: string } = { status: 'NOT_FOUND' };
 
       if (officeCode) {
-        // Presidente é sempre BR (Nacional), demais cargos usam contexto SC (Estado-alvo da plataforma)
+        // LIMITAÇÃO CONHECIDA (FASE 7.7.3):
+        // Para suporte multi-UF completo, a agregação (groupBy) precisa considerar o estado do BU (report.stateCode).
+        // Como o Prisma não suporta groupBy em relações, isso exige refatoração estrutural (ex: raw query ou mover stateCode para BallotVote).
+        // Por ora, mantemos o comportamento atual (fallback SC) para não quebrar a agregação.
         const stateContext = officeCode === '1' ? 'BR' : 'SC';
         
         if (t.voteType === 'NOMINAL' && t.candidateNumber) {

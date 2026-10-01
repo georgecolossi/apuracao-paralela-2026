@@ -8,6 +8,7 @@ export default async function ConferirPage({ params }: { params: Promise<{ id: s
   const report = await prisma.ballotReport.findUnique({
     where: { id },
     include: {
+      election: true,
       votes: {
         include: { office: true }
       }
@@ -55,11 +56,28 @@ export default async function ConferirPage({ params }: { params: Promise<{ id: s
     }
   } catch {}
 
-  const votesByOffice = report.votes.reduce((acc, vote) => {
+  
+  const { CandidateResolver } = await import('@/lib/metadata/CandidateResolver');
+  const { enrichVoteWithMetadata } = await import('@/lib/metadata/voteEnricher');
+  const resolver = new CandidateResolver();
+  await resolver.load(report.election.year);
+
+  const enrichedVotes = report.votes.map(v => {
+    const meta = enrichVoteWithMetadata(
+      { voteType: v.voteType, candidateNumber: v.candidateNumber, partyNumber: v.partyNumber, officeName: v.office.name },
+      report.election.year,
+      report.stateCode,
+      resolver
+    );
+    return { ...v, meta };
+  });
+
+  const votesByOffice = enrichedVotes.reduce((acc, vote) => {
     if (!acc[vote.office.name]) acc[vote.office.name] = [];
     acc[vote.office.name].push(vote);
     return acc;
-  }, {} as Record<string, typeof report.votes>);
+  }, {} as Record<string, typeof enrichedVotes>);
+
 
   return (
     <div className="min-h-screen bg-slate-100 font-sans flex flex-col">
@@ -162,10 +180,37 @@ export default async function ConferirPage({ params }: { params: Promise<{ id: s
                           }`}>
                             {v.voteType}
                           </span>
-                          <span className="font-bold text-slate-800 text-sm md:text-base">
-                            {v.voteType === 'NOMINAL' ? v.candidateNumber : 
-                             v.voteType === 'LEGENDA' ? `Partido ${v.partyNumber}` : '—'}
-                          </span>
+                          <div className="flex flex-col">
+                            {v.voteType === 'NOMINAL' ? (
+                              v.meta.status === 'FOUND' ? (
+                                <>
+                                  <span className="font-bold text-slate-800 text-sm md:text-base">{v.meta.candidateName}</span>
+                                  <span className="text-xs text-slate-500 font-medium">{v.candidateNumber} · {v.meta.partyAbbreviation}</span>
+                                </>
+                              ) : v.meta.status === 'AMBIGUOUS' ? (
+                                <>
+                                  <span className="font-bold text-slate-800 text-sm md:text-base">Candidato {v.candidateNumber}</span>
+                                  <span className="text-xs text-amber-600 font-medium">Metadados ambíguos</span>
+                                </>
+                              ) : (
+                                <>
+                                  <span className="font-bold text-slate-800 text-sm md:text-base">Candidato {v.candidateNumber}</span>
+                                  <span className="text-xs text-slate-500 font-medium">Metadados não encontrados</span>
+                                </>
+                              )
+                            ) : v.voteType === 'LEGENDA' ? (
+                              v.meta.status === 'FOUND' ? (
+                                <>
+                                  <span className="font-bold text-slate-800 text-sm md:text-base">Partido {v.partyNumber}</span>
+                                  <span className="text-xs text-slate-500 font-medium">{v.meta.partyAbbreviation}</span>
+                                </>
+                              ) : (
+                                <span className="font-bold text-slate-800 text-sm md:text-base">Partido {v.partyNumber}</span>
+                              )
+                            ) : (
+                              <span className="font-bold text-slate-800 text-sm md:text-base">—</span>
+                            )}
+                          </div>
                         </div>
                         <div className="text-right flex items-end gap-2">
                           <span className="font-black text-lg md:text-xl text-slate-900 leading-none">
