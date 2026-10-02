@@ -57,6 +57,10 @@ export async function requireAuthenticatedUser(): Promise<AuthResult> {
       return { authenticated: false, reason: 'USER_DELETED' };
     }
 
+    if (!userInDb.isActive) {
+      return { authenticated: false, reason: 'USER_INACTIVE' };
+    }
+
     return { 
       authenticated: true, 
       user: {

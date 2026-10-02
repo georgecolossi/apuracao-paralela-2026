@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { prisma } from '@/lib/db';
+import { LogoutButton } from '@/components/LogoutButton';
 import { ScanLine, LayoutDashboard, Users, FileText, CheckCircle2, AlertCircle, Clock, Search, RotateCcw, ShieldCheck, Download, Trash2, MapPin } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
@@ -26,7 +27,8 @@ export default async function AdminDashboard() {
             <LayoutDashboard className="w-6 h-6 text-indigo-400" />
             <h1 className="text-xl font-bold uppercase tracking-tight">Admin <span className="text-indigo-400">Panel</span></h1>
           </div>
-          <div>
+          <div className="flex items-center gap-3">
+            <LogoutButton />
             <a href="/apuracao" target="_blank" rel="noreferrer" className="flex items-center gap-2 text-sm bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg text-white border border-slate-700 transition-colors">
               <span className="hidden sm:inline">Ver Painel Público</span>
               <ScanLine className="w-4 h-4 sm:hidden" />
@@ -132,7 +134,7 @@ export default async function AdminDashboard() {
         </div>
 
         {/* Quick Links */}
-        <div className="grid grid-cols-2 md:grid-cols-6 gap-4 relative z-10">
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
           <Link href="/admin/cobertura" className="bg-white border border-slate-200 p-4 rounded-xl text-center hover:bg-slate-50 transition-colors flex flex-col items-center gap-2 group">
             <MapPin className="w-5 h-5 text-slate-400 group-hover:text-indigo-500 transition-colors" />
             <span className="font-bold text-xs uppercase tracking-wider text-slate-600 group-hover:text-slate-900">Cobertura</span>

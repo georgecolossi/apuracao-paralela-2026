@@ -5,6 +5,7 @@ import { Html5Qrcode, CameraDevice } from 'html5-qrcode';
 import { useRouter } from 'next/navigation';
 import { ScanLine, AlertCircle, RefreshCcw, CheckCircle2, ChevronDown, MonitorPlay, Camera, Play, Square } from 'lucide-react';
 import { ScannerDeduplicator } from '@/lib/scanner-deduplicator';
+import { LogoutButton } from '@/components/LogoutButton';
 
 export default function ScannerPage() {
   const [status, setStatus] = useState<string>('Aguardando inicialização da câmera...');
@@ -163,10 +164,13 @@ export default function ScannerPage() {
             <ScanLine className="w-6 h-6 text-indigo-400" />
             <h1 className="text-xl font-bold uppercase tracking-tight">Operação <span className="text-indigo-400">Scanner</span></h1>
           </div>
-          <a href="/apuracao" target="_blank" rel="noreferrer" className="flex items-center gap-2 text-sm bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg text-white border border-slate-700 transition-colors">
-            <MonitorPlay className="w-4 h-4" />
-            <span className="hidden sm:inline font-bold tracking-wide uppercase">Painel Público</span>
-          </a>
+          <div className="flex items-center gap-3">
+              <LogoutButton />
+              <a href="/apuracao" target="_blank" rel="noreferrer" className="flex items-center gap-2 text-sm bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg text-white border border-slate-700 transition-colors">
+                <MonitorPlay className="w-4 h-4" />
+                <span className="hidden sm:inline font-bold tracking-wide uppercase">Painel Público</span>
+              </a>
+            </div>
         </div>
       </header>
 
