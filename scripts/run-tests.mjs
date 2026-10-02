@@ -37,9 +37,12 @@ try {
   console.log('Pushing schema to test.db...');
   execSync('npx prisma db push --skip-generate', { env, stdio: 'inherit' });
   
+  console.log('Running seed to ensure Election context exists...');
+  execSync('npx tsx prisma/seed.ts', { env, stdio: 'inherit' });
+  
   // Vitest args forward
   const args = process.argv.slice(2).join(' ');
-  const vitestCmd = `npx vitest run ${args} --exclude e2e`;
+  const vitestCmd = `npx vitest run ${args} --no-file-parallelism --exclude e2e`;
   console.log(`Running vitest: ${vitestCmd}`);
   
   execSync(vitestCmd, { env, stdio: 'inherit' });

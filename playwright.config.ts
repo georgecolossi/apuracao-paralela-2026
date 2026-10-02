@@ -19,9 +19,9 @@ export default defineConfig({
   webServer: {
     command: 'npm run dev',
     url: 'http://localhost:3000',
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: false,
     env: {
-      COVERAGE_CITY_CODES: '1392,71072'
+      DATABASE_URL: 'file:./e2e.db'
     }
   },
 });

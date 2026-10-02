@@ -98,7 +98,7 @@ export default function ApuracaoPage() {
           <div className="flex items-center gap-3">
             <Archive className="text-indigo-400 w-6 h-6 hidden sm:block" />
             <h1 className="text-xl md:text-2xl font-black text-white tracking-tight uppercase">
-              Apuração Paralela — Concórdia e Região
+              Apuração Paralela — Concórdia
             </h1>
           </div>
           

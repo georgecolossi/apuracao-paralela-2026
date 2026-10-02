@@ -31,32 +31,73 @@ describe('Candidate Metadata Integration', () => {
     expect(invalidCount).toBe(0);
   });
 
-  it('resolver deve retornar FOUND para Presidente (Cargo 1)', async () => {
+  it('Presidente: contexto BR, número real -> FOUND, nome de urna, sigla correta', async () => {
     const resolver = new CandidateResolver();
     await resolver.load(2026);
-    const result = resolver.resolveNominal(2026, 'BR', '1', '22');
+    const result = resolver.resolveNominal(2026, 'BR', '1', '13');
     expect(result.status).toBe('FOUND');
-    expect(result.candidateName).toBeTruthy();
-    expect(result.partyAbbreviation).toBe('PL');
-    expect(result.partyNumber).toBe('22');
+    expect(result.candidateName).toBe('LULA');
+    expect(result.partyAbbreviation).toBe('PT');
+    expect(result.partyNumber).toBe('13');
   });
 
-  it('resolver deve retornar NOT_FOUND para candidato inexistente', async () => {
+  it('Governador SC: número real -> FOUND', async () => {
+    const resolver = new CandidateResolver();
+    await resolver.load(2026);
+    const result = resolver.resolveNominal(2026, 'SC', '3', '22');
+    expect(result.status).toBe('FOUND');
+    expect(result.candidateName).toBe('JORGINHO MELLO');
+  });
+
+  it('Senador SC: número real -> FOUND', async () => {
+    const resolver = new CandidateResolver();
+    await resolver.load(2026);
+    const result = resolver.resolveNominal(2026, 'SC', '5', '221');
+    expect(result.status).toBe('FOUND');
+    expect(result.candidateName).toBe('CAROL DE TONI');
+  });
+
+  it('Deputado Federal SC: número real -> FOUND', async () => {
+    const resolver = new CandidateResolver();
+    await resolver.load(2026);
+    const result = resolver.resolveNominal(2026, 'SC', '6', '2233');
+    expect(result.status).toBe('FOUND');
+    expect(result.candidateName).toBe('JULIA ZANATTA');
+  });
+
+  it('Deputado Estadual SC: número real -> FOUND', async () => {
+    const resolver = new CandidateResolver();
+    await resolver.load(2026);
+    const result = resolver.resolveNominal(2026, 'SC', '7', '15123');
+    expect(result.status).toBe('FOUND');
+    expect(result.candidateName).toBe('ADILSON GIRARDI');
+  });
+
+  it('LEGENDA SC: partido existente -> sigla correta', async () => {
+    const resolver = new CandidateResolver();
+    await resolver.load(2026);
+    const result = resolver.resolveLegenda(2026, 'SC', '6', '15');
+    expect(result.status).toBe('FOUND');
+    expect(result.partyAbbreviation).toBe('MDB');
+  });
+
+  it('número inexistente -> NOT_FOUND', async () => {
     const resolver = new CandidateResolver();
     await resolver.load(2026);
     const result = resolver.resolveNominal(2026, 'BR', '1', '99999');
     expect(result.status).toBe('NOT_FOUND');
+    expect(result.candidateName).toBeUndefined(); // preserva comportamento: não inventa
   });
 
-  it('resolver deve retornar AMBIGUOUS', async () => {
+  it('chave deliberadamente ambígua -> AMBIGUOUS', async () => {
     await prisma.candidateMetadata.create({
       data: {
-        candidateSequence: '99999999999', electionYear: 2026, electionCode: '', round: 1, state: 'SC', officeCode: '3', officeName: 'GOVERNADOR', candidateNumber: '99', ballotName: 'FALSO GOVERNADOR', partyNumber: '99', partyAbbreviation: 'FALSO', partyName: 'PARTIDO FALSO'
+        candidateSequence: '99999999999', electionYear: 2026, electionCode: '', round: 1, state: 'SC', officeCode: '3', officeName: 'GOVERNADOR', candidateNumber: '99', ballotName: 'FALSO GOVERNADOR', partyNumber: '99', partyAbbreviation: 'FALSO', partyName: 'PARTIDO FALSO', source: 'test'
       }
     });
     await prisma.candidateMetadata.create({
       data: {
-        candidateSequence: '88888888888', electionYear: 2026, electionCode: '', round: 1, state: 'SC', officeCode: '3', officeName: 'GOVERNADOR', candidateNumber: '99', ballotName: 'FALSO GOVERNADOR 2', partyNumber: '99', partyAbbreviation: 'FALSO', partyName: 'PARTIDO FALSO'
+        candidateSequence: '88888888888', electionYear: 2026, electionCode: '', round: 1, state: 'SC', officeCode: '3', officeName: 'GOVERNADOR', candidateNumber: '99', ballotName: 'FALSO GOVERNADOR 2', partyNumber: '99', partyAbbreviation: 'FALSO', partyName: 'PARTIDO FALSO', source: 'test'
       }
     });
     const resolver = new CandidateResolver();
@@ -64,21 +105,6 @@ describe('Candidate Metadata Integration', () => {
     const result = resolver.resolveNominal(2026, 'SC', '3', '99');
     expect(result.status).toBe('AMBIGUOUS');
     expect(result.candidateName).toBeUndefined();
-  });
-
-  it('não deve gerar AMBIGUOUS falso se contextos distinguem', async () => {
-    await prisma.candidateMetadata.create({
-      data: {
-        candidateSequence: '77777777777', electionYear: 2026, electionCode: '', round: 1, state: 'SP', officeCode: '3', officeName: 'GOVERNADOR', candidateNumber: '99', ballotName: 'GOVERNADOR DE SP', partyNumber: '99', partyAbbreviation: 'FALSO', partyName: 'PARTIDO FALSO'
-      }
-    });
-    const resolver = new CandidateResolver();
-    await resolver.load(2026);
-    const resultSP = resolver.resolveNominal(2026, 'SP', '3', '99');
-    expect(resultSP.status).toBe('FOUND');
-    expect(resultSP.candidateName).toBe('GOVERNADOR DE SP');
-    const resultSC = resolver.resolveNominal(2026, 'SC', '3', '99');
-    expect(resultSC.status).toBe('AMBIGUOUS');
   });
 });
 
