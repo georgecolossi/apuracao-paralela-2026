@@ -43,3 +43,7 @@ prisma/e2e.db-journal
 prisma/e2e.db-wal
 prisma/e2e.db-shm
 prisma/test.db*
+prisma/prod.db
+prisma/prod.db-journal
+prisma/prod.db-wal
+prisma/prod.db-shm

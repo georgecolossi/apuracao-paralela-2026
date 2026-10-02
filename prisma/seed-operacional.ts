@@ -4,32 +4,62 @@ import * as bcrypt from 'bcryptjs';
 const prisma = new PrismaClient();
 
 /**
- * Seed operacional para Eleições 2026 - 1º Turno
+ * Seed operacional para Eleições 2026 — 1º Turno
  * PLEI: 3220 | Eleição Federal: 6257 | Eleição Estadual SC: 6259
- * Concórdia/SC - Código TSE: 80837
+ * Concórdia/SC — Código TSE: 80837
  *
  * IMPORTANTE: Este seed cria o contexto operacional REAL de 04/10/2026.
- * NÃO substitui o PLEI 2110 que continua existindo para fixtures de teste.
- * Execute em um banco LIMPO gerado por: npx prisma db push
+ * NÃO substitui o PLEI 2110 que continua existindo somente para fixtures de teste.
+ *
+ * A credencial administrativa DEVE ser fornecida via variável de ambiente.
+ * O seed falha imediatamente se ADMIN_EMAIL ou ADMIN_PASSWORD não estiverem definidos.
+ *
+ * PowerShell:
+ *   $env:DATABASE_URL="file:./prisma/prod.db"
+ *   $env:ADMIN_EMAIL="operador@suaorganizacao.org"
+ *   $env:ADMIN_PASSWORD="senha-forte-aqui"
+ *   npx tsx prisma/seed-operacional.ts
  */
 async function main() {
-  // 1. Usuário admin operacional
-  const adminEmail = 'admin@apuracao.local';
-  const passwordHash = await bcrypt.hash('admin123', 10);
+  // 1. Validação das credenciais operacionais — FAIL-CLOSED
+  const adminEmail = process.env.ADMIN_EMAIL;
+  const adminPassword = process.env.ADMIN_PASSWORD;
+
+  if (!adminEmail || adminEmail.trim() === '') {
+    console.error('ERRO: Variável de ambiente ADMIN_EMAIL não definida.');
+    console.error('Defina a credencial antes de executar o seed operacional:');
+    console.error('  PowerShell: $env:ADMIN_EMAIL="operador@suaorganizacao.org"');
+    process.exit(1);
+  }
+
+  if (!adminPassword || adminPassword.trim() === '') {
+    console.error('ERRO: Variável de ambiente ADMIN_PASSWORD não definida.');
+    console.error('Defina a credencial antes de executar o seed operacional:');
+    console.error('  PowerShell: $env:ADMIN_PASSWORD="senha-forte-aqui"');
+    process.exit(1);
+  }
+
+  if (adminPassword.length < 10) {
+    console.error('ERRO: ADMIN_PASSWORD deve ter pelo menos 10 caracteres.');
+    process.exit(1);
+  }
+
+  // 2. Hash bcrypt da senha (nunca armazenada em plaintext, nunca impressa)
+  const passwordHash = await bcrypt.hash(adminPassword, 12);
   await prisma.user.upsert({
     where: { email: adminEmail },
-    update: { isActive: true },
+    update: { passwordHash, isActive: true, role: 'ADMIN' },
     create: {
-      name: 'Administrador Padrão',
+      name: 'Administrador Operacional',
       email: adminEmail,
       passwordHash,
       role: 'ADMIN',
       isActive: true
     }
   });
-  console.log('Usuário admin configurado.');
+  console.log(`Usuário admin configurado: ${adminEmail}`);
 
-  // 2. Eleição Operacional 2026 — PLEI 3220
+  // 3. Eleição Operacional 2026 — PLEI 3220
   // NÃO criar PLEI 2110 aqui. Fixtures de teste usam banco e2e.db isolado.
   const existingOp = await prisma.election.findFirst({ where: { plei: '3220' } });
   if (!existingOp) {
@@ -53,16 +83,16 @@ async function main() {
     console.log('Eleição operacional (PLEI 3220) já existe.');
   }
 
-  // 3. Estado SC
+  // 4. Estado SC
   const stateSC = await prisma.state.upsert({
     where: { abbreviation: 'SC' },
     update: {},
     create: { name: 'SANTA CATARINA', abbreviation: 'SC' }
   });
 
-  // 4. Concórdia/SC (80837) — isCoverage SOMENTE para cobertura real
-  // O campo isCoverage NÃO é setado aqui automaticamente.
-  // Deve ser ativado manualmente via /admin/cobertura antes da operação.
+  // 5. Concórdia/SC (80837) — isCoverage=false até confirmação manual do ADMIN
+  // O campo isCoverage NÃO é ativado automaticamente.
+  // O ADMIN deve acessar /admin/cobertura e habilitar Concórdia/80837 explicitamente.
   const concordia = await prisma.municipality.upsert({
     where: { officialCode: '80837' },
     update: {},
@@ -70,14 +100,24 @@ async function main() {
       name: 'CONCÓRDIA',
       officialCode: '80837',
       stateId: stateSC.id,
-      isCoverage: false  // Deve ser ativado explicitamente pelo ADMIN antes da operação
+      isCoverage: false
     }
   });
-  console.log(`Concórdia/SC (80837) registrada. isCoverage atual: ${concordia.isCoverage}`);
-  console.log('ATENÇÃO: Ative isCoverage=true via /admin/cobertura antes de iniciar a operação.');
+  console.log(`Concórdia/SC (80837) registrada. isCoverage=${concordia.isCoverage}`);
+  console.log('ATENÇÃO: isCoverage=false. Ative manualmente via /admin/cobertura antes da operação.');
+
+  // 6. Verificação de sanidade: PLEI 2110 NÃO deve existir neste banco
+  const fixture = await prisma.election.findFirst({ where: { plei: '2110' } });
+  if (fixture) {
+    console.error('ALERTA: PLEI 2110 (fixture de teste) encontrado neste banco!');
+    console.error('Este banco NÃO é um banco operacional limpo. Recomendado recriar do zero.');
+  }
 
   console.log('\nSeed operacional concluído.');
-  console.log('Próximo passo: tsx scripts/import-municipalities.ts && tsx scripts/import-candidates.ts');
+  console.log('Próximos passos:');
+  console.log('  npx tsx scripts/import-municipalities.ts');
+  console.log('  npx tsx scripts/import-candidates.ts');
+  console.log('  Acessar /admin/cobertura e ativar Concórdia/80837');
 }
 
 main()

@@ -13,7 +13,8 @@
     "typecheck": "tsc --noEmit",
     "import:candidates": "tsx scripts/import-candidates.ts",
     "import:municipalities": "tsx scripts/import-municipalities.ts",
-    "db:setup": "npx prisma db push && tsx prisma/seed.ts && tsx scripts/import-municipalities.ts && tsx scripts/import-candidates.ts"
+    "db:setup": "npx prisma db push && tsx prisma/seed.ts && tsx scripts/import-municipalities.ts && tsx scripts/import-candidates.ts",
+    "db:setup:operacional": "node scripts/setup-operacional.mjs"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

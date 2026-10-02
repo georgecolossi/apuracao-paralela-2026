@@ -135,23 +135,20 @@ O `npm run db:setup` (que usa `prisma/seed.ts`) cria PLEI 2110 e é apropriado a
 
 ### Procedimento de Preparação Operacional (Banco Limpo — Dia da Eleição)
 
-Execute em ordem no notebook da operação:
+Execute em ordem no notebook da operação (PowerShell):
 
-```bash
-# 1. Criar banco operacional limpo (NÃO sobrescreve dev.db)
-DATABASE_URL="file:./prod.db" npx prisma db push
+```powershell
+# 1. Definir credenciais administrativas na sessão (obrigatório, mínimo 10 caracteres)
+$env:ADMIN_EMAIL="operador@suaorganizacao.org"
+$env:ADMIN_PASSWORD="senha-forte-aqui-minimo-10-chars"
 
-# 2. Executar seed operacional (cria PLEI 3220, usuário admin, Concórdia/SC)
-DATABASE_URL="file:./prod.db" npx tsx prisma/seed-operacional.ts
+# 2. Criar banco operacional limpo (prod.db)
+# Este script tem fail-closed e falhará se o prod.db já existir
+npm run db:setup:operacional
 
-# 3. Importar municípios (necessário para validação geográfica)
-DATABASE_URL="file:./prod.db" npx tsx scripts/import-municipalities.ts
-
-# 4. Importar candidatos (snapshot mais recente dos CSVs em consulta_cand_2026/)
-DATABASE_URL="file:./prod.db" npx tsx scripts/import-candidates.ts
-
-# 5. Iniciar com banco operacional
-DATABASE_URL="file:./prod.db" npm run start
+# 3. Iniciar o sistema com o banco operacional
+$env:DATABASE_URL="file:./prisma/prod.db"
+npm run start
 ```
 
 **Antes de iniciar a operação real:**
@@ -161,19 +158,12 @@ DATABASE_URL="file:./prod.db" npm run start
 
 ### Atualização de Candidatos (CandidateMetadata)
 
-O snapshot local em `consulta_cand_2026/` data de **30/09/2026 (12:30:34)**. Ele **não deve ser considerado o snapshot final de produção**.
-
-> **ATUALIZAÇÃO DOS CSVs AINDA NECESSÁRIA**
-
-Antes da operação:
-1. Baixar manualmente os arquivos `consulta_cand_2026_BR.csv` e `consulta_cand_2026_SC.csv` de https://dadosabertos.tse.jus.br/pt_BR/dataset/candidatos-2026
-2. Substituir os arquivos em `consulta_cand_2026/`
-3. Verificar o campo `DT_GERACAO`/`HH_GERACAO` na primeira linha do CSV para confirmar a data do snapshot
-4. Executar: `DATABASE_URL="file:./prod.db" npx tsx scripts/import-candidates.ts`
-5. Validar quantidade BR e SC no banco
-6. Verificar alguns candidatos conhecidos com FOUND
+O snapshot local em `consulta_cand_2026/` data de **02/10/2026 (12:30:46)**. Ele contém o snapshot final oficial pré-eleição.
+Quantidade total BR importável: 14.
+Quantidade total SC importável (cargos 3, 5, 6, 7): 666.
 
 O importador usa `upsert` por `candidateSequence` — não altera `BallotVote`, `BallotReport` nem quantidades de votos.
+
 
 ## Resolução de Metadados de Candidatos e Apresentação
 
