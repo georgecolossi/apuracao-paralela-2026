@@ -2,17 +2,9 @@
 
 import { useEffect, useState } from 'react';
 import { Activity, Radio, AlertCircle, RefreshCw, Archive, CheckCircle2, AlertTriangle, Users } from 'lucide-react';
+import { getOfficeDataAggregate, TotalItem } from '@/lib/presentation/apuracaoHelper';
 
-interface TotalItem {
-  officeName: string;
-  candidateNumber?: string | null;
-  partyNumber?: string | null;
-  voteType: string;
-  quantity: number;
-  metadataStatus?: string;
-  candidateName?: string;
-  partyAbbreviation?: string;
-}
+
 
 interface TotalsData {
   processedReports: number;
@@ -93,43 +85,7 @@ export default function ApuracaoPage() {
 
   const getOfficeData = (officeName: string) => {
     if (!totals) return null;
-    
-    const officeVotes = totals.totals.filter(t => t.officeName === officeName);
-    
-    let validos = 0;
-    let brancos = 0;
-    let nulos = 0;
-    
-    const candidateMap = new Map<string, { candidateNumber: string; partyNumber: string; quantity: number; candidateName?: string; partyAbbreviation?: string; metadataStatus?: string; voteType: string; }>();
-
-    for (const v of officeVotes) {
-      if (v.voteType === 'BRANCO') brancos += v.quantity;
-      else if (v.voteType === 'NULO') nulos += v.quantity;
-      else if (v.voteType === 'NOMINAL' || v.voteType === 'LEGENDA') {
-        validos += v.quantity;
-        const key = v.voteType === 'LEGENDA' ? `LEG_${v.partyNumber}` : `NOM_${v.candidateNumber}`;
-        
-        const existing = candidateMap.get(key);
-        if (existing) {
-          existing.quantity += v.quantity;
-        } else {
-          candidateMap.set(key, {
-            candidateNumber: v.voteType === 'LEGENDA' ? `Legenda ${v.partyNumber}` : (v.candidateNumber || '-'),
-            partyNumber: v.partyNumber || '-',
-            quantity: v.quantity,
-            candidateName: v.candidateName,
-            partyAbbreviation: v.partyAbbreviation,
-            metadataStatus: v.metadataStatus,
-            voteType: v.voteType
-          });
-        }
-      }
-    }
-    
-    const totalGeral = validos + brancos + nulos;
-    const candidates = Array.from(candidateMap.values()).sort((a, b) => b.quantity - a.quantity);
-    
-    return { candidates, brancos, nulos, totalValidos: validos, totalGeral };
+    return getOfficeDataAggregate(officeName, totals.totals);
   };
 
   const activeData = activeOffice ? getOfficeData(activeOffice) : null;
