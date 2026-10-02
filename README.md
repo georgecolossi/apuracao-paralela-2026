@@ -147,7 +147,7 @@ $env:ADMIN_PASSWORD="senha-forte-aqui-minimo-10-chars"
 npm run db:setup:operacional
 
 # 3. Iniciar o sistema com o banco operacional
-$env:DATABASE_URL="file:./prisma/prod.db"
+$env:DATABASE_URL="file:./prod.db"
 npm run start
 ```
 
@@ -158,7 +158,7 @@ npm run start
 
 ### Atualização de Candidatos (CandidateMetadata)
 
-O snapshot local em `consulta_cand_2026/` data de **02/10/2026 (12:30:46)**. Ele contém o snapshot final oficial pré-eleição.
+Trata-se de um snapshot local atualizado em **02/10/2026 às 12:30:46**.
 Quantidade total BR importável: 14.
 Quantidade total SC importável (cargos 3, 5, 6, 7): 666.
 

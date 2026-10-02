@@ -55,7 +55,7 @@ console.log(`Admin: ${adminEmail}`);
 
 const env = {
   ...process.env,
-  DATABASE_URL: 'file:./prisma/prod.db',
+  DATABASE_URL: 'file:./prod.db',
 };
 
 try {
@@ -73,7 +73,7 @@ try {
 
   console.log('\n=== BANCO OPERACIONAL PRONTO ===');
   console.log('Próximo passo obrigatório antes de iniciar a operação:');
-  console.log('  1. Iniciar com: $env:DATABASE_URL="file:./prisma/prod.db" ; npm run start');
+  console.log('  1. Iniciar com: $env:DATABASE_URL="file:./prod.db" ; npm run start');
   console.log('  2. Acessar /admin/cobertura');
   console.log('  3. Ativar Concórdia/SC (80837) manualmente');
 

@@ -15,7 +15,7 @@ const prisma = new PrismaClient();
  * O seed falha imediatamente se ADMIN_EMAIL ou ADMIN_PASSWORD não estiverem definidos.
  *
  * PowerShell:
- *   $env:DATABASE_URL="file:./prisma/prod.db"
+ *   $env:DATABASE_URL="file:./prod.db"
  *   $env:ADMIN_EMAIL="operador@suaorganizacao.org"
  *   $env:ADMIN_PASSWORD="senha-forte-aqui"
  *   npx tsx prisma/seed-operacional.ts
@@ -109,8 +109,10 @@ async function main() {
   // 6. Verificação de sanidade: PLEI 2110 NÃO deve existir neste banco
   const fixture = await prisma.election.findFirst({ where: { plei: '2110' } });
   if (fixture) {
-    console.error('ALERTA: PLEI 2110 (fixture de teste) encontrado neste banco!');
-    console.error('Este banco NÃO é um banco operacional limpo. Recomendado recriar do zero.');
+    console.error('ERRO FATAL: PLEI 2110 (fixture de teste) encontrado neste banco!');
+    console.error('Este banco NÃO é um banco operacional limpo.');
+    console.error('A preparação foi interrompida para evitar contaminação.');
+    process.exit(1);
   }
 
   console.log('\nSeed operacional concluído.');
