@@ -105,6 +105,76 @@ Os diretórios de testes (`tests/` e `external-fixtures/`) hospedam exemplos bas
 ## Próximas etapas
 - Setup final e testes operacionais em dispositivos móveis da equipe no dia real do pleito.
 
+## Contexto Eleitoral Operacional 2026
+
+A operação real desta apuração paralela está enquadrada nos seguintes identificadores oficiais do TSE:
+
+| Campo | Valor |
+| --- | --- |
+| Data | 04/10/2026 |
+| Turno | 1º Turno |
+| **PLEITO (PLEI)** | **3220** |
+| Eleição Geral Federal | 6257 |
+| Eleição Geral Estadual SC | 6259 |
+| Município | Concórdia — SC |
+| Código TSE | 80837 |
+
+**IMPORTANTE:** O campo `PLEI` extraído diretamente do QRBU é a chave de validação do sistema. Um BU real de 04/10/2026 terá `PLEI=3220`. O sistema rejeita com `ELECTION_CONTEXT_MISMATCH` qualquer BU cujo PLEI não corresponda a uma `Election` com `status=ACTIVE` no banco.
+
+Os códigos `6257` e `6259` **não são armazenados no modelo de dados atual** — eles aparecem no corpo do QRBU como `CD_ELEICAO`, mas o campo `Election.plei` corresponde ao campo `PLEI` do BU. Não há necessidade de modelar `6257`/`6259` separadamente para a validação de ingresso do BU.
+
+### Separação PLEI 2110 (teste) vs. PLEI 3220 (operação)
+
+| Contexto | PLEI | Banco | Como preparar |
+| --- | --- | --- | --- |
+| Fixtures / E2E | 2110 | `e2e.db` (efêmero, isolado) | `npm run test:e2e` (automático) |
+| Desenvolvimento | 2110 | `dev.db` (local, persistente) | `npm run db:setup` |
+| **Operação Real** | **3220** | `prod.db` (novo, limpo) | Ver procedimento abaixo |
+
+O `npm run db:setup` (que usa `prisma/seed.ts`) cria PLEI 2110 e é apropriado apenas para desenvolvimento/teste. **Nunca usar `dev.db` como banco operacional real.**
+
+### Procedimento de Preparação Operacional (Banco Limpo — Dia da Eleição)
+
+Execute em ordem no notebook da operação:
+
+```bash
+# 1. Criar banco operacional limpo (NÃO sobrescreve dev.db)
+DATABASE_URL="file:./prod.db" npx prisma db push
+
+# 2. Executar seed operacional (cria PLEI 3220, usuário admin, Concórdia/SC)
+DATABASE_URL="file:./prod.db" npx tsx prisma/seed-operacional.ts
+
+# 3. Importar municípios (necessário para validação geográfica)
+DATABASE_URL="file:./prod.db" npx tsx scripts/import-municipalities.ts
+
+# 4. Importar candidatos (snapshot mais recente dos CSVs em consulta_cand_2026/)
+DATABASE_URL="file:./prod.db" npx tsx scripts/import-candidates.ts
+
+# 5. Iniciar com banco operacional
+DATABASE_URL="file:./prod.db" npm run start
+```
+
+**Antes de iniciar a operação real:**
+- Acessar `/admin/cobertura` e ativar `isCoverage=true` para Concórdia/80837 (passo manual obrigatório).
+- Verificar que exatamente 1 `Election` com `status=ACTIVE` e `plei=3220` existe no banco.
+- Verificar que exatamente 1 `ElectionRound` com `roundNumber=1` e `status=ACTIVE` está vinculado.
+
+### Atualização de Candidatos (CandidateMetadata)
+
+O snapshot local em `consulta_cand_2026/` data de **30/09/2026 (12:30:34)**. Ele **não deve ser considerado o snapshot final de produção**.
+
+> **ATUALIZAÇÃO DOS CSVs AINDA NECESSÁRIA**
+
+Antes da operação:
+1. Baixar manualmente os arquivos `consulta_cand_2026_BR.csv` e `consulta_cand_2026_SC.csv` de https://dadosabertos.tse.jus.br/pt_BR/dataset/candidatos-2026
+2. Substituir os arquivos em `consulta_cand_2026/`
+3. Verificar o campo `DT_GERACAO`/`HH_GERACAO` na primeira linha do CSV para confirmar a data do snapshot
+4. Executar: `DATABASE_URL="file:./prod.db" npx tsx scripts/import-candidates.ts`
+5. Validar quantidade BR e SC no banco
+6. Verificar alguns candidatos conhecidos com FOUND
+
+O importador usa `upsert` por `candidateSequence` — não altera `BallotVote`, `BallotReport` nem quantidades de votos.
+
 ## Resolução de Metadados de Candidatos e Apresentação
 
 O processamento e persistência dos votos é baseado estritamente no código do BU (QRBU), que se mantém como a fonte primária e irrefutável da verdade. A base local de `CandidateMetadata`, importada da base oficial, atua única e exclusivamente como **enriquecimento visual de apresentação** para as interfaces gráficas.
@@ -123,10 +193,14 @@ O projeto obedece ao princípio de **isolamento total de banco de dados** para a
 *   **`prisma/dev.db`**: Banco de dados exclusivo do ambiente de **desenvolvimento local**. Nunca é apagado, sobrescrito ou modificado pelas suítes automatizadas. Os testes automatizados possuem uma trava `fail-closed` que impede sua execução caso apontem para este arquivo ou tentem compartilhar uma instância rodando nesta base via porta 3000.
 *   **`prisma/test.db`**: Banco de dados efêmero usado pelas suítes unitárias e de integração (`vitest`). É recriado automaticamente no ciclo de vida de `npm run test` com seus respectivos Seeds.
 *   **`prisma/e2e.db`**: Banco de dados exclusivo para os testes End-to-End do **Playwright** (`npm run test:e2e`).
+*   **`prisma/prod.db`**: Banco de dados operacional real. Criado manualmente conforme procedimento acima. **Não versionado.**
 
 ## Referências oficiais
 A implementação de parsing é dependente dos padrões adotados e abertos pela Justiça Eleitoral para as Eleições 2026.
 - Tribunal Superior Eleitoral: https://www.tse.jus.br
+- Candidatos TSE 2026: https://dadosabertos.tse.jus.br/pt_BR/dataset/candidatos-2026
+- Informações técnicas divulgação de resultados: https://www.tse.jus.br/eleicoes/informacoes-tecnicas-sobre-a-divulgacao-de-resultados
 
 ## Licença
 Consulte o arquivo LICENSE, quando disponibilizado.
+
