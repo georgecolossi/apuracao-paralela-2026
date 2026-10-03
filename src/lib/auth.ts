@@ -3,12 +3,11 @@ import * as jwt from 'jsonwebtoken';
 
 export function getJwtSecret() {
   const secret = process.env.JWT_SECRET;
-  if (!secret) {
-    if (process.env.NODE_ENV === 'production') {
-      throw new Error('JWT_SECRET_NOT_CONFIGURED');
-    }
-    return 'fallback_inseguro_local';
+  
+  if (!secret || secret.trim() === '') {
+    throw new Error('JWT_SECRET_NOT_CONFIGURED');
   }
+  
   return secret;
 }
 

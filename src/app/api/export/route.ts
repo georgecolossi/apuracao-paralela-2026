@@ -1,17 +1,16 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { cookies } from 'next/headers';
-import jwt from 'jsonwebtoken';
+import { requireAuthenticatedUser } from '@/lib/auth';
 
 export async function GET(req: Request) {
-  const cookieStore = await cookies();
-  const token = cookieStore.get('admin_session');
-  if (!token) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  const auth = await requireAuthenticatedUser();
   
-  try {
-    jwt.verify(token.value, process.env.JWT_SECRET || 'fallback-secret');
-  } catch (e) {
+  if (!auth.authenticated) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  if (auth.user?.role !== 'ADMIN') {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
   const { searchParams } = new URL(req.url);
