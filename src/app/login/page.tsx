@@ -2,10 +2,10 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Lock, Mail, ShieldAlert, ArrowRight } from 'lucide-react';
+import { Lock, User, ShieldAlert, ArrowRight } from 'lucide-react';
 
 export default function LoginPage() {
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [loading, setLoading] = useState(false);
@@ -20,13 +20,13 @@ export default function LoginPage() {
       const res = await fetch('/api/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify({ username, password })
       });
 
       if (res.ok) {
         router.push('/admin/scanner');
       } else {
-        setErrorMsg('Credenciais inválidas. Verifique seu e-mail e senha.');
+        setErrorMsg('Credenciais inválidas. Verifique seu usuário e senha.');
         setLoading(false);
       }
     } catch {
@@ -62,19 +62,19 @@ export default function LoginPage() {
             )}
             
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-bold uppercase tracking-wider text-slate-500 ml-1">E-mail Operacional</label>
+              <label className="text-xs font-bold uppercase tracking-wider text-slate-500 ml-1">Usuário Operacional</label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400">
-                  <Mail className="w-5 h-5" />
+                  <User className="w-5 h-5" />
                 </div>
                 <input 
-                  type="email" 
-                  name="email"
-                  autoComplete="email"
-                  inputMode="email"
-                  placeholder="operador@radio.com.br" 
-                  value={email} 
-                  onChange={e => setEmail(e.target.value)}
+                  type="text" 
+                  name="username"
+                  autoComplete="username"
+                  inputMode="text"
+                  placeholder="admin" 
+                  value={username} 
+                  onChange={e => setUsername(e.target.value)}
                   className="w-full border border-slate-300 bg-slate-50 p-3 pl-11 rounded-xl text-slate-900 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 focus:bg-white outline-none transition-all font-medium"
                   required
                 />

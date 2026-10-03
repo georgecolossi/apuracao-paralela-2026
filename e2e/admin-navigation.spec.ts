@@ -28,7 +28,7 @@ test.describe('Desktop Navigation to Cobertura', () => {
     
     // Login
     await page.goto('/login');
-    await page.fill('input[name="email"]', `admin-${sessionId}@apuracao.local`);
+    await page.fill('input[name="username"]', `admin-${sessionId}@apuracao.local`);
     await page.fill('input[name="password"]', 'admin123');
     await page.click('button[type="submit"]');
     

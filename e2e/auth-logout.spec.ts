@@ -25,7 +25,7 @@ test('Fluxo de login, logout e sessão inativa', async ({ page, context }) => {
 
   // 2. Login
   await page.goto('/login');
-  await page.fill('input[name="email"]', email);
+  await page.fill('input[name="username"]', email);
   await page.fill('input[name="password"]', 'admin123');
   await page.click('button[type="submit"]');
   await page.waitForURL('/admin/scanner');
@@ -44,7 +44,7 @@ test('Fluxo de login, logout e sessão inativa', async ({ page, context }) => {
 
   // 6. Login novamente para testar usuário inativo
   await page.goto('/login');
-  await page.fill('input[name="email"]', email);
+  await page.fill('input[name="username"]', email);
   await page.fill('input[name="password"]', 'admin123');
   await page.click('button[type="submit"]');
   await page.waitForURL('/admin/scanner');

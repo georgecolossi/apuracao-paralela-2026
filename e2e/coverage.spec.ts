@@ -38,7 +38,7 @@ test.describe('E2E ADMINISTRATIVO / COBERTURA GEOGRÁFICA', () => {
   test('A) Rejeitar BU fora da cobertura', async ({ page }) => {
     // 1. Logar
     await page.goto('/login');
-    await page.fill('input[type="email"]', 'admin@apuracao.local');
+    await page.fill('input[name="username"]', 'admin@apuracao.local');
     await page.fill('input[type="password"]', 'admin123');
     await page.click('button[type="submit"]');
     await expect(page).toHaveURL(/.*admin.*/);
@@ -83,7 +83,7 @@ test.describe('E2E ADMINISTRATIVO / COBERTURA GEOGRÁFICA', () => {
 
   test('B) Aceitar BU dentro da cobertura (MUNI permitido)', async ({ page }) => {
     await page.goto('/login');
-    await page.fill('input[type="email"]', 'admin@apuracao.local');
+    await page.fill('input[name="username"]', 'admin@apuracao.local');
     await page.fill('input[type="password"]', 'admin123');
     await page.click('button[type="submit"]');
     await expect(page).toHaveURL(/.*admin.*/);

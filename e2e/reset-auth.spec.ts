@@ -52,7 +52,7 @@ test.describe('E2E ADMINISTRATIVO / SEGURANÇA DO RESET', () => {
   test('B) Usuário autenticado NÃO-ADMIN -> 403 e nenhum dado apagado', async ({ page }) => {
     // 1. Logar como operador (NÃO-ADMIN)
     await page.goto('/login');
-    await page.fill('input[type="email"]', 'operator@apuracao.local');
+    await page.fill('input[name="username"]', 'operator@apuracao.local');
     await page.fill('input[type="password"]', 'operator123');
     await page.click('button[type="submit"]');
     await expect(page).toHaveURL(/.*admin.*/); // Vai para /admin/scanner
@@ -82,7 +82,7 @@ test.describe('E2E ADMINISTRATIVO / SEGURANÇA DO RESET', () => {
   test('C) ADMIN com confirmação incorreta -> 400 e nenhum dado apagado', async ({ page }) => {
     // 1. Logar como ADMIN
     await page.goto('/login');
-    await page.fill('input[type="email"]', 'admin@apuracao.local');
+    await page.fill('input[name="username"]', 'admin@apuracao.local');
     await page.fill('input[type="password"]', 'admin123');
     await page.click('button[type="submit"]');
     await expect(page).toHaveURL(/.*admin.*/);
@@ -111,7 +111,7 @@ test.describe('E2E ADMINISTRATIVO / SEGURANÇA DO RESET', () => {
   test('D) ADMIN com confirmação correta -> 200 e dados apagados', async ({ page }) => {
     // 1. Logar como ADMIN
     await page.goto('/login');
-    await page.fill('input[type="email"]', 'admin@apuracao.local');
+    await page.fill('input[name="username"]', 'admin@apuracao.local');
     await page.fill('input[type="password"]', 'admin123');
     await page.click('button[type="submit"]');
     await expect(page).toHaveURL(/.*admin.*/);

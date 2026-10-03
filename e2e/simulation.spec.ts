@@ -26,7 +26,7 @@ test.describe('APPLICATION E2E / SIMULATION', () => {
   test('Fluxo completo: Login -> Scan -> Confirmação -> Publicação', async ({ request, page }) => {
     // 1. Login
     await page.goto('/login');
-    await page.fill('input[type="email"]', 'admin@apuracao.local');
+    await page.fill('input[name="username"]', 'admin@apuracao.local');
     await page.fill('input[type="password"]', 'admin123');
     await page.click('button[type="submit"]');
     await expect(page).toHaveURL('/admin/scanner');

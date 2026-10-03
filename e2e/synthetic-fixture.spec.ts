@@ -43,7 +43,7 @@ test.describe('TSE 2026 SYNTHETIC FIXTURE E2E', () => {
 
     // 1. Login
     await page.goto('/login');
-    await page.fill('input[type="email"]', 'admin@apuracao.local');
+    await page.fill('input[name="username"]', 'admin@apuracao.local');
     await page.fill('input[type="password"]', 'admin123');
     await page.click('button[type="submit"]');
     await expect(page).toHaveURL('/admin/scanner');

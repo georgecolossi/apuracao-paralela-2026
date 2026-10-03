@@ -36,7 +36,7 @@ test.describe('E2E ADMINISTRATIVO / RESET DA APURAÇÃO', () => {
   test('Deve zerar a apuração e permitir novo fluxo (Oficial)', async ({ page }) => {
     // 1. Logar
     await page.goto('/login');
-    await page.fill('input[type="email"]', 'admin@apuracao.local');
+    await page.fill('input[name="username"]', 'admin@apuracao.local');
     await page.fill('input[type="password"]', 'admin123');
     await page.click('button[type="submit"]');
     await expect(page).toHaveURL(/.*admin.*/);

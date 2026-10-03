@@ -139,8 +139,11 @@ Execute em ordem no notebook da operação (PowerShell):
 
 ```powershell
 # 1. Definir credenciais administrativas na sessão (obrigatório, mínimo 10 caracteres)
-$env:ADMIN_EMAIL="operador@suaorganizacao.org"
-$env:ADMIN_PASSWORD="senha-forte-aqui-minimo-10-chars"
+# Login administrativo operacional utiliza Usuário + Senha.
+# (Nota: por compatibilidade pré-operacional, o identificador username continua armazenado internamente na coluna User.email; isso não significa que o operador precise utilizar endereço de e-mail.)
+$env:ADMIN_USERNAME="admin"
+$env:ADMIN_PASSWORD="<defina-localmente>"
+$env:JWT_SECRET="<segredo-aleatorio-forte>"
 
 # 2. Criar banco operacional limpo (prod.db)
 # Este script tem fail-closed e falhará se o prod.db já existir

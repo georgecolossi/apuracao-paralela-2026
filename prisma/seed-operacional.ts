@@ -12,23 +12,23 @@ const prisma = new PrismaClient();
  * NÃO substitui o PLEI 2110 que continua existindo somente para fixtures de teste.
  *
  * A credencial administrativa DEVE ser fornecida via variável de ambiente.
- * O seed falha imediatamente se ADMIN_EMAIL ou ADMIN_PASSWORD não estiverem definidos.
+ * O seed falha imediatamente se ADMIN_USERNAME ou ADMIN_PASSWORD não estiverem definidos.
  *
  * PowerShell:
  *   $env:DATABASE_URL="file:./prod.db"
- *   $env:ADMIN_EMAIL="operador@suaorganizacao.org"
+ *   $env:ADMIN_USERNAME="admin"
  *   $env:ADMIN_PASSWORD="senha-forte-aqui"
  *   npx tsx prisma/seed-operacional.ts
  */
 async function main() {
   // 1. Validação das credenciais operacionais — FAIL-CLOSED
-  const adminEmail = process.env.ADMIN_EMAIL;
+  const adminUsername = process.env.ADMIN_USERNAME;
   const adminPassword = process.env.ADMIN_PASSWORD;
 
-  if (!adminEmail || adminEmail.trim() === '') {
-    console.error('ERRO: Variável de ambiente ADMIN_EMAIL não definida.');
+  if (!adminUsername || adminUsername.trim() === '') {
+    console.error('ERRO: ADMIN_USERNAME não configurado.');
     console.error('Defina a credencial antes de executar o seed operacional:');
-    console.error('  PowerShell: $env:ADMIN_EMAIL="operador@suaorganizacao.org"');
+    console.error('  PowerShell: $env:ADMIN_USERNAME="admin"');
     process.exit(1);
   }
 
@@ -46,18 +46,21 @@ async function main() {
 
   // 2. Hash bcrypt da senha (nunca armazenada em plaintext, nunca impressa)
   const passwordHash = await bcrypt.hash(adminPassword, 12);
+  
+  // User.email é mantido como identificador de login para evitar migração
+  // estrutural antes da operação.
   await prisma.user.upsert({
-    where: { email: adminEmail },
+    where: { email: adminUsername },
     update: { passwordHash, isActive: true, role: 'ADMIN' },
     create: {
       name: 'Administrador Operacional',
-      email: adminEmail,
+      email: adminUsername,
       passwordHash,
       role: 'ADMIN',
       isActive: true
     }
   });
-  console.log(`Usuário admin configurado: ${adminEmail}`);
+  console.log(`Usuário administrador configurado: ${adminUsername}`);
 
   // 3. Eleição Operacional 2026 — PLEI 3220
   // NÃO criar PLEI 2110 aqui. Fixtures de teste usam banco e2e.db isolado.

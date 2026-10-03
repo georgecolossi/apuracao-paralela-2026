@@ -5,7 +5,7 @@
  * FAIL-CLOSED: interrompe se prod.db já existir, para evitar sobrescrita acidental.
  *
  * Uso (Windows PowerShell):
- *   $env:ADMIN_EMAIL="operador@suaorganizacao.org"
+ *   $env:ADMIN_USERNAME="admin"
  *   $env:ADMIN_PASSWORD="senha-forte-aqui"
  *   npm run db:setup:operacional
  *
@@ -33,11 +33,11 @@ if (fs.existsSync(prodDbPath)) {
 }
 
 // 2. Validação antecipada das credenciais (antes de criar qualquer arquivo)
-const adminEmail = process.env.ADMIN_EMAIL;
+const adminUsername = process.env.ADMIN_USERNAME;
 const adminPassword = process.env.ADMIN_PASSWORD;
 
-if (!adminEmail || adminEmail.trim() === '') {
-  console.error('ERRO: $env:ADMIN_EMAIL não definido na sessão PowerShell.');
+if (!adminUsername || adminUsername.trim() === '') {
+  console.error('ERRO: $env:ADMIN_USERNAME não definido na sessão PowerShell.');
   process.exit(1);
 }
 if (!adminPassword || adminPassword.trim() === '') {

@@ -5,13 +5,14 @@ import * as jwt from 'jsonwebtoken';
 import { prisma } from '@/lib/db';
 
 export async function POST(req: Request) {
-  const { email, password } = await req.json();
+  const { username, password } = await req.json();
 
-  if (!email || !password) {
-    return NextResponse.json({ error: 'E-mail e senha são obrigatórios' }, { status: 400 });
+  if (!username || !password) {
+    return NextResponse.json({ error: 'Usuário e senha são obrigatórios' }, { status: 400 });
   }
 
-  const user = await prisma.user.findUnique({ where: { email } });
+  const normalizedUsername = username.trim();
+  const user = await prisma.user.findUnique({ where: { email: normalizedUsername } });
   if (!user || !user.isActive) {
     return NextResponse.json({ error: 'Credenciais inválidas' }, { status: 401 });
   }
