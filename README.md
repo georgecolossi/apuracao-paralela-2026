@@ -197,7 +197,7 @@ $env:ALLOW_OPERATIONAL_RESET="true"
 
 ## Procedimento de Backup e Restauração (SQLite)
 
-O sistema não automatiza backups temporizados para focar em estabilidade e minimizar gargalos de I/O. A responsabilidade da rotina (RPO) é do operador, sendo recomendados backups frequentes (ex: a cada 1h) conforme o volume de BUs processados.
+O sistema não automatiza backups temporizados para focar em estabilidade e minimizar gargalos de I/O. A responsabilidade da rotina é do operador, sendo recomendados backups frequentes conforme o ritmo de entrada dos BUs (ex: antes da abertura, após preparação, periodicamente durante a apuração e antes/depois de ações administrativas importantes).
 
 ### Backup Seguro (Não bloqueante)
 O backup deve ser feito utilizando o comando nativo online do SQLite. A dependência `sqlite3` CLI precisa estar instalada no Windows host e acessível via PATH.

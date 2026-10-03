@@ -9,6 +9,15 @@ if (-not (Test-Path -Path $BackupFile)) {
     exit 1
 }
 
+# 1.5 Verifica se o CLI sqlite3 está instalado e no PATH
+$sqliteAvailable = Get-Command "sqlite3" -ErrorAction SilentlyContinue
+if (-not $sqliteAvailable) {
+    Write-Error "Dependência Ausente: O utilitário de linha de comando 'sqlite3' não foi encontrado no PATH."
+    Write-Error "A verificação segura do SQLite exige essa ferramenta."
+    Write-Error "Instale o SQLite CLI para Windows ou adicione-o ao PATH e tente novamente."
+    exit 1
+}
+
 # 2. Define o banco temporário
 $TempDb = "prisma\verify-temp.db"
 

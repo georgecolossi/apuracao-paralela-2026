@@ -7,9 +7,27 @@ vi.mock('../src/lib/auth', () => ({
   requireAuthenticatedUser: vi.fn(),
 }));
 
+const mockTx = {
+  ballotVote: { deleteMany: vi.fn() },
+  ballotReportPart: { deleteMany: vi.fn() },
+  auditLog: { deleteMany: vi.fn(), create: vi.fn() },
+  ballotReport: { deleteMany: vi.fn() },
+  scanSession: { deleteMany: vi.fn() },
+  election: { deleteMany: vi.fn() },
+  electionRound: { deleteMany: vi.fn() },
+  state: { deleteMany: vi.fn() },
+  municipality: { deleteMany: vi.fn() },
+  candidateMetadata: { deleteMany: vi.fn() },
+  user: { deleteMany: vi.fn() },
+};
+
 vi.mock('../src/lib/db', () => ({
   prisma: {
-    $transaction: vi.fn(),
+    $transaction: vi.fn(async (callback) => {
+      if (typeof callback === 'function') {
+        return callback(mockTx);
+      }
+    }),
   },
 }));
 
@@ -79,5 +97,45 @@ describe('POST /api/admin/reset', () => {
     const res = await POST(req);
     expect(res.status).toBe(200);
     expect(prisma.$transaction).toHaveBeenCalled();
+
+    // Comprovando as exclusões esperadas
+    expect(mockTx.ballotVote.deleteMany).toHaveBeenCalled();
+    expect(mockTx.ballotReportPart.deleteMany).toHaveBeenCalled();
+    expect(mockTx.auditLog.deleteMany).toHaveBeenCalled();
+    expect(mockTx.ballotReport.deleteMany).toHaveBeenCalled();
+    expect(mockTx.scanSession.deleteMany).toHaveBeenCalled();
+
+    // Comprovando a criação do log de sistema
+    expect(mockTx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        action: 'SYSTEM_RESET',
+        result: 'SUCCESS'
+      })
+    }));
+
+    // Comprovando que configurações não foram apagadas
+    expect(mockTx.election.deleteMany).not.toHaveBeenCalled();
+    expect(mockTx.electionRound.deleteMany).not.toHaveBeenCalled();
+    expect(mockTx.state.deleteMany).not.toHaveBeenCalled();
+    expect(mockTx.municipality.deleteMany).not.toHaveBeenCalled();
+    expect(mockTx.candidateMetadata.deleteMany).not.toHaveBeenCalled();
+    expect(mockTx.user.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it('F) should rollback and return 500 if transaction throws an error', async () => {
+    process.env.ALLOW_OPERATIONAL_RESET = 'true';
+    vi.mocked(requireAuthenticatedUser).mockResolvedValue({
+      authenticated: true,
+      user: { userId: '1', role: 'ADMIN' },
+    } as any);
+
+    // Força um erro dentro da transação mockada
+    vi.mocked(prisma.$transaction).mockRejectedValueOnce(new Error('Simulated DB Error'));
+
+    const req = mockReq({ confirmationText: 'ZERAR APURAÇÃO' });
+    const res = await POST(req);
+    expect(res.status).toBe(500);
+    const data = await res.json();
+    expect(data.error).toBe('Erro ao zerar sistema');
   });
 });
