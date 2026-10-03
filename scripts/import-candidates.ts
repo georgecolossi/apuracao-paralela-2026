@@ -36,7 +36,7 @@ async function processFile(filePath: string, allowedRoles: Set<string>) {
   }
 
   console.log(`\nProcessando ${filePath}...`);
-  const fileStream = fs.createReadStream(filePath, { encoding: 'utf8' });
+  const fileStream = fs.createReadStream(filePath, { encoding: 'latin1' });
   const rl = readline.createInterface({
     input: fileStream,
     crlfDelay: Infinity

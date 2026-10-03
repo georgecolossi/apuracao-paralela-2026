@@ -14,7 +14,8 @@
     "import:candidates": "tsx scripts/import-candidates.ts",
     "import:municipalities": "tsx scripts/import-municipalities.ts",
     "db:setup": "npx prisma db push && tsx prisma/seed.ts && tsx scripts/import-municipalities.ts && tsx scripts/import-candidates.ts",
-    "db:setup:operacional": "node scripts/setup-operacional.mjs"
+    "db:setup:operacional": "node scripts/setup-operacional.mjs",
+    "test:generate-qrbu": "node scripts/generate-synthetic-qrbu.js"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
@@ -43,6 +44,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.3.7",
     "prisma": "^5.22.0",
+    "qrcode": "^1.5.4",
     "tailwindcss": "^4",
     "tsx": "^4.23.15",
     "typescript": "^5",

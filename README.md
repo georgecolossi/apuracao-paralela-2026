@@ -1,227 +1,100 @@
-# Apuração Paralela — Concórdia
+# Apuração Paralela 2026 - Concórdia/SC
 
-Este é o repositório de suporte ao projeto de validação em tempo real e consolidação paralela, com objetivo de ser um sistema de retaguarda de processamento de apuração das eleições.
+Sistema independente e não-oficial projetado para auditar, contabilizar e apresentar em tempo real o resultado primário da eleição (1º Turno de 2026) a partir da leitura óptica direta dos Boletins de Urna (QRBU) de Concórdia, SC.
 
-O projeto permite a leitura, via câmera ou input direto, dos dados dos Boletins de Urna (BUs) extraídos no formato QRBU do Tribunal Superior Eleitoral (TSE). Estes QR Codes condensam a ata impressa fisicamente. Com o uso deste sistema, qualquer pessoa com permissões operacionais pode enviar as partes do QR para um banco de dados, que fará as conferências estritas de formato e integridade.
+**ESTE É UM SISTEMA INDEPENDENTE DE APURAÇÃO PARALELA. NÃO POSSUI VÍNCULO, HOMOLOGAÇÃO OU VALIDADE OFICIAL PERANTE O TRIBUNAL SUPERIOR ELEITORAL (TSE).**
 
-Atualmente, o projeto está configurado para a cobertura estrita e operacional exclusiva da cidade de **Concórdia - Santa Catarina (Código TSE 80837)**. O catálogo nacional de municípios continua habilitado unicamente para suporte a fixtures de testes de outras UFs, não ampliando o escopo operacional.
+---
 
-O fluxo de funcionamento sistêmico é definido pela seguinte ordem:
-QRBU → reconstrução → parser → validação → conferência → confirmação → totalização → painel.
+## Estado Operacional
 
-## Funcionalidades principais
-- **Decodificador QRBU V2026**: Extração dos dados baseada no manual de especificação técnica para as eleições.
-- **Identidade Determinística e Deduplicação Inteligente**: Não permite registrar o mesmo Boletim de Urna duas vezes, assegurando exatidão na somatória matemática. Identidade é garantida pelos metadados únicos da urna na seção.
-- **Modo de Simulação**: Capacidade de diferenciar fluxos de testes de eleições e BUs reais.
-- **Painel em Tempo Real (SSE)**: Permite visualização pública que auto-atualiza a cada nova urna submetida.
-- **Auditoria de Operações**: Trilha de ações (`AuditLog`) que armazena qual usuário validou, reverteu ou confirmou relatórios.
-- **Cobertura Geográfica Fail-Closed**: Rejeita BUs de cidades fora da área de abrangência autorizada, evitando contaminação.
-- **Reset e Preparação**: Modos de preparo para iniciar a apuração real de forma limpa.
+O sistema alcançou o status **OPERACIONAL**. Foi submetido a baterias de testes físicos, lógicos e automatizados para atuar no ambiente de apuração paralela de Concórdia/SC (PLEI 3220).
 
-## Estrutura do projeto
-```text
-prisma/      # Arquivos do banco de dados relacional e seeds (SQLite)
-src/app/     # Páginas Web e APIs em NextJS 15+
-src/lib/     # Regras de negócios, parsers em Typescript, criptografia
-tests/       # Testes unitários e testes de integração com banco
-e2e/         # Rotinas E2E rigorosas utilizando Playwright em Chromium
-external-fixtures/ # Arquivos brutos de payloads oficiais do TSE (testes)
-```
+**Limitações conhecidas:** Trata-se de uma aplicação de escopo fechado, sem garantias de segurança absoluta, confiabilidade absoluta ou compatibilidade ilimitada de hardware móvel. O software atende estritamente às especificações necessárias para a missão em questão.
 
-## Rotas principais
-| Rota | Finalidade | Acesso |
-| --- | --- | --- |
-| `/` | Home ou roteador inicial | Público |
-| `/apuracao` | Painel de visualização pública com totalizações | Público |
-| `/login` | Acesso aos portais administrativos | Público |
-| `/admin` | Dashboard interno / listagem de sessões escaneadas | ADMIN / OPERATOR |
-| `/admin/scanner` | Interface para acionar a câmera e escanear o QRBU | ADMIN / OPERATOR |
-| `/admin/conferir/[id]` | Formulário para revisão final do resultado lido | ADMIN / OPERATOR |
-| `/admin/conferencia` | Listagem global para auditoria visual de resultados | ADMIN / OPERATOR |
-| `/admin/audit` | Timeline centralizada de acessos, erros e atividades | ADMIN / OPERATOR |
-| `/admin/recalcular` | Página informativa sobre a integridade da totalização | ADMIN / OPERATOR |
-| `/admin/preparar` | Interface destrutiva para resetar sistema | ADMIN |
-| `/metodologia` | Página contendo contexto explicativo | Público |
+---
 
-## APIs principais
-| Método | Endpoint | Finalidade |
-| --- | --- | --- |
-| POST | `/api/login` | Emissão do token JWT (Público) |
-| POST | `/api/scan` | Recebe payloads, particionamentos e faz parser/validação do BU (Autenticado) |
-| POST | `/api/reports/[id]/confirm` | Processa os resultados de um scan pendente, salvando no DB (Autenticado) |
-| POST | `/api/reports/[id]/cancel` | Cancela/Aborta uma sessão pendente que falhou (Autenticado) |
-| GET | `/api/totals` | Disponibiliza a agregação final para exibição pública e SSE (Público) |
-| GET | `/api/realtime` | SSE - Tópico de eventos para re-renderização nativa (Público) |
-| POST | `/api/admin/reset` | Deleta as tabelas e preserva eleições/rounds (ADMIN) |
-| GET | `/api/export` | Exportação estruturada das totalizações atuais (Autenticado) |
+## Arquitetura Atual
 
-## Configuração
-O arquivo `.env.example` acompanha o repositório contendo exemplos técnicos estruturais seguros. Copie-o para `.env`:
+- **Backend / Frontend**: Next.js (App Router).
+- **Persistência**: Banco de dados relacional (SQLite via Prisma ORM) operando em `journal_mode=delete`.
+- **Hospedagem**: Railway.app com volume persistente montado em `/data`.
+- **Comunicação**: HTTPS.
+- **Interfaces**:
+  - Painel Administrativo protegido por autenticação isolada (cookies httpOnly secure) via Username/Password.
+  - Painel Público (`/apuracao`) acessível via navegador.
+- **Scanner Óptico**: Scanner web via câmera do smartphone (`html5-qrcode`).
+- **Realtime**: Server-Sent Events (SSE) notificando o painel público a cada confirmação de Boletim de Urna, descartando a necessidade de atualizações manuais (F5).
+- **Modelo de Dados**:
+  - **Boletim de Urna (BU/QRBU)**: A leitura em papel/tela se mantém a todo instante como a *única fonte primária e irrevogável* da verdade de dados de totalização, validada via assinatura de hash (SHA-512) conforme norma TSE 2026.
+  - **CandidateMetadata**: Dados reais oficiais carregados unicamente para enriquecimento visual (nomes de urna e partidos) no UI. Eles não interferem no algoritmo matemático de agregação dos totais brutos.
 
-```env
-DATABASE_URL="file:./dev.db"
-JWT_SECRET="secret_for_local_dev"
-ADMIN_INITIAL_PASSWORD="admin_password"
-```
+---
 
-## Instalação para desenvolvimento
-1. Realize a clonagem deste repositório.
-2. Configure suas variáveis copiando `.env.example` para `.env`.
-3. Instale as dependências: `npm install`
-4. Prepare o banco de dados (SQLite local): `npm run db:setup`
-   > **Atenção**: O arquivo `prisma/dev.db` é estritamente local e **não é versionado**. A fonte de verdade estrutural é o arquivo `prisma/schema.prisma`. O comando de setup sincroniza o schema, importa municípios, candidatos e cria o usuário de desenvolvimento `admin@apuracao.local`.
-5. **Configuração de Cobertura**: O bootstrap NÃO impõe uma cobertura geográfica automaticamente. Acesse `/admin/cobertura` com o usuário admin e selecione explicitamente "Concórdia/SC (80837)". Para testar fixtures de UFs diferentes, você pode alterar temporariamente. Sem cobertura válida, o sistema opera de modo *fail-closed* e recusa BUs.
-6. Inicie o Server de desenvolvimento: `npm run dev`
+## Escopo Operacional (Hardening)
 
-## Testes
-A suite foi construída baseando-se em testes exaustivos e isolados com Playwright e Vitest. A suíte deve concluir com exit code `0`.
+O sistema possui proteções (fail-closed) explícitas na rota de parsing para evitar a injeção ou totalização acidental de dados espúrios e fixtures da fase de testes:
 
-- Validação estática de Tipos: `npm run typecheck`
-- Lint de código: `npm run lint`
-- Testes Unit/Integration: `npm run test`
-- Testes E2E (Playwright): `npm run test:e2e`
-- Build do NextJS: `npm run build`
+- **Município / UF**: Concórdia / SC (Código TSE: 80837).
+- **Pleito (PLEI)**: 3220.
+- **Turno (TURN)**: 1.
+- QRBUs escaneados com origem diferente são bloqueados com erro `OUT_OF_COVERAGE` e impedidos de ingressar na base operacional.
 
-## Fixtures TSE 2026
-Os diretórios de testes (`tests/` e `external-fixtures/`) hospedam exemplos baseados nas normativas.
+---
 
-- **Fixtures OFICIAIS**: Exemplos/fixtures provenientes do pacote oficial do TSE (manuais de testes) que refletem estrutura válida para simulações completas E2E. Elas podem utilizar candidatos fictícios na origem.
-- **Fixtures SINTÉTICAS**: Utilizadas para forçar testes lógicos e simulações focando primariamente no motor semântico em vez de integridade algorítmica real.
+## Deploy
 
-## Segurança
-- Autenticação JWT estrita limitando acesso à API e às rotas admin.
-- Regra de Role `ADMIN` protegendo ações sensíveis (como `/api/admin/reset`).
-- A deduplicação é feita do lado do servidor (Server-Side), limitando qualquer chance de conflito via requisições simultâneas.
-- Registros de Eventos mantidos via a tabela `AuditLog`.
-- Variáveis de ambiente garantindo que credenciais cruciais ou tokens nunca entrem no controle de versão.
+O sistema é implantado utilizando contêineres na plataforma Railway. O ambiente deve prover persistência apropriada no disco.
 
-*(Reforço: Este projeto não deve ser descrito, sob nenhuma circunstância, como sistema eleitoral oficial ou infraestrutura oficial da Justiça Eleitoral).*
+**Configuração do Ambiente de Produção:**
+A execução do Node/Next no contêiner exige estritamente:
+- `DATABASE_URL="file:/data/prod.db"` (apontando para o volume).
+- Configurações estritas como `ADMIN_USERNAME`, `ADMIN_PASSWORD` e `JWT_SECRET` geridas de maneira segura via enclaves operacionais do Railway (nunca commitadas e não documentadas textualmente).
 
-## Limitações conhecidas
-- A validação de assinatura digital das urnas eletrônicas permanece indisponível. O sistema faz apenas validação estrutural de integridade (Hash).
-- O uso de testes de interface Playwright em câmera simulada não dispensa testes de campo (Field Tests) com smartphones em condições físicas adversas (iluminação, foco, densidade óptica).
-- Todo resultado obtido pelo processamento é não-oficial.
+*Nota: O ambiente Staging é utilizado puramente para testes destrutivos. Segredos não são compartilhados.*
 
-## Próximas etapas
-- Setup final e testes operacionais em dispositivos móveis da equipe no dia real do pleito.
+---
 
-## Contexto Eleitoral Operacional 2026
+## Validações Realizadas (Certification)
 
-A operação real desta apuração paralela está enquadrada nos seguintes identificadores oficiais do TSE:
+O sistema conta com as seguintes certificações para a fase eleitoral final:
 
-| Campo | Valor |
-| --- | --- |
-| Data | 04/10/2026 |
-| Turno | 1º Turno |
-| **PLEITO (PLEI)** | **3220** |
-| Eleição Geral Federal | 6257 |
-| Eleição Geral Estadual SC | 6259 |
-| Município | Concórdia — SC |
-| Código TSE | 80837 |
+- **Parser Oficial TSE**: Fixtures oficiais do TSE 2026 foram submetidos e validados estrutural e matematicamente `[TESTED]`.
+- **Leitura via Câmera (1 Parte)**: QRBU oficial single-part testado com leitura física pelo celular via HTTPS (Railway) `[HARDWARE TESTED]`.
+- **Leitura via Câmera (2 Partes)**: QRBU oficial multipart (2 partes) testado fisicamente e ordenado/montado pelo assembler `[HARDWARE TESTED]`.
+- **Assembler QRBU (3+ Partes)**: QRBUs sintéticos (criados sob medida) de 1, 2 e 3 partes foram processados com sucesso. O assembler não tem limite de blocos. *O pacote de fixtures do TSE não disponibilizou QRBUs oficiais com 3 ou mais partes para verificação final em hardware.* `[TESTED]`
+- **Realtime (SSE)**: Conexão text/event-stream verificada atualizando dinamicamente a UI (sem necessidade de F5) imediatamente após aprovação do BU pela mesa. `[E2E TESTED]`
+- **Reconexão Realtime (SSE)**: Mecânica nativa de fallback HTTP do navegador confirmada pelo protocolo EventSource spec. `[STATICALLY VERIFIED]`
+- **Persistência / Deduplicação**: Reinício abrupto do backend (Kill/Start) não corrompe SQLite, não perde votos e não reseta totais. QRBUs já validados antes do reset não podem ser inseridos de novo. `[E2E TESTED]`
 
-**IMPORTANTE:** O campo `PLEI` extraído diretamente do QRBU é a chave de validação do sistema. Um BU real de 04/10/2026 terá `PLEI=3220`. O sistema rejeita com `ELECTION_CONTEXT_MISMATCH` qualquer BU cujo PLEI não corresponda a uma `Election` com `status=ACTIVE` no banco.
+---
 
-Os códigos `6257` e `6259` **não são armazenados no modelo de dados atual** — eles aparecem no corpo do QRBU como `CD_ELEICAO`, mas o campo `Election.plei` corresponde ao campo `PLEI` do BU. Não há necessidade de modelar `6257`/`6259` separadamente para a validação de ingresso do BU.
+## Ferramentas de Apoio (QRBU Sintético)
 
-### Separação PLEI 2110 (teste) vs. PLEI 3220 (operação)
+O sistema possui em sua base de scripts uma ferramenta oficial (`generate-synthetic-qrbu.js`) construída para certificar limites e falhas (stress test). Esta ferramenta elabora QRBUs 100% sintéticos imitando Concórdia/SC.
 
-| Contexto | PLEI | Banco | Como preparar |
-| --- | --- | --- | --- |
-| Fixtures / E2E | 2110 | `e2e.db` (efêmero, isolado) | `npm run test:e2e` (automático) |
-| Desenvolvimento | 2110 | `dev.db` (local, persistente) | `npm run db:setup` |
-| **Operação Real** | **3220** | `prod.db` (novo, limpo) | Ver procedimento abaixo |
+* **Comando:** `npm run test:generate-qrbu`
 
-O `npm run db:setup` (que usa `prisma/seed.ts`) cria PLEI 2110 e é apropriado apenas para desenvolvimento/teste. **Nunca usar `dev.db` como banco operacional real.**
+**ATENÇÃO:**
+Os artefatos criados pela ferramenta:
+- São **MOCK/SINTÉTICOS**.
+- Não possuem validade legal.
+- Não foram criados por urna oficial do TSE nem carregam assinatura privada ECDSA TSE.
+- Se apontados sob a lente na instância de Produção, eles "envenenariam" irreversivelmente a totalização oficial paralela por obedecerem ao código `80837/3220/1` de segurança. Devem ser escaneados unicamente no Staging local descartável.
 
-### Procedimento de Preparação Operacional (Banco Limpo — Dia da Eleição)
+---
 
-Execute em ordem no notebook da operação (PowerShell):
+## Isolamento e Testes
 
-```powershell
-# 1. Definir credenciais administrativas na sessão (obrigatório, mínimo 10 caracteres)
-# Login administrativo operacional utiliza Usuário + Senha.
-# (Nota: por compatibilidade pré-operacional, o identificador username continua armazenado internamente na coluna User.email; isso não significa que o operador precise utilizar endereço de e-mail.)
-$env:ADMIN_USERNAME="admin"
-$env:ADMIN_PASSWORD="<defina-localmente>"
-$env:JWT_SECRET="<segredo-aleatorio-forte>"
+O projeto trabalha com uma estrutura restrita:
+- `dev.db` (desenvolvimento / npm run db:setup).
+- `test.db` (Vitest integração com prisma-test-environment).
+- `e2e.db` (Playwright isolado).
+- `prod.db` (Operação final intocada).
 
-# 2. Criar banco operacional limpo (prod.db)
-# Este script tem fail-closed e falhará se o prod.db já existir
-npm run db:setup:operacional
+---
 
-# 3. Iniciar o sistema com o banco operacional
-$env:DATABASE_URL="file:./prod.db"
-npm run start
-```
-
-**Antes de iniciar a operação real:**
-- Acessar `/admin/cobertura` e ativar `isCoverage=true` para Concórdia/80837 (passo manual obrigatório).
-- Verificar que exatamente 1 `Election` com `status=ACTIVE` e `plei=3220` existe no banco.
-- Verificar que exatamente 1 `ElectionRound` com `roundNumber=1` e `status=ACTIVE` está vinculado.
-
-### Atualização de Candidatos (CandidateMetadata)
-
-Trata-se de um snapshot local atualizado em **02/10/2026 às 12:30:46**.
-Quantidade total BR importável: 14.
-Quantidade total SC importável (cargos 3, 5, 6, 7): 666.
-
-O importador usa `upsert` por `candidateSequence` — não altera `BallotVote`, `BallotReport` nem quantidades de votos.
-
-
-## Resolução de Metadados de Candidatos e Apresentação
-
-O processamento e persistência dos votos é baseado estritamente no código do BU (QRBU), que se mantém como a fonte primária e irrefutável da verdade. A base local de `CandidateMetadata`, importada da base oficial, atua única e exclusivamente como **enriquecimento visual de apresentação** para as interfaces gráficas.
-
-*   A resolução visual de candidatos classifica os registros em três estados: `FOUND`, `NOT_FOUND` ou `AMBIGUOUS`.
-*   A ausência ou ambiguidade de metadados para um candidato (e.g. nomes fictícios de fixtures de teste ou ausência de atualização do banco) **nunca bloqueia o fluxo**, não altera o registro original e não impede o processamento do BU.
-*   Nomes de candidatos, legendas partidárias ou números não são forjados, deduzidos ou inseridos como fallbacks — na indisponibilidade confirmada do dado referencial oficial, o fallback genérico `"Nome não identificado"` é exibido com a identificação original de urna.
-*   Existe uma ausência deliberada de fotografias de candidatos (não faz parte do escopo).
-*   **Votos com quantity = 0**: Votos processados e declarados no BU com quantidade zero são inteiramente preservados no banco de dados, compondo a trilha íntegra de auditoria. Contudo, eles são ocultados no painel público (`/apuracao`) para melhorar a legibilidade e focar nos resultados ativos.
-*   **Limitação técnica de totalização (Fase 7)**: A rota `/api/totals` atualmente utiliza um fallback fixo contextual (Presidente -> BR, Demais Cargos -> SC) durante a agregação de dados devido à impossibilidade de aplicar o `groupBy` do Prisma sobre campos de estado associados a outra relação. O escopo operacional oficial é focado estritamente em Concórdia/SC, minimizando qualquer impacto. O catálogo nacional de municípios continua disponível como apoio/testes.
-
-## Arquitetura de Testes e Bancos de Dados
-
-O projeto obedece ao princípio de **isolamento total de banco de dados** para as suítes automatizadas, garantindo que o desenvolvimento local e os testes em CI não colidam nem sobrescrevam bases em uso:
-
-*   **`prisma/dev.db`**: Banco de dados exclusivo do ambiente de **desenvolvimento local**. Nunca é apagado, sobrescrito ou modificado pelas suítes automatizadas. Os testes automatizados possuem uma trava `fail-closed` que impede sua execução caso apontem para este arquivo ou tentem compartilhar uma instância rodando nesta base via porta 3000.
-*   **`prisma/test.db`**: Banco de dados efêmero usado pelas suítes unitárias e de integração (`vitest`). É recriado automaticamente no ciclo de vida de `npm run test` com seus respectivos Seeds.
-*   **`prisma/e2e.db`**: Banco de dados exclusivo para os testes End-to-End do **Playwright** (`npm run test:e2e`).
-*   **`prisma/prod.db`**: Banco de dados operacional real. Criado manualmente conforme procedimento acima. **Não versionado.**
-
-## Preparação e Reset Operacional
-
-O sistema inclui uma funcionalidade administrativa (`/admin/preparar`) que permite limpar todos os dados transacionais de BUs e votos inseridos durante ensaios, preservando metadados (usuários, municípios, candidatos). 
-
-**Interlock de Segurança**: Para evitar limpezas acidentais no dia da eleição, o reset está **bloqueado por padrão** (fail-closed). Para habilitá-lo temporariamente durante ensaios preparatórios, é obrigatório definir a variável de ambiente:
-```powershell
-$env:ALLOW_OPERATIONAL_RESET="true"
-```
-**Atenção**: Jamais defina esta variável na sessão de operação real.
-
-## Procedimento de Backup e Restauração (SQLite)
-
-O sistema não automatiza backups temporizados para focar em estabilidade e minimizar gargalos de I/O. A responsabilidade da rotina é do operador, sendo recomendados backups frequentes conforme o ritmo de entrada dos BUs (ex: antes da abertura, após preparação, periodicamente durante a apuração e antes/depois de ações administrativas importantes).
-
-### Backup Seguro (Não bloqueante)
-O backup deve ser feito utilizando o comando nativo online do SQLite. A dependência `sqlite3` CLI precisa estar instalada no Windows host e acessível via PATH.
-```powershell
-.\scripts\backup-operacional.ps1 -DbPath "prisma\prod.db"
-```
-Isso criará um arquivo com timestamp na pasta `backups/`, garantindo que não haja trava (lock) ou corrupção no `prod.db` enquanto a aplicação roda.
-
-### Verificação e Restauração em Ambiente Temporário
-É imperativo verificar a integridade de um backup após a criação. Para inspecionar um backup em um banco temporário sem afetar `prod.db`:
-```powershell
-.\scripts\verify-backup.ps1 -BackupFile "backups\prod-XXXXXXXX-XXXXXX.db"
-```
-O script impedirá que você sobrescreva bancos protegidos e confirmará se a integridade do SQLite e o número de relatórios estão adequados.
-
-## Referências oficiais
-A implementação de parsing é dependente dos padrões adotados e abertos pela Justiça Eleitoral para as Eleições 2026.
+## Referências Oficiais
 - Tribunal Superior Eleitoral: https://www.tse.jus.br
 - Candidatos TSE 2026: https://dadosabertos.tse.jus.br/pt_BR/dataset/candidatos-2026
-- Informações técnicas divulgação de resultados: https://www.tse.jus.br/eleicoes/informacoes-tecnicas-sobre-a-divulgacao-de-resultados
-
-## Licença
-Consulte o arquivo LICENSE, quando disponibilizado.
-
+- Informações técnicas e manuais técnicos de divulgação de resultados e QRBU (Edição 2026).

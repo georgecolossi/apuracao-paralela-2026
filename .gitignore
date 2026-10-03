@@ -50,3 +50,6 @@ prisma/prod.db-shm
 
 # Backups operacionais
 /backups/
+
+/qrb-test-concordia/
+/qrb-test-concordia/

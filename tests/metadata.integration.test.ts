@@ -89,7 +89,7 @@ describe('Candidate Metadata Integration', () => {
     expect(result.candidateName).toBeUndefined(); // preserva comportamento: não inventa
   });
 
-  it('chave deliberadamente ambígua -> AMBIGUOUS', async () => {
+  it('chave deliberadamente ambgua -> AMBIGUOUS', async () => {
     await prisma.candidateMetadata.create({
       data: {
         candidateSequence: '99999999999', electionYear: 2026, electionCode: '', round: 1, state: 'SC', officeCode: '3', officeName: 'GOVERNADOR', candidateNumber: '99', ballotName: 'FALSO GOVERNADOR', partyNumber: '99', partyAbbreviation: 'FALSO', partyName: 'PARTIDO FALSO', source: 'test'
@@ -105,6 +105,21 @@ describe('Candidate Metadata Integration', () => {
     const result = resolver.resolveNominal(2026, 'SC', '3', '99');
     expect(result.status).toBe('AMBIGUOUS');
     expect(result.candidateName).toBeUndefined();
+  });
+
+  it('deve preservar encoding correto (sem mojibake) para caracteres É Ã Ç Í Ú Ó', async () => {
+    // Validar nomes reais afetados (Ex: DÉCIO LIMA, JOÃO, TÚLIO, LAÍS, CONCÓRDIA se aplicável)
+    const decio = await prisma.candidateMetadata.findFirst({
+      where: { ballotName: { contains: 'DÉCIO' } }
+    });
+    expect(decio).toBeDefined();
+    expect(decio?.ballotName).toContain('DÉCIO');
+
+    const joao = await prisma.candidateMetadata.findFirst({
+      where: { ballotName: { contains: 'JOÃO' } }
+    });
+    expect(joao).toBeDefined();
+    expect(joao?.ballotName).toContain('JOÃO');
   });
 });
 
