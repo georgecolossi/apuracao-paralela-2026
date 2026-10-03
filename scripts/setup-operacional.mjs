@@ -51,7 +51,7 @@ if (adminPassword.length < 10) {
 
 console.log('=== PREPARAÇÃO DO BANCO OPERACIONAL — PLEI 3220 ===');
 console.log(`Banco destino: ${prodDbPath}`);
-console.log(`Admin: ${adminEmail}`);
+console.log(`Admin: ${adminUsername}`);
 
 const env = {
   ...process.env,
