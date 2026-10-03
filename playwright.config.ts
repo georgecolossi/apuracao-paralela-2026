@@ -21,7 +21,8 @@ export default defineConfig({
     url: 'http://localhost:3000',
     reuseExistingServer: false,
     env: {
-      DATABASE_URL: 'file:./e2e.db'
+      DATABASE_URL: 'file:./e2e.db',
+      ALLOW_OPERATIONAL_RESET: 'true'
     }
   },
 });

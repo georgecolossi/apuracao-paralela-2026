@@ -185,6 +185,34 @@ O projeto obedece ao princípio de **isolamento total de banco de dados** para a
 *   **`prisma/e2e.db`**: Banco de dados exclusivo para os testes End-to-End do **Playwright** (`npm run test:e2e`).
 *   **`prisma/prod.db`**: Banco de dados operacional real. Criado manualmente conforme procedimento acima. **Não versionado.**
 
+## Preparação e Reset Operacional
+
+O sistema inclui uma funcionalidade administrativa (`/admin/preparar`) que permite limpar todos os dados transacionais de BUs e votos inseridos durante ensaios, preservando metadados (usuários, municípios, candidatos). 
+
+**Interlock de Segurança**: Para evitar limpezas acidentais no dia da eleição, o reset está **bloqueado por padrão** (fail-closed). Para habilitá-lo temporariamente durante ensaios preparatórios, é obrigatório definir a variável de ambiente:
+```powershell
+$env:ALLOW_OPERATIONAL_RESET="true"
+```
+**Atenção**: Jamais defina esta variável na sessão de operação real.
+
+## Procedimento de Backup e Restauração (SQLite)
+
+O sistema não automatiza backups temporizados para focar em estabilidade e minimizar gargalos de I/O. A responsabilidade da rotina (RPO) é do operador, sendo recomendados backups frequentes (ex: a cada 1h) conforme o volume de BUs processados.
+
+### Backup Seguro (Não bloqueante)
+O backup deve ser feito utilizando o comando nativo online do SQLite. A dependência `sqlite3` CLI precisa estar instalada no Windows host e acessível via PATH.
+```powershell
+.\scripts\backup-operacional.ps1 -DbPath "prisma\prod.db"
+```
+Isso criará um arquivo com timestamp na pasta `backups/`, garantindo que não haja trava (lock) ou corrupção no `prod.db` enquanto a aplicação roda.
+
+### Verificação e Restauração em Ambiente Temporário
+É imperativo verificar a integridade de um backup após a criação. Para inspecionar um backup em um banco temporário sem afetar `prod.db`:
+```powershell
+.\scripts\verify-backup.ps1 -BackupFile "backups\prod-XXXXXXXX-XXXXXX.db"
+```
+O script impedirá que você sobrescreva bancos protegidos e confirmará se a integridade do SQLite e o número de relatórios estão adequados.
+
 ## Referências oficiais
 A implementação de parsing é dependente dos padrões adotados e abertos pela Justiça Eleitoral para as Eleições 2026.
 - Tribunal Superior Eleitoral: https://www.tse.jus.br

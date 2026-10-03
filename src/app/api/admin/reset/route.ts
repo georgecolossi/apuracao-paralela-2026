@@ -16,7 +16,12 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Proibido' }, { status: 403 });
     }
 
-    // 3. Verificar payload de confirmação (strict)
+    // 3. Interlock Operacional (FAIL-CLOSED)
+    if (process.env.ALLOW_OPERATIONAL_RESET !== 'true') {
+      return NextResponse.json({ error: 'Reset desabilitado neste ambiente operacional.' }, { status: 403 });
+    }
+
+    // 4. Verificar payload de confirmação (strict)
     let body: { confirmationText?: string } = {};
     try {
       body = await req.json();

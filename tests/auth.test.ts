@@ -20,7 +20,7 @@ vi.mock('@/lib/db', () => ({
   prisma: {
     user: {
       findUnique: vi.fn().mockImplementation(async ({ where }) => {
-        if (where.id === '123' || where.id === 'admin-id') return { id: where.id, role: 'ADMIN' };
+        if (where.id === '123' || where.id === 'admin-id') return { id: where.id, role: 'ADMIN', isActive: true };
         return null;
       }),
     },
