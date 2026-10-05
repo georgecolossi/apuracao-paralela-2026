@@ -15,7 +15,8 @@
     "import:municipalities": "tsx scripts/import-municipalities.ts",
     "db:setup": "npx prisma db push && tsx prisma/seed.ts && tsx scripts/import-municipalities.ts && tsx scripts/import-candidates.ts",
     "db:setup:operacional": "node scripts/setup-operacional.mjs",
-    "test:generate-qrbu": "node scripts/generate-synthetic-qrbu.js"
+    "test:generate-qrbu": "node scripts/generate-synthetic-qrbu.js",
+    "check:encoding": "node scripts/check-source-encoding.mjs"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

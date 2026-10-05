@@ -57,7 +57,7 @@ export default async function ConferenciaGlobal() {
                       <td className="py-3 px-4 text-slate-600 font-medium">
                         {rep.createdAt.toLocaleString('pt-BR')}
                       </td>
-                      <td className="py-3 px-4 font-bold text-slate-800 text-center">{rep.round?.roundNumber || "?"}�</td>
+                      <td className="py-3 px-4 font-bold text-slate-800 text-center">{rep.round?.roundNumber || "?"}º Turno</td>
                       <td className="py-3 px-4 font-bold text-slate-900">
                         {rep.cityCode} <span className="text-slate-400 font-normal">({rep.stateCode})</span>
                       </td>

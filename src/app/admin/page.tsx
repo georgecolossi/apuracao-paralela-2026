@@ -112,7 +112,7 @@ export default async function AdminDashboard() {
                       <td className="py-3 px-4 text-slate-600 font-medium">
                         {new Date(bu.createdAt).toLocaleTimeString('pt-BR')}
                       </td>
-                      <td className="py-3 px-4 font-bold text-slate-800 text-center">{bu.round?.roundNumber || "?"}�</td>
+                      <td className="py-3 px-4 font-bold text-slate-800 text-center">{bu.round?.roundNumber || "?"}º</td>
                         <td className="py-3 px-4 font-bold text-slate-800">
                         {bu.cityCode} <span className="text-slate-300 font-normal">/</span> {bu.zoneCode} <span className="text-slate-300 font-normal">/</span> {bu.sectionCode}
                       </td>

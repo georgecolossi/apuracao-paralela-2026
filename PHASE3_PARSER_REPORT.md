@@ -53,5 +53,5 @@ A aplicação atinge o teto do que pode ser arquitetado no escopo do software. T
 **Justificativa Objetiva:** A arquitetura binária estrita exigida de decodificação e reconstrução ASN.1 foi construída sem ofender nenhuma regra de offset ou suposição (o parser atual não usa pipe-separated, e sim a decodificação de bytes `ArrayBuffer` e processamento `asn1js`). No entanto, a extração efetiva dos campos para visualização na UI e consolidação das somas falha estritamente devido à não publicação do esquema oficial do ano correspondente pelas autoridades. O E2E exigido usando "fixture oficial" é impossível pelo mesmo fator bloqueador.
 
 
-## Atualiza��o Fase 5 (Parser Real)
-Posteriormente foi localizado o Manual oficial do QR Code no Boletim de Urna das Elei��es 2026. A conclus�o anterior SCHEMA_2026_UNAVAILABLE estava baseada em busca documental incompleta. O parser agora atua com base no mapeamento chave-valor real do QRBU.
+## Atualizao Fase 5 (Parser Real)
+Posteriormente foi localizado o Manual oficial do QR Code no Boletim de Urna das Eleies 2026. A concluso anterior SCHEMA_2026_UNAVAILABLE estava baseada em busca documental incompleta. O parser agora atua com base no mapeamento chave-valor real do QRBU.

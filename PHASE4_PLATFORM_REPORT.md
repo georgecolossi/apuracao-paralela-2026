@@ -39,5 +39,5 @@ Nenhuma regra de negócio inventada foi embutida. A plataforma suporta *Dual-Mod
 O projeto conclui a Fase 4 atingindo seu cume arquitetural independente. As fundações de segurança, performance, log de auditoria, concorrência e exportação estão validadas. O gap atual diz respeito estritamente à liberação das dependências regulatórias pela justiça eleitoral (esquema `ASN.1`, curvas `ED25519` e dicionários de compensação de bytes).
 
 
-## Atualiza��o Fase 5 (Parser Real)
-Posteriormente foi localizado o Manual oficial do QR Code no Boletim de Urna das Elei��es 2026. A conclus�o anterior SCHEMA_2026_UNAVAILABLE estava baseada em busca documental incompleta. O parser agora atua com base no mapeamento chave-valor real do QRBU.
+## Atualizao Fase 5 (Parser Real)
+Posteriormente foi localizado o Manual oficial do QR Code no Boletim de Urna das Eleies 2026. A concluso anterior SCHEMA_2026_UNAVAILABLE estava baseada em busca documental incompleta. O parser agora atua com base no mapeamento chave-valor real do QRBU.

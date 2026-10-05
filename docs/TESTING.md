@@ -13,5 +13,5 @@
    Dois operadores lendo o mesmo BU simultaneamente resultar√£o no mesmo ID determin√≠stico sendo gerado. A transa√ß√£o do Prisma emitir√° erro na segunda inser√ß√£o paralela, que a aplica√ß√£o capta e marca como `DUPLICADO`, protegendo os totais.
 
 
-## AtualizaÁ„o Fase 5 (Parser Real)
-Posteriormente foi localizado o Manual oficial do QR Code no Boletim de Urna das EleiÁıes 2026. A conclus„o anterior SCHEMA_2026_UNAVAILABLE estava baseada em busca documental incompleta. O parser agora atua com base no mapeamento chave-valor real do QRBU.
+## Atualizao Fase 5 (Parser Real)
+Posteriormente foi localizado o Manual oficial do QR Code no Boletim de Urna das Eleies 2026. A concluso anterior SCHEMA_2026_UNAVAILABLE estava baseada em busca documental incompleta. O parser agora atua com base no mapeamento chave-valor real do QRBU.
