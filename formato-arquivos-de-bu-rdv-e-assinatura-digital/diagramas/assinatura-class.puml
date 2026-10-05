@@ -1,0 +1,138 @@
+@startuml
+
+!include base.puml
+
+Title "Estrutura do arquivo de assinaturas da MR"
+
+package Envelope {
+    class EntidadeAssinaturaEcourna             << (S, sequence) >>
+    class EntidadeAssinatura                    << (S, sequence) >>
+    class InfoChave                             << (C, choice) >>
+    class ModeloEquipamento                     << (E, aenum) >>
+    class OrigemAssinaturaHardware              << (S, sequence) >>
+}
+
+package AutoAssinatura as "Auto assinatura" {
+    class AlgoritmoAssinaturaInfo               << (S, sequence) >>
+    class AlgoritmoAssinatura                   << (E, aenum) >>
+    class AlgoritmoHash                         << (E, aenum) >>
+    class AlgoritmoHashInfo                     << (S, sequence) >>
+    class AutoAssinaturaDigital                 << (S, sequence) >>
+    class DescritorChave                        << (S, sequence) >>
+}
+
+package Assinatura_grp as "Assinatura" {
+    class Assinatura                            << (S, sequence) >>
+    class AssinaturaArquivo                     << (S, sequence) >>
+    class AssinaturaDigital                     << (S, sequence) >>
+}
+
+' Detalhes das entidades
+
+class AutoAssinatura.AlgoritmoAssinaturaInfo sequence_b {
+    **algoritmo**
+    **bits** INTEGER
+}
+
+class AutoAssinatura.AlgoritmoAssinatura aenum_b {
+    **rsa** (1)
+    **ecdsa** (2)
+    **cepesc** (3)
+    **eddsa** (4)
+}
+
+class AutoAssinatura.AlgoritmoHash aenum_b {
+    **sha1** (1)
+    **sha256** (2)
+    **sha384** (3)
+    **sha512** (4)
+}
+
+class AutoAssinatura.AlgoritmoHashInfo sequence_b {
+    **algoritmo**
+}
+
+class Assinatura_grp.Assinatura sequence_b {
+    **arquivosAssinados**[]
+}
+
+class Assinatura_grp.AssinaturaArquivo sequence_b {
+    **nomeArquivo** GeneralString
+    **assinatura**
+}
+
+class Assinatura_grp.AssinaturaDigital sequence_b {
+    **tamanho** INTEGER
+    **hash** OCTET STRING
+    **assinatura** OCTET STRING
+}
+
+class AutoAssinatura.AutoAssinaturaDigital sequence_b {
+    **usuario**
+    **algoritmoHash**
+    **algoritmoAssinatura**
+    **assinatura**
+}
+
+class AutoAssinatura.DescritorChave sequence_b {
+    **nomeUsuario** GeneralString
+    **serial** INTEGER
+}
+
+class Envelope.EntidadeAssinatura sequence_b {
+    **dataHoraCriacao** DataHoraJE
+    **versao** INTEGER
+    **autoAssinado**
+    **conteudoAutoAssinado** OCTET STRING
+    **informacaoChave**
+}
+
+class Envelope.EntidadeAssinaturaEcourna sequence_b {
+    **assinaturaSW**
+    **assinaturaHW**
+    **origemAssinaturaHW**
+}
+
+class Envelope.InfoChave choice_b {
+    **tagChaves** VersaoMontagem
+    ..
+    **certificadoDigital** OCTET STRING
+}
+
+class Envelope.ModeloEquipamento aenum_b {
+    **tpm20** (2) - TPM 2.0
+    **ue2013** (13)
+    **ue2015** (15)
+    **ue2020** (20)
+    **ue2022** (22)
+}
+
+class Envelope.OrigemAssinaturaHardware sequence_b {
+    **modeloEquipamento**
+    **algoritmoAssinatura**
+}
+
+AlgoritmoAssinaturaInfo *--> AlgoritmoAssinatura: algoritmo
+
+AlgoritmoHashInfo *--> AlgoritmoHash: algoritmo
+
+Assinatura *-->"*" AssinaturaArquivo: arquivosAssinados
+
+AssinaturaArquivo *--> AssinaturaDigital: assinatura
+
+AutoAssinaturaDigital *--> DescritorChave: usuario
+AutoAssinaturaDigital *--> AlgoritmoHashInfo: algoritmoHash
+AutoAssinaturaDigital *--> AlgoritmoAssinaturaInfo: algoritmoAssinatura
+AutoAssinaturaDigital *--> AssinaturaDigital: assinatura
+
+EntidadeAssinatura *--> AutoAssinaturaDigital: autoAssinado
+EntidadeAssinatura *..> Assinatura: conteudoAutoAssinado
+EntidadeAssinatura *--> InfoChave: informacaoChave
+
+EntidadeAssinaturaEcourna *-->"2" EntidadeAssinatura: assinaturaHW\nassinaturaSW
+EntidadeAssinaturaEcourna *--> OrigemAssinaturaHardware: origemAssinaturaHW
+
+OrigemAssinaturaHardware *--> ModeloEquipamento: modeloEquipamento
+OrigemAssinaturaHardware *--> AlgoritmoAssinatura: algoritmoAssinatura
+
+@enduml
