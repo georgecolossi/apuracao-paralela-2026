@@ -55,11 +55,11 @@ export function extractVotesFromDat(bu: any): any[] {
             if (tVoto === 2) voteType = 'BRANCO';
             else if (tVoto === 3) voteType = 'NULO';
             else if (tVoto === 4) voteType = 'LEGENDA';
-            else if (tVoto === 5) continue; 
+            else if (tVoto === 5) continue;
 
             let candidateNum = vv.identificacaoVotavel?.codigo;
             let partyNum = vv.identificacaoVotavel?.partido;
-            
+
             if (voteType === 'BRANCO' || voteType === 'NULO') {
                 candidateNum = undefined;
                 partyNum = undefined;
@@ -90,16 +90,16 @@ export function extractVotesFromDat(bu: any): any[] {
 export function compareVotes(extractedVotes: any[], dbVotes: any[]) {
     let hasConflict = false;
     const conflicts: string[] = [];
-    
+
     const extMap = new Map();
     for (const v of extractedVotes) {
       const key = v.officeName + '-' + v.voteType + '-' + (v.candidateNumber || '') + '-' + (v.partyNumber || '');
       extMap.set(key, (extMap.get(key) || 0) + v.quantity);
     }
-    
+
     const dbMap = new Map();
     for (const v of dbVotes) {
-      if (v.quantity === 0) continue; 
+      if (v.quantity === 0) continue;
       const key = v.office.name + '-' + v.voteType + '-' + (v.candidateNumber || '') + '-' + (v.partyNumber || '');
       dbMap.set(key, (dbMap.get(key) || 0) + v.quantity);
     }
@@ -120,8 +120,67 @@ export function compareVotes(extractedVotes: any[], dbVotes: any[]) {
         conflicts.push('Extra in DB: ' + k + ' (DB=' + v + ')');
       }
     }
-    
+
     return { hasConflict, conflicts };
+}
+
+export function validateApplyAuthorization(
+  dbUrl: string | undefined,
+  allowReset: string | undefined,
+  allowImport: string | undefined,
+  cliArgs: string[]
+): 'REHEARSAL' | 'PRODUCTION' {
+  if (!dbUrl || !dbUrl.startsWith('file:')) {
+    throw new Error('APPLY_REFUSED_UNSAFE_DATABASE');
+  }
+
+  const rawPath = dbUrl.substring(5);
+  const resolvedPath = require('path').resolve(rawPath);
+  const expectedRehearsalPath = require('path').resolve(process.cwd(), 'backups-local', 'prod-apply-rehearsal-2026-10-05.db');
+
+  // Resolving exact path for production
+  const expectedProductionPath = require('path').resolve('/data/prod.db');
+
+  if (resolvedPath === expectedRehearsalPath) {
+    return 'REHEARSAL';
+  }
+
+  if (resolvedPath === expectedProductionPath) {
+    if (allowReset !== 'false') {
+      throw new Error('APPLY_REFUSED_UNSAFE_DATABASE');
+    }
+    if (allowImport !== 'I_UNDERSTAND_THIS_WRITES_PRODUCTION') {
+      throw new Error('APPLY_REFUSED_UNSAFE_DATABASE');
+    }
+    if (!cliArgs.includes('--confirm-production-import=3220-T1-2026-10-05')) {
+      throw new Error('APPLY_REFUSED_UNSAFE_DATABASE');
+    }
+    return 'PRODUCTION';
+  }
+
+  throw new Error('APPLY_REFUSED_UNSAFE_DATABASE');
+}
+
+export function validateProductionPreconditions(report: any, newReports: any[]) {
+  if (
+    report.totalFiles !== 193 ||
+    report.decoded !== 193 ||
+    report.valid !== 193 ||
+    report.invalid !== 0 ||
+    report.conflict !== 0 ||
+    report.duplicatesInDataset !== 0 ||
+    report.duplicateZonasSecaos !== 0
+  ) {
+    throw new Error('ABORT_DUE_TO_DATASET_PRECONDITIONS');
+  }
+
+  if (report.alreadyExists !== 31 || report.new !== 162) {
+    throw new Error('ABORT_PRODUCTION_UNEXPECTED_COMPOSITION');
+  }
+
+  if (newReports.length !== 162) {
+    throw new Error('ABORT_PRODUCTION_NEW_COUNT');
+  }
 }
 
 export function validatePreconditions(report: any) {
@@ -155,7 +214,7 @@ export function prepareNewReportsForApply(report: any) {
   if (report.new > 0 && newReports.length !== report.new) {
     throw new Error('APPLY_NEW_PAYLOAD_COUNT_MISMATCH');
   }
-  
+
   for (const r of newReports) {
     if (!r.payload) throw new Error('APPLY_INVALID_PAYLOAD_STRUCTURE');
     const p = r.payload;
@@ -174,7 +233,7 @@ export async function executeApplyTransaction(prismaClient: any, newReports: any
       const payload = item.payload;
       if (payload.electionId !== activeElection.plei) throw new Error('ELECTION_MISMATCH');
       if (payload.roundNumber !== activeRound.roundNumber) throw new Error('ROUND_MISMATCH');
-      
+
       const newReport = await tx.ballotReport.create({
         data: {
           deterministicId: item.deterministicId,
@@ -221,17 +280,17 @@ export async function executeApplyTransaction(prismaClient: any, newReports: any
 }
 
 async function main() {
+  let mode: 'REHEARSAL' | 'PRODUCTION' | null = null;
   if (process.argv.includes('--apply')) {
-    const dbUrl = process.env.DATABASE_URL;
-    if (!dbUrl || !dbUrl.startsWith('file:')) {
-      console.error('APPLY_REFUSED_UNSAFE_DATABASE');
-      process.exit(1);
-    }
-    const rawPath = dbUrl.substring(5);
-    const resolvedPath = require('path').resolve(rawPath);
-    const expectedPath = require('path').resolve(process.cwd(), 'backups-local', 'prod-apply-rehearsal-2026-10-05.db');
-    if (resolvedPath !== expectedPath) {
-      console.error('APPLY_REFUSED_UNSAFE_DATABASE');
+    try {
+      mode = validateApplyAuthorization(
+        process.env.DATABASE_URL,
+        process.env.ALLOW_OPERATIONAL_RESET,
+        process.env.ALLOW_PRODUCTION_BU_IMPORT,
+        process.argv
+      );
+    } catch (e: any) {
+      console.error(e.message);
       process.exit(1);
     }
   }
@@ -302,12 +361,12 @@ async function main() {
     const idEleitoral = cabecalho.idEleitoral || [];
     const idPleito = idEleitoral[1];
     const fase = bu.fase;
-    
+
     let idSecao = cabecalho.identificacaoSecaoEleitoral || cabecalho.identificacaoUrna || bu.identificacaoSecao;
     if (cabecalho.identificacaoUrna && Array.isArray(cabecalho.identificacaoUrna)) {
         idSecao = cabecalho.identificacaoUrna[1];
     }
-    
+
     const municipio = idSecao?.municipioZona?.municipio;
     const zona = idSecao?.municipioZona?.zona;
     const secao = idSecao?.secao;
@@ -364,10 +423,10 @@ async function main() {
     }
 
     report.valid++;
-    
+
     report.zonas.add(zCodeCanonical);
     report.secaos.add(sCodeCanonical);
-    
+
     const zsKey = zCodeCanonical + '-' + sCodeCanonical;
     if (report.zonaSecaoSet.has(zsKey)) {
         report.duplicateZonasSecaos++;
@@ -440,12 +499,12 @@ async function main() {
   console.log('========================================\\n');
   console.log('Banco de dados (LOCAL_DB_COMPARISON):');
   console.log(process.env.DATABASE_URL || 'file:./prod.db (padrao Prisma)\\n');
-  
+
   console.log('Arquivos encontrados: ' + report.totalFiles);
   console.log('Decodificados: ' + report.decoded);
   console.log('Validos: ' + report.valid);
   console.log('Invalidos: ' + report.invalid + '\\n');
-  
+
   console.log('Pleitos distintos: ' + finalReport.pleitos.join(', '));
   console.log('Turnos distintos: ' + finalReport.turnos.join(', '));
   console.log('Fases distintas: ' + finalReport.fases.join(', '));
@@ -454,7 +513,7 @@ async function main() {
   console.log('Zonas distintas: ' + finalReport.zonas.join(', '));
   console.log('Secoes distintas: ' + finalReport.secaos.length + ' (total na lista)');
   console.log('Cargos encontrados: ' + finalReport.cargos.join(', ') + '\\n');
-  
+
   console.log('DeterministicIds distintos no dataset: ' + report.deterministicIds.size);
   console.log('Duplicatas de DeterministicId dentro do dataset: ' + report.duplicatesInDataset);
   console.log('Duplicatas de Zona+Secao dentro do dataset: ' + report.duplicateZonasSecaos + '\\n');
@@ -465,15 +524,20 @@ async function main() {
 
   fs.writeFileSync('bu-import-dry-run.json', JSON.stringify(finalReport, null, 2), 'utf8');
 
-  if (process.argv.includes('--apply')) {
-    try { validatePreconditions(report); } catch (e: any) { console.error(e.message); process.exit(1); }
-    const newReports = prepareNewReportsForApply(report);
+  if (process.argv.includes('--apply') && mode) {
     try {
-        await executeApplyTransaction(prisma, newReports, activeElection, activeRound);
-        console.log('Apply successful! Transaction committed.');
+      validatePreconditions(report);
+      const newReports = prepareNewReportsForApply(report);
+
+      if (mode === 'PRODUCTION') {
+        validateProductionPreconditions(report, newReports);
+      }
+
+      await executeApplyTransaction(prisma, newReports, activeElection, activeRound);
+      console.log('Apply successful! Transaction committed.');
     } catch (err: any) {
-        console.error('TRANSACTION_FAILED_ROLLBACK', err);
-        process.exit(1);
+      console.error(err.message === 'TRANSACTION_FAILED_ROLLBACK' ? 'TRANSACTION_FAILED_ROLLBACK' : err.message);
+      process.exit(1);
     }
   }
 }
