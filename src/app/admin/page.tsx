@@ -13,6 +13,13 @@ export default async function AdminDashboard() {
 
   const activeOperators = await prisma.user.count({ where: { isActive: true } });
 
+  const activeElections = await prisma.election.findMany({
+    where: { status: 'ACTIVE' },
+    include: { rounds: { where: { status: 'ACTIVE' } } }
+  });
+  const election = activeElections.length === 1 ? activeElections[0] : null;
+  const activeRound = election?.rounds.length === 1 ? election.rounds[0] : null;
+
   const recentBUs = await prisma.ballotReport.findMany({
     where: { isSimulation: false },
     orderBy: { createdAt: 'desc' },
@@ -40,14 +47,28 @@ export default async function AdminDashboard() {
 
       <main className="flex-1 p-4 md:p-6 lg:p-8 max-w-5xl mx-auto w-full flex flex-col gap-6">
         
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
           {/* Main Action Call */}
-          <Link href="/admin/scanner" className="md:col-span-3 bg-indigo-600 text-white p-6 md:p-8 rounded-2xl text-center hover:bg-indigo-700 font-bold block shadow-md shadow-indigo-600/20 transition-all transform hover:-translate-y-1 relative overflow-hidden group">
+          <Link href="/admin/scanner" className="md:col-span-4 bg-indigo-600 text-white p-6 md:p-8 rounded-2xl text-center hover:bg-indigo-700 font-bold block shadow-md shadow-indigo-600/20 transition-all transform hover:-translate-y-1 relative overflow-hidden group">
             <div className="absolute inset-0 bg-indigo-500 opacity-0 group-hover:opacity-20 transition-opacity" />
             <ScanLine className="w-12 h-12 mx-auto mb-3 text-indigo-200 group-hover:scale-110 transition-transform" />
             <h2 className="text-2xl md:text-3xl uppercase tracking-widest mb-1 font-black">Ler Boletim de Urna</h2>
             <p className="text-indigo-200 font-medium text-sm tracking-wide uppercase">Acessar o scanner e coletar QR Codes</p>
           </Link>
+          
+          
+          {/* Status do Turno */}
+          <div className="bg-white p-6 shadow-sm rounded-2xl border border-slate-200 flex flex-col justify-center items-center relative overflow-hidden group">
+            <h3 className="font-bold text-slate-500 uppercase text-xs tracking-widest mb-2 z-10">{election?.name || 'Eleição'}</h3>
+            {activeRound ? (
+              <span className="text-3xl font-black text-indigo-700 z-10">{activeRound.roundNumber}º Turno</span>
+            ) : (
+              <span className="text-3xl font-black text-slate-900 z-10">INDISP.</span>
+            )}
+            <Link href="/admin/turnos" className="mt-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs uppercase tracking-wider px-3 py-1.5 rounded transition-colors z-10">
+              Gerenciar Turnos
+            </Link>
+          </div>
           
           {/* Operator Stats */}
           <div className="bg-white p-6 shadow-sm rounded-2xl border border-slate-200 flex flex-col justify-center items-center">

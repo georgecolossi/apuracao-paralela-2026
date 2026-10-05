@@ -94,7 +94,14 @@ export async function GET() {
     return NextResponse.json({
       processedReports: processedReportsCount,
       expectedReports: expectedBUsCount,
-      totals
+      totals,
+      election: {
+        year: election.year,
+        name: election.name
+      },
+      round: {
+        roundNumber: activeRound.roundNumber
+      }
     });
   } catch (error) {
     return NextResponse.json({ error: 'Erro interno' }, { status: 500 });
