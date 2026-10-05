@@ -16,7 +16,8 @@ export default async function AdminDashboard() {
   const recentBUs = await prisma.ballotReport.findMany({
     where: { isSimulation: false },
     orderBy: { createdAt: 'desc' },
-    take: 5
+    take: 5,
+      include: { round: true }
   });
 
   return (
@@ -100,7 +101,8 @@ export default async function AdminDashboard() {
                 <thead>
                   <tr className="text-xs text-slate-400 uppercase tracking-wider bg-slate-50 border-y border-slate-100">
                     <th className="py-3 px-4 font-bold rounded-l-lg">Horário</th>
-                    <th className="py-3 px-4 font-bold">Localização (Mun/Zona/Seção)</th>
+                    <th className="py-3 px-4 font-bold">Turno</th>
+                      <th className="py-3 px-4 font-bold">Localização (Mun/Zona/Seção)</th>
                     <th className="py-3 px-4 font-bold rounded-r-lg">Status</th>
                   </tr>
                 </thead>
@@ -110,7 +112,8 @@ export default async function AdminDashboard() {
                       <td className="py-3 px-4 text-slate-600 font-medium">
                         {new Date(bu.createdAt).toLocaleTimeString('pt-BR')}
                       </td>
-                      <td className="py-3 px-4 font-bold text-slate-800">
+                      <td className="py-3 px-4 font-bold text-slate-800 text-center">{bu.round?.roundNumber || "?"}�</td>
+                        <td className="py-3 px-4 font-bold text-slate-800">
                         {bu.cityCode} <span className="text-slate-300 font-normal">/</span> {bu.zoneCode} <span className="text-slate-300 font-normal">/</span> {bu.sectionCode}
                       </td>
                       <td className="py-3 px-4">

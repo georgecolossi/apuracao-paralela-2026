@@ -20,6 +20,7 @@ export type EnrichedVoteMeta = {
 export function enrichVoteWithMetadata(
   vote: { voteType: string; candidateNumber: string | null; partyNumber: string | null; officeName: string },
   electionYear: number,
+  round: number,
   reportStateCode: string,
   resolver: CandidateResolver
 ): EnrichedVoteMeta {
@@ -30,9 +31,9 @@ export function enrichVoteWithMetadata(
   const stateContext = officeCode === '1' ? 'BR' : reportStateCode;
 
   if (vote.voteType === 'NOMINAL' && vote.candidateNumber) {
-    return resolver.resolveNominal(electionYear, stateContext, officeCode, vote.candidateNumber);
+    return resolver.resolveNominal(electionYear, round, stateContext, officeCode, vote.candidateNumber);
   } else if (vote.voteType === 'LEGENDA' && vote.partyNumber) {
-    return resolver.resolveLegenda(electionYear, stateContext, officeCode, vote.partyNumber);
+    return resolver.resolveLegenda(electionYear, round, stateContext, officeCode, vote.partyNumber);
   }
 
   return { status: 'NOT_FOUND' };

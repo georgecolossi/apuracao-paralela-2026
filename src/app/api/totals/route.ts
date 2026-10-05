@@ -3,12 +3,27 @@ import { prisma } from '@/lib/db';
 
 export async function GET() {
   try {
-    const election = await prisma.election.findFirst({ where: { status: 'ACTIVE' } });
-    if (!election) return NextResponse.json({ processedReports: 0, totals: [] });
+    const activeElections = await prisma.election.findMany({ 
+      where: { status: 'ACTIVE' },
+      include: { rounds: true }
+    });
+    if (activeElections.length === 0) return NextResponse.json({ processedReports: 0, expectedReports: 0, totals: [] });
+    if (activeElections.length > 1) {
+      return NextResponse.json({ error: 'Configuração ambígua: múltiplas eleições ativas.' }, { status: 500 });
+    }
+    const election = activeElections[0];
+
+    const activeRounds = election.rounds.filter(r => r.status === 'ACTIVE');
+    if (activeRounds.length === 0) return NextResponse.json({ processedReports: 0, expectedReports: 0, totals: [] });
+    if (activeRounds.length > 1) {
+      return NextResponse.json({ error: 'Configuração ambígua: múltiplos turnos ativos.' }, { status: 500 });
+    }
+    const activeRound = activeRounds[0];
 
     const processedReportsCount = await prisma.ballotReport.count({
       where: {
         electionId: election.id,
+        roundId: activeRound.id,
         status: 'PROCESSADO',
         isSimulation: false
       }
@@ -19,6 +34,7 @@ export async function GET() {
       where: {
         report: {
           electionId: election.id,
+          roundId: activeRound.id,
           status: 'PROCESSADO',
           isSimulation: false
         }
@@ -34,7 +50,7 @@ export async function GET() {
     // Configura o resolver
     const { CandidateResolver } = await import('@/lib/metadata/CandidateResolver');
     const resolver = new CandidateResolver();
-    await resolver.load(election.year);
+    await resolver.load(election.year, activeRound.roundNumber);
 
     const { OFFICE_NAME_TO_CODE } = await import('@/lib/metadata/voteEnricher');
 
@@ -51,9 +67,9 @@ export async function GET() {
         const stateContext = officeCode === '1' ? 'BR' : 'SC';
         
         if (t.voteType === 'NOMINAL' && t.candidateNumber) {
-          metadata = resolver.resolveNominal(election.year, stateContext, officeCode, t.candidateNumber);
+          metadata = resolver.resolveNominal(election.year, activeRound.roundNumber, stateContext, officeCode, t.candidateNumber);
         } else if (t.voteType === 'LEGENDA' && t.partyNumber) {
-          metadata = resolver.resolveLegenda(election.year, stateContext, officeCode, t.partyNumber);
+          metadata = resolver.resolveLegenda(election.year, activeRound.roundNumber, stateContext, officeCode, t.partyNumber);
         }
       }
 
@@ -70,6 +86,7 @@ export async function GET() {
     });
 
     const expectedAgg = await prisma.pollingSection.aggregate({
+      where: { zone: { municipality: { isCoverage: true } } },
       _sum: { expectedBUs: true }
     });
     const expectedBUsCount = expectedAgg._sum.expectedBUs || 0;

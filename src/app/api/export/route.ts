@@ -15,9 +15,47 @@ export async function GET(req: Request) {
 
   const { searchParams } = new URL(req.url);
   const format = searchParams.get('format') || 'json';
+  const roundParam = searchParams.get('round');
+
+  const activeElections = await prisma.election.findMany({
+    where: { status: 'ACTIVE' },
+    include: { rounds: true }
+  });
+
+  if (activeElections.length === 0) {
+    return NextResponse.json({ error: 'Nenhuma eleição ativa.' }, { status: 400 });
+  }
+  if (activeElections.length > 1) {
+    return NextResponse.json({ error: 'Múltiplas eleições ativas configuradas.' }, { status: 500 });
+  }
+  const election = activeElections[0];
+
+  let targetRound = null;
+
+  if (roundParam) {
+    const rNum = parseInt(roundParam, 10);
+    targetRound = election.rounds.find(r => r.roundNumber === rNum);
+    if (!targetRound) {
+      return NextResponse.json({ error: 'Turno especificado não encontrado nesta eleição.' }, { status: 400 });
+    }
+  } else {
+    const activeRounds = election.rounds.filter(r => r.status === 'ACTIVE');
+    if (activeRounds.length === 0) {
+      return NextResponse.json({ error: 'Nenhum turno ativo encontrado.' }, { status: 400 });
+    }
+    if (activeRounds.length > 1) {
+      return NextResponse.json({ error: 'Múltiplos turnos ativos configurados.' }, { status: 500 });
+    }
+    targetRound = activeRounds[0];
+  }
 
   const reports = await prisma.ballotReport.findMany({
-    where: { status: 'PROCESSADO', isSimulation: false },
+    where: { 
+      electionId: election.id,
+      roundId: targetRound.id,
+      status: 'PROCESSADO', 
+      isSimulation: false 
+    },
     include: { votes: { include: { office: true } } }
   });
 
@@ -31,7 +69,7 @@ export async function GET(req: Request) {
     return new NextResponse(csv, {
       headers: {
         'Content-Type': 'text/csv',
-        'Content-Disposition': 'attachment; filename="export_bu.csv"'
+        'Content-Disposition': `attachment; filename="export_bu_T${targetRound.roundNumber}.csv"`
       }
     });
   }

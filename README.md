@@ -27,6 +27,7 @@ O sistema alcançou o status **OPERACIONAL**. Foi submetido a baterias de testes
 - **Realtime**: Server-Sent Events (SSE) notificando o painel público a cada confirmação de Boletim de Urna, descartando a necessidade de atualizações manuais (F5).
 - **Modelo de Dados**:
   - **Boletim de Urna (BU/QRBU)**: A leitura em papel/tela se mantém a todo instante como a *única fonte primária e irrevogável* da verdade de dados de totalização, validada via assinatura de hash (SHA-512) conforme norma TSE 2026.
+  - **Elei��es e Turnos (Election e ElectionRound)**: A base suporta m�ltiplos turnos no mesmo banco de dados. A totaliza��o p�blica e a exporta��o operam exclusivamente sob a perspectiva do turno (Round) atualmente marcado como ACTIVE. BUs importados em turnos anteriores permanecem inteiramente preservados no banco hist�rico, garantindo que a transi��o de ciclo n�o exija destrui��o de dados (ZERAR APURA��O). Nota: O gerenciamento Web de turnos ainda n�o est� implementado na interface.
   - **CandidateMetadata**: Dados reais oficiais carregados unicamente para enriquecimento visual (nomes de urna e partidos) no UI. Eles não interferem no algoritmo matemático de agregação dos totais brutos.
 
 ---

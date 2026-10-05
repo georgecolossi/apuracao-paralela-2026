@@ -9,6 +9,7 @@ export default async function ConferirPage({ params }: { params: Promise<{ id: s
     where: { id },
     include: {
       election: true,
+      round: true,
       votes: {
         include: { office: true }
       }
@@ -60,12 +61,13 @@ export default async function ConferirPage({ params }: { params: Promise<{ id: s
   const { CandidateResolver } = await import('@/lib/metadata/CandidateResolver');
   const { enrichVoteWithMetadata } = await import('@/lib/metadata/voteEnricher');
   const resolver = new CandidateResolver();
-  await resolver.load(report.election.year);
+  await resolver.load(report.election.year, report.round.roundNumber);
 
   const enrichedVotes = report.votes.map(v => {
     const meta = enrichVoteWithMetadata(
       { voteType: v.voteType, candidateNumber: v.candidateNumber, partyNumber: v.partyNumber, officeName: v.office.name },
       report.election.year,
+      report.round.roundNumber,
       report.stateCode,
       resolver
     );

@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic';
 export default async function ConferenciaGlobal() {
   const reports = await prisma.ballotReport.findMany({
     orderBy: { createdAt: 'desc' },
-    include: { operator: true }
+    include: { operator: true, round: true }
   });
 
   return (
@@ -37,6 +37,7 @@ export default async function ConferenciaGlobal() {
               <thead>
                 <tr className="text-xs text-slate-500 uppercase tracking-wider bg-slate-50 border-b border-slate-200">
                   <th className="py-3 px-4 font-black">Data/Hora</th>
+                  <th className="py-3 px-4 font-black">Turno</th>
                   <th className="py-3 px-4 font-black">Município</th>
                   <th className="py-3 px-4 font-black">Zona / Seç / Urna</th>
                   <th className="py-3 px-4 font-black">Operador</th>
@@ -56,6 +57,7 @@ export default async function ConferenciaGlobal() {
                       <td className="py-3 px-4 text-slate-600 font-medium">
                         {rep.createdAt.toLocaleString('pt-BR')}
                       </td>
+                      <td className="py-3 px-4 font-bold text-slate-800 text-center">{rep.round?.roundNumber || "?"}�</td>
                       <td className="py-3 px-4 font-bold text-slate-900">
                         {rep.cityCode} <span className="text-slate-400 font-normal">({rep.stateCode})</span>
                       </td>
