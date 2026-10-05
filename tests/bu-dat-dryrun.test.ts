@@ -1,6 +1,6 @@
-﻿import { describe, it, expect } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { buildBallotReportIdentity } from '../src/lib/identity';
-import { extractVotesFromDat, compareVotes } from '../scripts/bu-dat/run_dry_run';
+import { extractVotesFromDat, compareVotes, buildNewPayload } from '../scripts/bu-dat/run_dry_run';
 import { execSync } from 'child_process';
 
 describe('BU .dat Dry-Run Mapper Reconciliations (Logica REAL)', () => {
@@ -44,11 +44,11 @@ describe('BU .dat Dry-Run Mapper Reconciliations (Logica REAL)', () => {
     // Comprovado no map 'existing' do run_dry_run.ts
   });
 
-  it('B) --apply continua bloqueado com APPLY_NOT_IMPLEMENTED', () => {
+  it('B) --apply recusa BD inseguro', () => {
     try {
         execSync('npx tsx scripts/bu-dat/run_dry_run.ts --apply', { stdio: 'pipe' });
     } catch (e: any) {
-        expect(e.stdout.toString()).toContain('APPLY_NOT_IMPLEMENTED');
+        expect(e.stderr.toString()).toContain('APPLY_REFUSED_UNSAFE_DATABASE');
     }
   });
 

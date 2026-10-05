@@ -1,4 +1,4 @@
-﻿import fs from 'fs';
+import fs from 'fs';
 import path from 'path';
 import { prisma } from '../../src/lib/db/index';
 import { buildBallotReportIdentity } from '../../src/lib/identity';
@@ -124,7 +124,117 @@ export function compareVotes(extractedVotes: any[], dbVotes: any[]) {
     return { hasConflict, conflicts };
 }
 
+export function validatePreconditions(report: any) {
+  if (report.totalFiles !== 193 || report.decoded !== 193 || report.valid !== 193 || report.invalid !== 0 || report.conflict !== 0 || report.duplicatesInDataset !== 0 || report.duplicateZonasSecaos !== 0) {
+    throw new Error('ABORT_DUE_TO_DATASET_PRECONDITIONS');
+  }
+  const isFirstRun = report.alreadyExists === 31 && report.new === 162;
+  const isIdempotentRun = report.alreadyExists === 193 && report.new === 0;
+  if (!isFirstRun && !isIdempotentRun) {
+    throw new Error('ABORT_DUE_TO_UNEXPECTED_COMPOSITION');
+  }
+}
+
+export function buildNewPayload(idPleito: any, turnoStr: string, ufStr: string, municipio: any, zCodeCanonical: string, sCodeCanonical: string, numeroInternoUrna: any, extractedVotes: any[]) {
+  return {
+    electionId: String(idPleito),
+    roundNumber: Number(turnoStr),
+    stateCode: ufStr,
+    cityCode: String(municipio),
+    zoneCode: zCodeCanonical,
+    sectionCode: sCodeCanonical,
+    urnCode: String(numeroInternoUrna),
+    hash: "",
+    signature: "",
+    votes: extractedVotes
+  };
+}
+
+export function prepareNewReportsForApply(report: any) {
+  const newReports = report.results.filter((r: any) => r.status === 'NEW');
+  if (report.new > 0 && newReports.length !== report.new) {
+    throw new Error('APPLY_NEW_PAYLOAD_COUNT_MISMATCH');
+  }
+  
+  for (const r of newReports) {
+    if (!r.payload) throw new Error('APPLY_INVALID_PAYLOAD_STRUCTURE');
+    const p = r.payload;
+    if (!p.electionId || !p.roundNumber || !p.stateCode || !p.cityCode || !p.zoneCode || !p.sectionCode || !p.urnCode || !Array.isArray(p.votes)) {
+      throw new Error('APPLY_INVALID_PAYLOAD_STRUCTURE');
+    }
+  }
+  return newReports;
+}
+
+export async function executeApplyTransaction(prismaClient: any, newReports: any[], activeElection: any, activeRound: any) {
+  if (!newReports || newReports.length === 0) return;
+  await prismaClient.$transaction(async (tx: any) => {
+    for (const item of newReports) {
+      if (item.status !== 'NEW') throw new Error('APPLY_NON_NEW_RECORD_REFUSED');
+      const payload = item.payload;
+      if (payload.electionId !== activeElection.plei) throw new Error('ELECTION_MISMATCH');
+      if (payload.roundNumber !== activeRound.roundNumber) throw new Error('ROUND_MISMATCH');
+      
+      const newReport = await tx.ballotReport.create({
+        data: {
+          deterministicId: item.deterministicId,
+          electionId: activeElection.id,
+          roundId: activeRound.id,
+          stateCode: payload.stateCode,
+          cityCode: payload.cityCode,
+          zoneCode: payload.zoneCode,
+          sectionCode: payload.sectionCode,
+          urnCode: payload.urnCode,
+          hash: payload.hash || '',
+          signature: payload.signature || '',
+          status: 'PROCESSADO',
+          validationData: JSON.stringify({ parsed: true, hashStatus: 'N/A', sigStatus: 'N/A' }),
+          metadata: 'IMPORT_DAT',
+          isSimulation: false,
+          operatorId: null
+        }
+      });
+      for (const vote of payload.votes) {
+         let office = await tx.office.findFirst({ where: { name: vote.officeName }});
+         if (!office) throw new Error('MISSING_OFFICE: ' + vote.officeName);
+         await tx.ballotVote.create({
+           data: {
+             reportId: newReport.id,
+             officeId: office.id,
+             candidateNumber: vote.candidateNumber,
+             partyNumber: vote.partyNumber,
+             voteType: vote.voteType,
+             quantity: vote.quantity
+           }
+         });
+      }
+    }
+    await tx.auditLog.create({
+      data: {
+        action: 'BATCH_IMPORT_DAT',
+        result: 'SUCCESS',
+        identifiers: 'Imported ' + newReports.length + ' BU records from official dat',
+        newStatus: 'PROCESSADO'
+      }
+    });
+  }, { timeout: 120000 });
+}
+
 async function main() {
+  if (process.argv.includes('--apply')) {
+    const dbUrl = process.env.DATABASE_URL;
+    if (!dbUrl || !dbUrl.startsWith('file:')) {
+      console.error('APPLY_REFUSED_UNSAFE_DATABASE');
+      process.exit(1);
+    }
+    const rawPath = dbUrl.substring(5);
+    const resolvedPath = require('path').resolve(rawPath);
+    const expectedPath = require('path').resolve(process.cwd(), 'backups-local', 'prod-apply-rehearsal-2026-10-05.db');
+    if (resolvedPath !== expectedPath) {
+      console.error('APPLY_REFUSED_UNSAFE_DATABASE');
+      process.exit(1);
+    }
+  }
   const dumpPath = path.resolve(process.cwd(), 'bu-decoded-dump.json');
   if (!fs.existsSync(dumpPath)) {
     console.error('bu-decoded-dump.json not found!');
@@ -132,6 +242,20 @@ async function main() {
   }
 
   const data = JSON.parse(fs.readFileSync(dumpPath, 'utf8'));
+
+  const activeElection = await prisma.election.findFirst({
+    where: { plei: '3220', status: 'ACTIVE' },
+    include: { rounds: true }
+  });
+  if (!activeElection) {
+      console.error('NO_ELECTION_3220');
+      process.exit(1);
+  }
+  const activeRound = activeElection.rounds.find((r: any) => r.roundNumber === 1 && r.status === 'ACTIVE');
+  if (!activeRound) {
+      console.error('NO_ROUND_1');
+      process.exit(1);
+  }
 
   const report = {
     totalFiles: data.length,
@@ -283,7 +407,7 @@ async function main() {
     const existing = reportMap.get(deterministicId);
     if (!existing) {
       report.new++;
-      report.results.push({ ...resultBase, status: 'NEW' });
+      report.results.push({ ...resultBase, status: 'NEW', payload: buildNewPayload(idPleito, turnoStr, ufStr, municipio, zCodeCanonical, sCodeCanonical, numeroInternoUrna, extractedVotes) });
     } else {
       const { hasConflict, conflicts } = compareVotes(extractedVotes, existing.votes);
 
@@ -340,13 +464,23 @@ async function main() {
   console.log('Conflitos: ' + report.conflict + '\\n');
 
   fs.writeFileSync('bu-import-dry-run.json', JSON.stringify(finalReport, null, 2), 'utf8');
+
+  if (process.argv.includes('--apply')) {
+    try { validatePreconditions(report); } catch (e: any) { console.error(e.message); process.exit(1); }
+    const newReports = prepareNewReportsForApply(report);
+    try {
+        await executeApplyTransaction(prisma, newReports, activeElection, activeRound);
+        console.log('Apply successful! Transaction committed.');
+    } catch (err: any) {
+        console.error('TRANSACTION_FAILED_ROLLBACK', err);
+        process.exit(1);
+    }
+  }
 }
 
 if (require.main === module) {
-  if (process.argv.includes('--apply')) {
-    console.log('APPLY_NOT_IMPLEMENTED');
-    process.exit(1);
-  }
-
-  main().catch(console.error);
+  main().catch((err: any) => {
+    console.error(err);
+    process.exitCode = 1;
+  });
 }
