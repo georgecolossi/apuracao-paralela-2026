@@ -53,3 +53,8 @@ prisma/prod.db-shm
 
 /qrb-test-concordia/
 /qrb-test-concordia/
+
+__pycache__/
+*.py[cod]
+bu-decoded-dump.json
+bu-import-dry-run.json
