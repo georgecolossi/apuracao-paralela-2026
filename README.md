@@ -101,3 +101,8 @@ Além das separações de banco, o projeto dispõe de um script preventivo de au
 - Tribunal Superior Eleitoral: https://www.tse.jus.br
 - Candidatos TSE 2026: https://dadosabertos.tse.jus.br/pt_BR/dataset/candidatos-2026
 - Informações técnicas e manuais técnicos de divulgação de resultados e QRBU (Edição 2026).
+
+## Leitor Operacional de BU .dat (TSE 2026)
+
+O projeto inclui agora uma ferramenta de linha de comando (scripts/bu-dat/decode_all_bu.py e run_dry_run.ts) capaz de fazer parse recursivo e decodificacao estruturada dos Boletins de Urna oficiais em formato ASN.1 fornecidos pelo TSE para a Eleicao de 2026. Essa ferramenta realiza decodificacao validada e viabiliza dry-runs pre-importacao para confrontar BUs do disco com o banco de dados operacional, identificando duplicidades, dados ineditos e eventuais conflitos, sem alterar o sistema em producao.
+

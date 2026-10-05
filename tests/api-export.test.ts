@@ -9,7 +9,7 @@ vi.mock('../src/lib/auth', () => ({
 
 vi.mock('../src/lib/db', () => ({
   prisma: {
-    ballotReport: {
+    election: { findMany: vi.fn().mockResolvedValue([{ id: 'E1', rounds: [{ roundNumber: 1, id: 'R1', status: 'ACTIVE' }] }]) }, ballotReport: {
       findMany: vi.fn().mockResolvedValue([]),
     },
   },
