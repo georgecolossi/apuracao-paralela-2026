@@ -142,7 +142,7 @@ describe('Round Isolation', () => {
     const { GET } = await import('../src/app/api/totals/route');
     
     // As the API is mocked, we need to bypass Next Request/Response
-    const res = await GET() as any;
+    const res = await GET(new Request('http://localhost/api/totals')) as any;
     const json = await res.json();
     
     expect(json.processedReports).toBe(1);
@@ -158,7 +158,7 @@ describe('Round Isolation', () => {
     await prisma.electionRound.update({ where: { id: round1Id }, data: { status: 'ACTIVE' } });
 
     const { GET } = await import('../src/app/api/totals/route');
-    const res = await GET() as any;
+    const res = await GET(new Request('http://localhost/api/totals')) as any;
     const json = await res.json();
     
     expect(json.processedReports).toBe(1);
@@ -188,7 +188,7 @@ describe('Round Isolation', () => {
     await prisma.electionRound.update({ where: { id: round1Id }, data: { status: 'ACTIVE' } });
     
     const { GET } = await import('../src/app/api/totals/route');
-    const res = await GET() as any;
+    const res = await GET(new Request('http://localhost/api/totals')) as any;
     const json = await res.json();
     
     expect(json.error).toContain('ambígua: múltiplos turnos');

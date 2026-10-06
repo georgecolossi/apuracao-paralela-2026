@@ -28,24 +28,7 @@ export default async function AdminDashboard() {
   });
 
   return (
-    <div className="min-h-screen bg-slate-100 font-sans flex flex-col">
-      <header className="bg-slate-900 text-white shadow-md border-b-4 border-indigo-600">
-        <div className="max-w-5xl mx-auto px-4 md:px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <LayoutDashboard className="w-6 h-6 text-indigo-400" />
-            <h1 className="text-xl font-bold uppercase tracking-tight">Admin <span className="text-indigo-400">Panel</span></h1>
-          </div>
-          <div className="flex items-center gap-3">
-            <LogoutButton />
-            <a href="/apuracao" target="_blank" rel="noreferrer" className="flex items-center gap-2 text-sm bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg text-white border border-slate-700 transition-colors">
-              <span className="hidden sm:inline">Ver Painel Público</span>
-              <ScanLine className="w-4 h-4 sm:hidden" />
-            </a>
-          </div>
-        </div>
-      </header>
-
-      <main className="flex-1 p-4 md:p-6 lg:p-8 max-w-5xl mx-auto w-full flex flex-col gap-6">
+    <main className="flex-1 p-4 md:p-6 lg:p-8 max-w-5xl mx-auto w-full flex flex-col gap-6">
         
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
           {/* Main Action Call */}
@@ -187,6 +170,5 @@ export default async function AdminDashboard() {
         </div>
 
       </main>
-    </div>
   );
 }

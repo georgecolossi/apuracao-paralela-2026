@@ -1,8 +1,11 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 
-export async function GET() {
+export async function GET(req: Request) {
   try {
+    const { searchParams } = new URL(req.url);
+    const roundParam = searchParams.get('round');
+
     const activeElections = await prisma.election.findMany({ 
       where: { status: 'ACTIVE' },
       include: { rounds: true }
@@ -13,17 +16,26 @@ export async function GET() {
     }
     const election = activeElections[0];
 
-    const activeRounds = election.rounds.filter(r => r.status === 'ACTIVE');
-    if (activeRounds.length === 0) return NextResponse.json({ processedReports: 0, expectedReports: 0, totals: [] });
-    if (activeRounds.length > 1) {
-      return NextResponse.json({ error: 'Configuração ambígua: múltiplos turnos ativos.' }, { status: 500 });
+    let targetRound;
+    if (roundParam) {
+      const parsedRound = parseInt(roundParam, 10);
+      targetRound = election.rounds.find(r => r.roundNumber === parsedRound);
+      if (!targetRound) {
+        return NextResponse.json({ error: 'Turno inexistente para esta eleição.' }, { status: 404 });
+      }
+    } else {
+      const activeRounds = election.rounds.filter(r => r.status === 'ACTIVE');
+      if (activeRounds.length === 0) return NextResponse.json({ processedReports: 0, expectedReports: 0, totals: [] });
+      if (activeRounds.length > 1) {
+        return NextResponse.json({ error: 'Configuração ambígua: múltiplos turnos ativos.' }, { status: 500 });
+      }
+      targetRound = activeRounds[0];
     }
-    const activeRound = activeRounds[0];
 
     const processedReportsCount = await prisma.ballotReport.count({
       where: {
         electionId: election.id,
-        roundId: activeRound.id,
+        roundId: targetRound.id,
         status: 'PROCESSADO',
         isSimulation: false
       }
@@ -34,7 +46,7 @@ export async function GET() {
       where: {
         report: {
           electionId: election.id,
-          roundId: activeRound.id,
+          roundId: targetRound.id,
           status: 'PROCESSADO',
           isSimulation: false
         }
@@ -50,7 +62,7 @@ export async function GET() {
     // Configura o resolver
     const { CandidateResolver } = await import('@/lib/metadata/CandidateResolver');
     const resolver = new CandidateResolver();
-    await resolver.load(election.year, activeRound.roundNumber);
+    await resolver.load(election.year, targetRound.roundNumber);
 
     const { OFFICE_NAME_TO_CODE } = await import('@/lib/metadata/voteEnricher');
 
@@ -60,16 +72,11 @@ export async function GET() {
       let metadata: { status: string; candidateName?: string; partyAbbreviation?: string; partyNumber?: string } = { status: 'NOT_FOUND' };
 
       if (officeCode) {
-        // LIMITAÇÃO CONHECIDA (FASE 7.7.3):
-        // Para suporte multi-UF completo, a agregação (groupBy) precisa considerar o estado do BU (report.stateCode).
-        // Como o Prisma não suporta groupBy em relações, isso exige refatoração estrutural (ex: raw query ou mover stateCode para BallotVote).
-        // Por ora, mantemos o comportamento atual (fallback SC) para não quebrar a agregação.
         const stateContext = officeCode === '1' ? 'BR' : 'SC';
-        
         if (t.voteType === 'NOMINAL' && t.candidateNumber) {
-          metadata = resolver.resolveNominal(election.year, activeRound.roundNumber, stateContext, officeCode, t.candidateNumber);
+          metadata = resolver.resolveNominal(election.year, targetRound.roundNumber, stateContext, officeCode, t.candidateNumber);
         } else if (t.voteType === 'LEGENDA' && t.partyNumber) {
-          metadata = resolver.resolveLegenda(election.year, activeRound.roundNumber, stateContext, officeCode, t.partyNumber);
+          metadata = resolver.resolveLegenda(election.year, targetRound.roundNumber, stateContext, officeCode, t.partyNumber);
         }
       }
 
@@ -98,10 +105,12 @@ export async function GET() {
       election: {
         plei: election.plei,
         year: election.year,
-        name: election.name
+        name: election.name,
+        rounds: election.rounds.map(r => ({ roundNumber: r.roundNumber, status: r.status }))
       },
       round: {
-        roundNumber: activeRound.roundNumber
+        roundNumber: targetRound.roundNumber,
+        status: targetRound.status
       }
     });
   } catch (error) {

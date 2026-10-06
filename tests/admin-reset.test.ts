@@ -11,10 +11,10 @@ const mockTx = {
   ballotVote: { deleteMany: vi.fn() },
   ballotReportPart: { deleteMany: vi.fn() },
   auditLog: { deleteMany: vi.fn(), create: vi.fn() },
-  ballotReport: { deleteMany: vi.fn() },
+  ballotReport: { deleteMany: vi.fn(), findMany: vi.fn().mockResolvedValue([{ id: 'report-1' }]) },
   scanSession: { deleteMany: vi.fn() },
   election: { deleteMany: vi.fn() },
-  electionRound: { deleteMany: vi.fn() },
+  electionRound: { deleteMany: vi.fn(), findUnique: vi.fn() },
   state: { deleteMany: vi.fn() },
   municipality: { deleteMany: vi.fn() },
   candidateMetadata: { deleteMany: vi.fn() },
@@ -28,6 +28,9 @@ vi.mock('../src/lib/db', () => ({
         return callback(mockTx);
       }
     }),
+    electionRound: {
+      findUnique: vi.fn().mockResolvedValue({ id: 'round-1', roundNumber: 1, election: { id: 'elec-1' } })
+    }
   },
 }));
 
@@ -40,6 +43,7 @@ describe('POST /api/admin/reset', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(prisma.electionRound.findUnique).mockResolvedValue({ id: 'round-1', roundNumber: 1, election: { id: 'elec-1' } } as any);
   });
 
   afterEach(() => {
@@ -48,7 +52,7 @@ describe('POST /api/admin/reset', () => {
 
   it('A) should return 401 if user is not authenticated', async () => {
     vi.mocked(requireAuthenticatedUser).mockResolvedValue({ authenticated: false } as any);
-    const req = mockReq({ confirmationText: 'ZERAR APURAÇÃO' });
+    const req = mockReq({ confirmationText: 'ZERAR APURAÇÃO', roundId: 'round-1' });
     const res = await POST(req);
     expect(res.status).toBe(401);
   });
@@ -58,7 +62,7 @@ describe('POST /api/admin/reset', () => {
       authenticated: true,
       user: { role: 'OPERATOR' },
     } as any);
-    const req = mockReq({ confirmationText: 'ZERAR APURAÇÃO' });
+    const req = mockReq({ confirmationText: 'ZERAR APURAÇÃO', roundId: 'round-1' });
     const res = await POST(req);
     expect(res.status).toBe(403);
   });
@@ -69,7 +73,7 @@ describe('POST /api/admin/reset', () => {
       authenticated: true,
       user: { role: 'ADMIN' },
     } as any);
-    const req = mockReq({ confirmationText: 'ZERAR APURAÇÃO' });
+    const req = mockReq({ confirmationText: 'ZERAR APURAÇÃO', roundId: 'round-1' });
     const res = await POST(req);
     expect(res.status).toBe(403);
     const data = await res.json();
@@ -82,9 +86,32 @@ describe('POST /api/admin/reset', () => {
       authenticated: true,
       user: { role: 'ADMIN' },
     } as any);
-    const req = mockReq({ confirmationText: 'ERRADO' });
+    const req = mockReq({ confirmationText: 'ERRADO', roundId: 'round-1' });
     const res = await POST(req);
     expect(res.status).toBe(400);
+  });
+
+  it('C2) should return 400 if roundId is missing', async () => {
+    process.env.ALLOW_OPERATIONAL_RESET = 'true';
+    vi.mocked(requireAuthenticatedUser).mockResolvedValue({
+      authenticated: true,
+      user: { role: 'ADMIN' },
+    } as any);
+    const req = mockReq({ confirmationText: 'ZERAR APURAÇÃO' }); // no roundId
+    const res = await POST(req);
+    expect(res.status).toBe(400);
+  });
+
+  it('C3) should return 404 if round does not exist', async () => {
+    process.env.ALLOW_OPERATIONAL_RESET = 'true';
+    vi.mocked(requireAuthenticatedUser).mockResolvedValue({
+      authenticated: true,
+      user: { role: 'ADMIN' },
+    } as any);
+    vi.mocked(prisma.electionRound.findUnique).mockResolvedValue(null);
+    const req = mockReq({ confirmationText: 'ZERAR APURAÇÃO', roundId: 'invalid' });
+    const res = await POST(req);
+    expect(res.status).toBe(404);
   });
 
   it('E) should permit reset if all conditions are met', async () => {
@@ -93,22 +120,19 @@ describe('POST /api/admin/reset', () => {
       authenticated: true,
       user: { userId: '1', role: 'ADMIN' },
     } as any);
-    const req = mockReq({ confirmationText: 'ZERAR APURAÇÃO' });
+    const req = mockReq({ confirmationText: 'ZERAR APURAÇÃO', roundId: 'round-1' });
     const res = await POST(req);
     expect(res.status).toBe(200);
     expect(prisma.$transaction).toHaveBeenCalled();
 
     // Comprovando as exclusões esperadas
-    expect(mockTx.ballotVote.deleteMany).toHaveBeenCalled();
-    expect(mockTx.ballotReportPart.deleteMany).toHaveBeenCalled();
-    expect(mockTx.auditLog.deleteMany).toHaveBeenCalled();
-    expect(mockTx.ballotReport.deleteMany).toHaveBeenCalled();
-    expect(mockTx.scanSession.deleteMany).toHaveBeenCalled();
+    expect(mockTx.ballotVote.deleteMany).toHaveBeenCalledWith({ where: { reportId: { in: ['report-1'] } } });
+    expect(mockTx.ballotReport.deleteMany).toHaveBeenCalledWith({ where: { roundId: 'round-1' } });
 
     // Comprovando a criação do log de sistema
     expect(mockTx.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
-        action: 'SYSTEM_RESET',
+        action: 'ROUND_RESET',
         result: 'SUCCESS'
       })
     }));
@@ -132,7 +156,7 @@ describe('POST /api/admin/reset', () => {
     // Força um erro dentro da transação mockada
     vi.mocked(prisma.$transaction).mockRejectedValueOnce(new Error('Simulated DB Error'));
 
-    const req = mockReq({ confirmationText: 'ZERAR APURAÇÃO' });
+    const req = mockReq({ confirmationText: 'ZERAR APURAÇÃO', roundId: 'round-1' });
     const res = await POST(req);
     expect(res.status).toBe(500);
     const data = await res.json();

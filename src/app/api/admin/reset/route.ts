@@ -6,55 +6,61 @@ export async function POST(req: Request) {
   try {
     const auth = await requireAuthenticatedUser();
     
-    // 1. Verificar autenticação
     if (!auth.authenticated || !auth.user) {
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
     }
 
-    // 2. Verificar permissão de ADMIN
     if (auth.user.role !== 'ADMIN') {
       return NextResponse.json({ error: 'Proibido' }, { status: 403 });
     }
 
-    // 3. Interlock Operacional (FAIL-CLOSED)
+    // This is the global operational reset toggle.
     if (process.env.ALLOW_OPERATIONAL_RESET !== 'true') {
       return NextResponse.json({ error: 'Reset desabilitado neste ambiente operacional.' }, { status: 403 });
     }
 
-    // 4. Verificar payload de confirmação (strict)
-    let body: { confirmationText?: string } = {};
+    let body: { confirmationText?: string, roundId?: string } = {};
     try {
       body = await req.json();
     } catch (e) {
       return NextResponse.json({ error: 'Payload inválido' }, { status: 400 });
     }
 
-    const { confirmationText } = body;
-
-    if (confirmationText !== 'ZERAR APURAÇÃO') {
+    const { confirmationText, roundId } = body;
+    
+    const expected = "ZERAR APURAÇÃO";
+    if (!confirmationText || confirmationText.trim().toUpperCase() !== expected) {
       return NextResponse.json({ error: 'Confirmação incorreta' }, { status: 400 });
     }
 
-    // 4. Executar transação de limpeza
-    await prisma.$transaction(async (tx) => {
-      // Ordem de deleção respeitando FKs (Votos -> Partes -> Relatórios -> Sessões)
-      await tx.ballotVote.deleteMany({});
-      await tx.ballotReportPart.deleteMany({});
-      
-      // AuditLog referencia BallotReport e ScanSession opcionalmente, 
-      // então é mais seguro apagar os logs antigos antes de apagar os relatórios
-      await tx.auditLog.deleteMany({});
-      
-      await tx.ballotReport.deleteMany({});
-      await tx.scanSession.deleteMany({});
+    if (!roundId) {
+      return NextResponse.json({ error: 'ID do turno é obrigatório para o reset' }, { status: 400 });
+    }
 
-      // Cria log do reset APÓS a limpeza, garantindo que seja o primeiro log
+    const round = await prisma.electionRound.findUnique({ where: { id: roundId }, include: { election: true } });
+    if (!round) {
+      return NextResponse.json({ error: 'Turno não encontrado' }, { status: 404 });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      // Find all report IDs for this round
+      const reports = await tx.ballotReport.findMany({ where: { roundId }, select: { id: true } });
+      const reportIds = reports.map(r => r.id);
+      
+      // Delete votes linked to these reports
+      if (reportIds.length > 0) {
+        await tx.ballotVote.deleteMany({ where: { reportId: { in: reportIds } } });
+        
+        // Delete the reports themselves
+        await tx.ballotReport.deleteMany({ where: { roundId } });
+      }
+
       await tx.auditLog.create({
         data: {
-          action: 'SYSTEM_RESET',
+          action: 'ROUND_RESET',
           result: 'SUCCESS',
-          identifiers: 'Preparação para Apuração Real (Zerar Apuração)',
-          userId: auth.user!.userId
+          identifiers: 'Reset do Turno ' + round.roundNumber,
+          userId: auth.user.userId
         }
       });
     });

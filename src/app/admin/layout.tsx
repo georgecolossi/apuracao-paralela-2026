@@ -1,5 +1,6 @@
-import { redirect } from 'next/navigation';
+﻿import { redirect } from 'next/navigation';
 import { requireAuthenticatedUser } from '@/lib/auth';
+import AdminShell from '@/components/AdminShell';
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const auth = await requireAuthenticatedUser();
@@ -7,5 +8,5 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     redirect('/login');
   }
 
-  return <>{children}</>;
+  return <AdminShell>{children}</AdminShell>;
 }

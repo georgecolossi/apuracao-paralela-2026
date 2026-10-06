@@ -2,6 +2,7 @@ import { prisma } from '@/lib/db';
 import Link from 'next/link';
 import { ArrowLeft, Clock, CheckCircle2, CircleDashed } from 'lucide-react';
 import TurnoManagerClient from './TurnoManagerClient';
+import TurnoResetClient from './TurnoResetClient';
 
 export const dynamic = 'force-dynamic';
 
@@ -18,20 +19,7 @@ export default async function AdminTurnosPage() {
   const election = activeElections.length === 1 ? activeElections[0] : null;
 
   return (
-    <div className="min-h-screen bg-slate-100 font-sans flex flex-col">
-      <header className="bg-slate-900 text-white shadow-md border-b-4 border-indigo-600">
-        <div className="max-w-4xl mx-auto px-4 md:px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl font-bold uppercase tracking-tight">Gerenciar <span className="text-indigo-400">Turnos</span></h1>
-          </div>
-          <Link href="/admin" className="flex items-center gap-2 text-sm bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg text-white border border-slate-700 transition-colors">
-            <ArrowLeft className="w-4 h-4" />
-            <span className="hidden sm:inline font-bold uppercase tracking-wide">Voltar ao Painel</span>
-          </Link>
-        </div>
-      </header>
-
-      <main className="flex-1 p-4 md:p-6 lg:p-8 max-w-4xl mx-auto w-full flex flex-col gap-6">
+    <main className="flex-1 p-4 md:p-6 lg:p-8 max-w-4xl mx-auto w-full flex flex-col gap-6">
         
         <div className="bg-amber-50 border border-amber-200 text-amber-800 p-5 rounded-xl shadow-sm">
           <h2 className="font-bold uppercase tracking-wider mb-2">Advertência Operacional</h2>
@@ -103,7 +91,7 @@ export default async function AdminTurnosPage() {
                       </div>
                     </div>
                     
-                    <div className="flex items-center">
+                    <div className="flex flex-col gap-2 items-end">
                       {round.status === 'PLANNED' && (
                         <TurnoManagerClient 
                           roundId={round.id} 
@@ -111,6 +99,11 @@ export default async function AdminTurnosPage() {
                           hasActiveRound={election.rounds.some(r => r.status === 'ACTIVE')} 
                         />
                       )}
+                      
+                      <TurnoResetClient
+                        roundId={round.id}
+                        roundNumber={round.roundNumber}
+                      />
                     </div>
                   </div>
                 ))}
@@ -119,6 +112,5 @@ export default async function AdminTurnosPage() {
           </>
         )}
       </main>
-    </div>
   );
 }

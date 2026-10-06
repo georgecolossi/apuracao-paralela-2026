@@ -20,6 +20,8 @@ describe('API Admin Cobertura (Integration)', () => {
     await prisma.ballotReport.deleteMany();
     await prisma.scanSession.deleteMany();
     await prisma.user.deleteMany();
+    await prisma.pollingSection.deleteMany();
+    await prisma.pollingZone.deleteMany();
     await prisma.municipality.deleteMany();
     await prisma.state.deleteMany();
     await prisma.ballotVote.deleteMany();

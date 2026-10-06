@@ -6,8 +6,8 @@ interface TotalsData {
   processedReports: number;
   expectedReports: number;
   totals: TotalItem[];
-  election?: { plei: string | null; year: number; name: string };
-  round?: { roundNumber: number };
+  election?: { plei: string | null; year: number; name: string; rounds?: { roundNumber: number, status: string }[] };
+  round?: { roundNumber: number, status?: string };
 }
 export default function ApuracaoPage() {
   const [totals, setTotals] = useState<TotalsData | null>(null);
@@ -16,12 +16,13 @@ export default function ApuracaoPage() {
   const [connected, setConnected] = useState(false);
   const [activeOffice, setActiveOffice] = useState<string | null>(null);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+  const [selectedRound, setSelectedRound] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<'CANDIDATOS' | 'LEGENDA' | 'BRANCOS_NULOS'>('CANDIDATOS');
   useEffect(() => {
     let mounted = true;
     const fetchTotals = async () => {
       try {
-        const res = await fetch('/api/totals');
+        const res = await fetch('/api/totals' + (selectedRound ? '?round=' + selectedRound : ''));
         if (!res.ok) throw new Error('API Error');
         const data = await res.json();
         if (mounted) {
@@ -68,7 +69,7 @@ export default function ApuracaoPage() {
       mounted = false;
       evtSource.close();
     };
-  }, []);
+  }, [selectedRound]);
   const offices = totals?.totals ? Array.from(new Set(totals.totals.map(t => t.officeName))) : [];
   const getOfficeData = (officeName: string) => {
     if (!totals) return null;
@@ -110,6 +111,30 @@ export default function ApuracaoPage() {
         </div>
       </header>
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 md:px-6 py-6 flex flex-col gap-6">
+        
+        {totals?.election?.rounds && totals.election.rounds.length > 0 && (
+          <div className="flex items-center gap-2 overflow-x-auto pb-2">
+            {totals.election.rounds.map(r => {
+              const isActiveTab = (selectedRound || totals.round?.roundNumber) === r.roundNumber;
+              return (
+                <button
+                  key={r.roundNumber}
+                  onClick={() => setSelectedRound(r.roundNumber)}
+                  className={`px-4 py-2 rounded-lg font-bold uppercase text-sm tracking-wide transition-colors whitespace-nowrap border ${
+                    isActiveTab 
+                      ? 'bg-indigo-600 border-indigo-600 text-white shadow-md'
+                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  {r.roundNumber}º Turno — {
+                    r.status === 'ACTIVE' ? 'Ao vivo' :
+                    r.status === 'FINISHED' ? 'Encerrado' : 'Planejado'
+                  }
+                </button>
+              );
+            })}
+          </div>
+        )}
         <div className="bg-white rounded-xl p-5 md:p-6 shadow-sm border border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-4">
             <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
