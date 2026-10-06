@@ -19,10 +19,28 @@ async function run() {
     process.exit(1);
   }
 
+  const dbUrl = process.env.DATABASE_URL;
+  const isProdDb = dbUrl === 'file:/data/prod.db';
+
   if (isApply) {
-    if (process.env.ALLOW_PRODUCTION_POLLING_SECTION_IMPORT !== 'I_UNDERSTAND_THIS_WRITES_PRODUCTION') {
-      console.error('ERRO: Para aplicar,  necessario definir ALLOW_PRODUCTION_POLLING_SECTION_IMPORT');
-      process.exit(1);
+    if (isProdDb) {
+      const hasConfirm = args.includes('--confirm-production-section-import=80837-2026');
+      const hasAuthEnv = process.env.ALLOW_PRODUCTION_POLLING_SECTION_IMPORT === 'I_UNDERSTAND_THIS_WRITES_PRODUCTION';
+      const isResetFalse = process.env.ALLOW_OPERATIONAL_RESET === 'false';
+
+      if (!hasConfirm || !hasAuthEnv || !isResetFalse) {
+        console.error('ERRO: Protecoes de producao ausentes ou incompletas. Abortando apply.');
+        process.exit(1);
+      }
+    } else {
+      // Rehearsal or Test DB
+      if (dbUrl && (dbUrl.includes('prod.db') && dbUrl !== 'file:/data/prod.db')) {
+          // Path similar to production but not exact - deny for safety unless it's explicitly a rehearsal backup file
+          if (!dbUrl.includes('rehearsal')) {
+              console.error('ERRO: DATABASE_URL similar a producao porem nao e producao nem rehearsal reconhecido. Abortando.');
+              process.exit(1);
+          }
+      }
     }
   }
 
