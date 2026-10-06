@@ -1,3 +1,4 @@
+﻿
 export interface TotalItem {
   officeName: string;
   candidateNumber?: string | null;
@@ -8,48 +9,104 @@ export interface TotalItem {
   candidateName?: string;
   partyAbbreviation?: string;
 }
-
+export type VoteDestiny = 'CANDIDATO_VALIDO' | 'LEGENDA' | 'BRANCO' | 'NULO' | 'NULO_TECNICO' | 'OUTROS_ANULADOS';
+export function classifyVotePresentation(
+  officeName: string,
+  voteType: string,
+  candidateNumber: string | null | undefined,
+  hasResolvedName: boolean
+): VoteDestiny {
+  if (voteType === 'BRANCO') return 'BRANCO';
+  if (voteType === 'NULO') return 'NULO';
+  if (voteType === 'LEGENDA') return 'LEGENDA';
+  if (voteType === 'NOMINAL') {
+    if (officeName === 'Presidente' && candidateNumber === '28') {
+      return 'NULO_TECNICO';
+    }
+    if (hasResolvedName) {
+      return 'CANDIDATO_VALIDO';
+    }
+    return 'OUTROS_ANULADOS';
+  }
+  return 'OUTROS_ANULADOS';
+}
+export interface CandidateDisplay {
+  candidateNumber: string;
+  partyNumber: string;
+  quantity: number;
+  candidateName?: string;
+  partyAbbreviation?: string;
+}
+export interface LegendaDisplay {
+  partyNumber: string;
+  partyAbbreviation?: string;
+  quantity: number;
+}
 export function getOfficeDataAggregate(officeName: string, allTotals: TotalItem[]) {
   const officeVotes = allTotals.filter(t => t.officeName === officeName);
-  
-  let validos = 0;
+  let totalGeral = 0;
+  let validosNominais = 0;
+  let validosLegenda = 0;
   let brancos = 0;
   let nulos = 0;
-  
-  const candidateMap = new Map<string, any>();
-
+  let nulosTecnicos = 0;
+  let outrosAnulados = 0;
+  const candidateMap = new Map<string, CandidateDisplay>();
+  const legendaMap = new Map<string, LegendaDisplay>();
   for (const v of officeVotes) {
-    if (v.voteType === 'BRANCO') brancos += v.quantity;
-    else if (v.voteType === 'NULO') nulos += v.quantity;
-    else if (v.voteType === 'NOMINAL' || v.voteType === 'LEGENDA') {
-      validos += v.quantity;
-      const key = v.voteType === 'LEGENDA' ? `LEG_${v.partyNumber}` : `NOM_${v.candidateNumber}`;
-      
-      const existing = candidateMap.get(key);
-      if (existing) {
-        existing.quantity += v.quantity;
-      } else {
-        candidateMap.set(key, {
-          candidateNumber: v.voteType === 'LEGENDA' ? `Legenda ${v.partyNumber}` : (v.candidateNumber || '-'),
-          partyNumber: v.partyNumber || '-',
-          quantity: v.quantity,
-          candidateName: v.candidateName,
-          partyAbbreviation: v.partyAbbreviation,
-          metadataStatus: v.metadataStatus,
-          voteType: v.voteType
-        });
-      }
+    totalGeral += v.quantity;
+    const hasResolvedName = Boolean(v.candidateName && v.candidateName.trim().length > 0);
+    const destiny = classifyVotePresentation(officeName, v.voteType, v.candidateNumber, hasResolvedName);
+    switch (destiny) {
+      case 'BRANCO':
+        brancos += v.quantity;
+        break;
+      case 'NULO':
+        nulos += v.quantity;
+        break;
+      case 'NULO_TECNICO':
+        nulosTecnicos += v.quantity;
+        break;
+      case 'OUTROS_ANULADOS':
+        outrosAnulados += v.quantity;
+        break;
+      case 'LEGENDA':
+        validosLegenda += v.quantity;
+        const legKey = 'LEG_' + v.partyNumber;
+        const legExisting = legendaMap.get(legKey);
+        if (legExisting) {
+          legExisting.quantity += v.quantity;
+        } else {
+          legendaMap.set(legKey, {
+            partyNumber: v.partyNumber || '-',
+            partyAbbreviation: v.partyAbbreviation,
+            quantity: v.quantity
+          });
+        }
+        break;
+      case 'CANDIDATO_VALIDO':
+        validosNominais += v.quantity;
+        const nomKey = 'NOM_' + v.candidateNumber;
+        const nomExisting = candidateMap.get(nomKey);
+        if (nomExisting) {
+          nomExisting.quantity += v.quantity;
+        } else {
+          candidateMap.set(nomKey, {
+            candidateNumber: v.candidateNumber || '-',
+            partyNumber: v.partyNumber || '-',
+            quantity: v.quantity,
+            candidateName: v.candidateName,
+            partyAbbreviation: v.partyAbbreviation
+          });
+        }
+        break;
     }
   }
-  
-  const totalGeral = validos + brancos + nulos;
-  
-  // O filtro aqui garante que itens com 0 votos não poluam a lista visual.
-  // Notavelmente, `validos`, `brancos`, `nulos` e `totalGeral` já foram
-  // calculados com base no array bruto original (independente do filtro).
   const candidates = Array.from(candidateMap.values())
     .filter(c => c.quantity > 0)
     .sort((a, b) => b.quantity - a.quantity);
-  
-  return { candidates, brancos, nulos, totalValidos: validos, totalGeral };
+  const legendas = Array.from(legendaMap.values())
+    .filter(l => l.quantity > 0)
+    .sort((a, b) => b.quantity - a.quantity);
+  return { candidates, legendas, brancos, nulos, nulosTecnicos, outrosAnulados, totalValidos: validosNominais + validosLegenda, totalGeral };
 }

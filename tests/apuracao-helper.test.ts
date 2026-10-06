@@ -1,41 +1,69 @@
-import { describe, it, expect } from 'vitest';
-import { getOfficeDataAggregate, TotalItem } from '../src/lib/presentation/apuracaoHelper';
+﻿import { describe, it, expect } from 'vitest';
+import { getOfficeDataAggregate, classifyVotePresentation, TotalItem } from '../src/lib/presentation/apuracaoHelper';
 
-describe('Apuração Helper - Filtro Visual', () => {
-  it('deve ocultar candidatos com quantity <= 0, preservando a matemática', () => {
-    const rawTotals: TotalItem[] = [
-      { officeName: 'Deputado', voteType: 'NOMINAL', candidateNumber: '94001', partyNumber: '94', quantity: 5 },
-      { officeName: 'Deputado', voteType: 'NOMINAL', candidateNumber: '95001', partyNumber: '95', quantity: 0 },
-      { officeName: 'Deputado', voteType: 'LEGENDA', candidateNumber: null, partyNumber: '92', quantity: 0 },
-      { officeName: 'Deputado', voteType: 'LEGENDA', candidateNumber: null, partyNumber: '94', quantity: -1 }, // Cenário atípico, omitido visualmente
-      { officeName: 'Deputado', voteType: 'BRANCO', candidateNumber: null, partyNumber: null, quantity: 2 },
-      { officeName: 'Deputado', voteType: 'NULO', candidateNumber: null, partyNumber: null, quantity: 1 }
+describe('apuracaoHelper - Classificacao de Votos', () => {
+  it('A) LEGENDA nunca entra na lista CANDIDATOS e B) LEGENDA eh agrupada corretamente por partido', () => {
+    const mockData: TotalItem[] = [
+      { officeName: 'Deputado Federal', voteType: 'LEGENDA', partyNumber: '13', quantity: 10 },
+      { officeName: 'Deputado Federal', voteType: 'LEGENDA', partyNumber: '13', quantity: 5 },
+      { officeName: 'Deputado Federal', voteType: 'LEGENDA', partyNumber: '22', quantity: 8 },
     ];
+    const result = getOfficeDataAggregate('Deputado Federal', mockData);
+    expect(result.candidates.length).toBe(0);
+    expect(result.legendas.length).toBe(2);
+    expect(result.legendas.find(l => l.partyNumber === '13')?.quantity).toBe(15);
+  });
 
-    // O original não deve ser alterado
-    const rawTotalsLengthAntes = rawTotals.length;
-
-    const result = getOfficeDataAggregate('Deputado', rawTotals);
-
-    // O array recebido não foi modificado
-    expect(rawTotals.length).toBe(rawTotalsLengthAntes);
-
-    // Os cálculos da eleição permanecem inalterados! 
-    // Nominais (5 + 0) + Legenda (0 + (-1)) = 4
-    expect(result.totalValidos).toBe(4);
-    expect(result.brancos).toBe(2);
-    expect(result.nulos).toBe(1);
-    expect(result.totalGeral).toBe(7);
-
-    // Somente o que tem quantity > 0 deve aparecer no visual
+  it('E) NOMINAL com candidateName valido continua em CANDIDATOS', () => {
+    const mockData: TotalItem[] = [
+      { officeName: 'Presidente', voteType: 'NOMINAL', candidateNumber: '13', candidateName: 'LULA', quantity: 100 }
+    ];
+    const result = getOfficeDataAggregate('Presidente', mockData);
     expect(result.candidates.length).toBe(1);
-    expect(result.candidates[0].candidateNumber).toBe('94001');
-    expect(result.candidates[0].quantity).toBe(5);
+    expect(result.candidates[0].candidateName).toBe('LULA');
+  });
 
-    // quantity = 0 é omitido visualmente
-    expect(result.candidates.find(c => c.candidateNumber === '95001')).toBeUndefined();
-    // quantity <= 0 (ex: -1) é omitido visualmente
-    expect(result.candidates.find(c => c.candidateNumber === 'Legenda 94')).toBeUndefined();
-    expect(result.candidates.find(c => c.candidateNumber === 'Legenda 92')).toBeUndefined();
+  it('F e G) Presidente 28 / 3 votos nao entra em CANDIDATOS e aparece como NULOS TECNICOS', () => {
+    const mockData: TotalItem[] = [
+      { officeName: 'Presidente', voteType: 'NOMINAL', candidateNumber: '28', quantity: 3 }
+    ];
+    const result = getOfficeDataAggregate('Presidente', mockData);
+    expect(result.candidates.length).toBe(0);
+    expect(result.nulosTecnicos).toBe(3);
+  });
+
+  it('H) Nao existe regra generica: NOMINAL sem metadata = NULO_TECNICO', () => {
+    const mockData: TotalItem[] = [
+      { officeName: 'Governador', voteType: 'NOMINAL', candidateNumber: '99', quantity: 5 }
+    ];
+    const result = getOfficeDataAggregate('Governador', mockData);
+    expect(result.candidates.length).toBe(0);
+    expect(result.nulosTecnicos).toBe(0);
+    expect(result.outrosAnulados).toBe(5);
+  });
+
+  it('I) Brancos e nulos normais continuam preservados', () => {
+    const mockData: TotalItem[] = [
+      { officeName: 'Presidente', voteType: 'BRANCO', quantity: 717 },
+      { officeName: 'Presidente', voteType: 'NULO', quantity: 712 }
+    ];
+    const result = getOfficeDataAggregate('Presidente', mockData);
+    expect(result.brancos).toBe(717);
+    expect(result.nulos).toBe(712);
+  });
+
+  it('J) A soma do Presidente continua correta', () => {
+    const mockData: TotalItem[] = [
+      { officeName: 'Presidente', voteType: 'NOMINAL', candidateNumber: '13', candidateName: 'LULA', quantity: 47520 },
+      { officeName: 'Presidente', voteType: 'BRANCO', quantity: 717 },
+      { officeName: 'Presidente', voteType: 'NULO', quantity: 712 },
+      { officeName: 'Presidente', voteType: 'NOMINAL', candidateNumber: '28', quantity: 3 }
+    ];
+    const result = getOfficeDataAggregate('Presidente', mockData);
+    expect(result.totalValidos).toBe(47520);
+    expect(result.brancos).toBe(717);
+    expect(result.nulos).toBe(712);
+    expect(result.nulosTecnicos).toBe(3);
+    expect(result.totalGeral).toBe(48952);
   });
 });
