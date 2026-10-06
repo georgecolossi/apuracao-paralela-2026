@@ -83,17 +83,7 @@ export default async function ConferirPage({ params }: { params: Promise<{ id: s
 
   return (
     <div className="min-h-screen bg-slate-100 font-sans flex flex-col">
-      <header className="bg-slate-900 text-white shadow-md border-b-4 border-indigo-600">
-        <div className="max-w-4xl mx-auto px-4 md:px-6 h-16 flex items-center gap-3">
-          <FileCheck2 className="w-6 h-6 text-indigo-400" />
-          <div>
-            <h1 className="text-lg md:text-xl font-bold uppercase tracking-tight leading-none">
-              Conferência de Boletim
-            </h1>
-            <p className="text-indigo-300 text-xs font-medium uppercase tracking-wider mt-0.5">Operação Administrativa</p>
-          </div>
-        </div>
-      </header>
+
 
       <main className="flex-1 max-w-4xl w-full mx-auto p-4 md:p-6 py-8 flex flex-col gap-6">
         {report.isSimulation && (

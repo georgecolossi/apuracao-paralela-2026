@@ -1,436 +1,324 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Activity, Radio, AlertCircle, RefreshCw, Archive, CheckCircle2, AlertTriangle, Users, FileText, Ban } from 'lucide-react';
-import { getOfficeDataAggregate, TotalItem } from '@/lib/presentation/apuracaoHelper';
-interface TotalsData {
-  processedReports: number;
-  expectedReports: number;
-  totals: TotalItem[];
-  election?: { plei: string | null; year: number; name: string; rounds?: { roundNumber: number, status: string }[] };
-  round?: { roundNumber: number, status?: string };
-}
-export default function ApuracaoPage() {
-  const [totals, setTotals] = useState<TotalsData | null>(null);
+import { Activity, Archive, ShieldCheck, AlertCircle, RefreshCw } from 'lucide-react';
+import { getOfficeDataAggregate } from '@/lib/presentation/apuracaoHelper';
+
+export default function ApuracaoDashboard() {
+  const [source, setSource] = useState('PARALELA');
+  const [round, setRound] = useState(1);
+  const [paralela, setParalela] = useState<any>(null);
+  const [tse, setTse] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
-  const [connected, setConnected] = useState(false);
-  const [activeOffice, setActiveOffice] = useState<string | null>(null);
-  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
-  const [selectedRound, setSelectedRound] = useState<number | null>(null);
-  const [activeTab, setActiveTab] = useState<'CANDIDATOS' | 'LEGENDA' | 'BRANCOS_NULOS'>('CANDIDATOS');
+
   useEffect(() => {
     let mounted = true;
-    const fetchTotals = async () => {
+    setLoading(true);
+    const fetchData = async () => {
       try {
-        const res = await fetch('/api/totals' + (selectedRound ? '?round=' + selectedRound : ''));
-        if (!res.ok) throw new Error('API Error');
-        const data = await res.json();
+        const [pRes, tRes] = await Promise.all([
+          fetch('/api/totals?round=' + round),
+          fetch('/api/tse-results?round=' + round)
+        ]);
+        
+        const pData = pRes.ok ? await pRes.json() : null;
+        const tData = tRes.ok ? await tRes.json() : null;
+
         if (mounted) {
-          setTotals(data);
-          setLastUpdate(new Date());
-          setError(false);
-          setActiveOffice(prev => {
-            if (!prev && data.totals?.length > 0) {
-              const offices = Array.from(new Set(data.totals.map((t: TotalItem) => t.officeName))) as string[];
-              if (offices.length > 0) {
-                return offices[0];
-              }
-            }
-            return prev;
-          });
+          if (pData) setParalela(pData);
+          if (tData) setTse(tData);
+          setLoading(false);
         }
-      } catch {
-        if (mounted) setError(true);
-      } finally {
+      } catch (err) {
         if (mounted) setLoading(false);
       }
     };
-    fetchTotals();
-    const evtSource = new EventSource('/api/realtime');
-    evtSource.onopen = () => {
-      if (mounted) setConnected(true);
-      fetchTotals();
-    };
-    evtSource.onmessage = (event) => {
-      try {
-        const payload = JSON.parse(event.data);
-        if (payload.type === 'BU_PROCESSED') {
-          fetchTotals();
-        }
-      } catch {}
-    };
-    evtSource.onerror = () => {
-      if (mounted) {
-        setConnected(false);
-        setError(true);
-      }
-    };
+
+    fetchData();
+    const iv = setInterval(fetchData, 15000);
     return () => {
       mounted = false;
-      evtSource.close();
+      clearInterval(iv);
     };
-  }, [selectedRound]);
-  const offices = totals?.totals ? Array.from(new Set(totals.totals.map(t => t.officeName))) : [];
-  const getOfficeData = (officeName: string) => {
-    if (!totals) return null;
-    return getOfficeDataAggregate(totals.election?.plei, totals.round?.roundNumber, officeName, totals.totals);
-  };
-  const activeData = activeOffice ? getOfficeData(activeOffice) : null;
-  const hasLegenda = activeData && activeData.legendas.length > 0;
-  useEffect(() => {
-    if (activeTab === 'LEGENDA' && !hasLegenda) {
-      setActiveTab('CANDIDATOS');
-    }
-  }, [activeOffice, hasLegenda, activeTab]);
-  return (
-    <div className="min-h-screen bg-slate-50 font-sans text-slate-900 flex flex-col">
-      <header className="bg-slate-900 border-b-4 border-indigo-600 sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 md:px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Archive className="text-indigo-400 w-6 h-6 hidden sm:block" />
-            <div className="flex flex-col">
-              <h1 className="text-xl md:text-2xl font-black text-white tracking-tight uppercase leading-none">
-                Apuração Paralela — Concórdia
-              </h1>
-              {totals?.round && (
-                <span className="text-xs text-indigo-300 font-bold tracking-widest uppercase mt-1">
-                  {totals.round.roundNumber}º Turno
-                </span>
-              )}
+  }, [round]);
+
+  const offices = ['Presidente', 'Governador', 'Senador', 'Deputado Federal', 'Deputado Estadual'];
+  const isMajoritario = (n: string) => ['Presidente', 'Governador', 'Senador'].includes(n);
+
+  const renderParalela = () => {
+    if (!paralela || !paralela.totals) return <div className="p-8 text-center text-slate-500 font-bold uppercase tracking-widest">Sem dados no sistema local</div>;
+    const p = paralela.processedReports;
+    const e = paralela.expectedReports;
+    const coverage = e > 0 ? p / e : 0;
+    const showProj = coverage >= 0.25 && p < e;
+
+    return (
+      <div className="space-y-6">
+        <div className="bg-white p-4 md:p-6 rounded-2xl border border-slate-200 flex flex-col md:flex-row md:items-center justify-between shadow-sm gap-4">
+          <div>
+            <h2 className="font-black text-slate-800 flex items-center gap-2 text-xl tracking-tight uppercase">
+              <Archive className="w-6 h-6 text-indigo-500" />
+              Apuração Independente (Tempo Real)
+            </h2>
+            <p className="text-sm text-slate-500 font-medium">Dados contabilizados pela apuração paralela baseada nos BUs auditados.</p>
+          </div>
+          <div className="bg-indigo-50 px-6 py-3 rounded-xl border border-indigo-100 text-center md:text-right">
+            <div className="text-3xl font-black text-indigo-900 tracking-tighter">{p} / {e}</div>
+            <div className="text-[10px] uppercase font-bold text-indigo-600 tracking-widest">Urnas Processadas</div>
+          </div>
+        </div>
+
+        {offices.map(office => {
+          const data = getOfficeDataAggregate(paralela.election?.plei, round, office, paralela.totals);
+          if (data.totalGeral === 0) return null;
+          return (
+            <div key={office} className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+              <div className="bg-slate-50 border-b border-slate-200 p-4 md:px-6">
+                <h3 className="font-black text-slate-800 uppercase tracking-widest text-lg">{office}</h3>
+              </div>
+              <div className="p-0 overflow-x-auto">
+                <table className="w-full text-left border-collapse min-w-[600px]">
+                  <thead>
+                    <tr className="bg-slate-50/50 border-b border-slate-100">
+                      <th className="p-4 px-6 text-xs font-bold uppercase text-slate-500 tracking-wider">Candidato</th>
+                      <th className="p-4 px-6 text-xs font-bold uppercase text-slate-500 tracking-wider text-right">Votos</th>
+                      <th className="p-4 px-6 text-xs font-bold uppercase text-slate-500 tracking-wider text-right">% Válidos</th>
+                      {isMajoritario(office) && <th className="p-4 px-6 text-xs font-bold uppercase text-indigo-500 tracking-wider text-right">Projeção*</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.candidates.map((c: any) => {
+                      const pct = data.totalValidos > 0 ? ((c.quantity / data.totalValidos) * 100) : 0;
+                      // Projeção: extrapolação linear simples
+                      const proj = showProj ? Math.round(c.quantity * (e / p)) : null;
+                      return (
+                        <tr key={c.candidateNumber} className="border-b border-slate-50 hover:bg-slate-50/80 transition-colors">
+                          <td className="p-4 px-6">
+                            <div className="font-black text-slate-800 text-lg">{c.candidateName || 'Não identificado'}</div>
+                            <div className="text-xs font-bold uppercase tracking-wider text-slate-400 mt-0.5">{c.partyAbbreviation || 'Partido ' + c.partyNumber} - {c.candidateNumber}</div>
+                          </td>
+                          <td className="p-4 px-6 text-right font-black text-slate-700 text-xl">{c.quantity.toLocaleString('pt-BR')}</td>
+                          <td className="p-4 px-6 text-right font-black text-slate-600 text-xl">{pct.toFixed(2).replace('.', ',')}%</td>
+                          {isMajoritario(office) && (
+                            <td className="p-4 px-6 text-right font-black text-indigo-600 text-xl bg-indigo-50/30">
+                              {showProj ? proj!.toLocaleString('pt-BR') : '-'}
+                            </td>
+                          )}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div className="bg-slate-50/80 p-4 md:px-6 border-t border-slate-100 flex flex-wrap gap-x-8 gap-y-3 text-sm">
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-500 font-bold uppercase text-xs tracking-wider">Válidos:</span>
+                  <span className="font-black text-slate-800 text-base">{data.totalValidos.toLocaleString('pt-BR')}</span>
+                  <span className="text-slate-400 font-bold text-xs">({data.totalGeral > 0 ? ((data.totalValidos/data.totalGeral)*100).toFixed(2).replace(".", ",") : "0,00"}%)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-500 font-bold uppercase text-xs tracking-wider">Brancos:</span>
+                  <span className="font-black text-slate-800 text-base">{data.brancos.toLocaleString('pt-BR')}</span>
+                  <span className="text-slate-400 font-bold text-xs">({data.totalGeral > 0 ? ((data.brancos/data.totalGeral)*100).toFixed(2).replace(".", ",") : "0,00"}%)</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-500 font-bold uppercase text-xs tracking-wider">Nulos:</span>
+                  <span className="font-black text-slate-800 text-base">{(data.nulos + data.nulosTecnicos + data.pendentes).toLocaleString('pt-BR')}</span>
+                  <span className="text-slate-400 font-bold text-xs">({data.totalGeral > 0 ? (((data.nulos+data.nulosTecnicos+data.pendentes)/data.totalGeral)*100).toFixed(2).replace(".", ",") : "0,00"}%)</span>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+        {showProj && (
+          <div className="bg-indigo-50 border border-indigo-200 text-indigo-800 p-4 md:p-5 rounded-2xl text-sm flex gap-4 shadow-sm items-start">
+            <AlertCircle className="w-6 h-6 shrink-0 text-indigo-600 mt-0.5" />
+            <div className="leading-relaxed">
+              <strong className="block mb-1 text-indigo-900 tracking-wide">PROJEÇÃO COM BASE NAS URNAS APURADAS</strong>
+              Estimativa matemática baseada nas urnas já apuradas. Não representa resultado oficial nem declaração de vencedor.
             </div>
           </div>
-          <div className="flex items-center gap-3">
-            <div className="hidden md:flex items-center gap-2 px-3 py-1 rounded bg-slate-800 text-slate-300 text-sm font-medium border border-slate-700">
-              {connected ? (
-                <><Radio className="w-4 h-4 text-emerald-400 animate-pulse" /> Ao Vivo</>
-              ) : (
-                <><RefreshCw className="w-4 h-4 text-amber-400 animate-spin" /> Conectando...</>
-              )}
+        )}
+      </div>
+    );
+  };
+
+  const renderTSE = () => {
+    if (!tse) return <div className="p-8 text-center text-slate-500 font-bold uppercase tracking-widest">Carregando dados oficiais...</div>;
+    
+    if (tse.status === 'NOT_YET_AVAILABLE' || (tse.offices && tse.offices.length === 0)) {
+      return (
+        <div className="bg-white p-12 rounded-2xl border border-slate-200 text-center shadow-sm">
+          <ShieldCheck className="w-16 h-16 text-slate-300 mx-auto mb-4" />
+          <h2 className="text-2xl font-black text-slate-700 tracking-tight">Resultado oficial ainda não disponível</h2>
+          <p className="text-slate-500 mt-2 font-medium">Os arquivos do TSE para o Turno {round} não foram publicados ou configurados.</p>
+        </div>
+      );
+    }
+
+    if (tse.status === 'TEMPORARILY_UNAVAILABLE') {
+      return (
+        <div className="bg-red-50 p-12 rounded-2xl border border-red-200 text-center shadow-sm">
+          <AlertCircle className="w-16 h-16 text-red-300 mx-auto mb-4" />
+          <h2 className="text-2xl font-black text-red-800 tracking-tight">TSE Temporariamente Indisponível</h2>
+          <p className="text-red-600 mt-2 font-medium">Não foi possível conectar à base oficial no momento. Tente novamente em breve.</p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-6">
+        <div className="bg-emerald-50 border border-emerald-200 p-4 md:p-6 rounded-2xl flex flex-col md:flex-row md:items-center justify-between shadow-sm gap-4">
+          <div>
+            <h2 className="font-black text-emerald-900 flex items-center gap-2 text-xl tracking-tight uppercase">
+              <ShieldCheck className="w-6 h-6" />
+              Fonte Oficial: Tribunal Superior Eleitoral
+            </h2>
+            <p className="text-sm text-emerald-700 font-medium">Espelho direto dos arquivos abertos do TSE (EA20).</p>
+          </div>
+        </div>
+
+        {tse.offices?.map((o: any) => {
+          if (o.status !== 'AVAILABLE') return null;
+          return (
+            <div key={o.cargo} className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm">
+              <div className="bg-slate-50 border-b border-slate-200 p-4 md:px-6 flex justify-between items-center flex-wrap gap-4">
+                <h3 className="font-black text-slate-800 uppercase tracking-widest text-lg">{o.cargoName}</h3>
+                <div className="bg-emerald-100 px-4 py-2 rounded-lg border border-emerald-200 text-right">
+                  <div className="text-sm font-black text-emerald-900">{o.progress.processed} / {o.progress.total} seções</div>
+                  <div className="text-[10px] uppercase font-bold text-emerald-700 tracking-widest text-center mt-0.5">{o.progress.percent}% apurado</div>
+                </div>
+              </div>
+              <div className="p-0 overflow-x-auto">
+                <table className="w-full text-left border-collapse min-w-[500px]">
+                  <thead>
+                    <tr className="bg-slate-50/50 border-b border-slate-100">
+                      <th className="p-4 px-6 text-xs font-bold uppercase text-slate-500 tracking-wider">Candidato</th>
+                      <th className="p-4 px-6 text-xs font-bold uppercase text-slate-500 tracking-wider text-right">Votos</th>
+                      <th className="p-4 px-6 text-xs font-bold uppercase text-slate-500 tracking-wider text-right">% Válidos</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {o.candidates?.map((c: any) => (
+                      <tr key={c.number} className="border-b border-slate-50 hover:bg-slate-50/80 transition-colors">
+                        <td className="p-4 px-6 font-black text-slate-800 text-lg">
+                          {c.name} <span className="text-slate-400 font-normal text-sm ml-2">- {c.number}</span>
+                        </td>
+                        <td className="p-4 px-6 text-right font-black text-slate-700 text-xl">{c.votes.toLocaleString('pt-BR')}</td>
+                        <td className="p-4 px-6 text-right font-black text-slate-600 text-xl">{c.percent}%</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="bg-slate-50/80 p-4 md:px-6 border-t border-slate-100 flex flex-col gap-4">
+                <div className="flex flex-wrap gap-x-8 gap-y-3 text-sm">
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-500 font-bold uppercase text-xs tracking-wider">Válidos:</span>
+                    <span className="font-black text-slate-800 text-base">{o.validVotes.quantity.toLocaleString('pt-BR')}</span>
+                    <span className="text-slate-400 font-bold text-xs">({o.validVotes.percent}%)</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-500 font-bold uppercase text-xs tracking-wider">Brancos:</span>
+                    <span className="font-black text-slate-800 text-base">{o.blankVotes.quantity.toLocaleString('pt-BR')}</span>
+                    <span className="text-slate-400 font-bold text-xs">({o.blankVotes.percent}%)</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-500 font-bold uppercase text-xs tracking-wider">Nulos:</span>
+                    <span className="font-black text-slate-800 text-base">{o.nullVotes.quantity.toLocaleString('pt-BR')}</span>
+                    <span className="text-slate-400 font-bold text-xs">({o.nullVotes.percent}%)</span>
+                  </div>
+                </div>
+                <div className="h-px bg-slate-200 w-full" />
+                <div className="flex flex-wrap gap-x-8 gap-y-3 text-sm">
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-500 font-bold uppercase text-xs tracking-wider">Aptos:</span>
+                    <span className="font-black text-slate-800 text-base">{o.attendance.eligible.toLocaleString('pt-BR')}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-500 font-bold uppercase text-xs tracking-wider">Comparecimento:</span>
+                    <span className="font-black text-slate-800 text-base">{o.attendance.turnout.toLocaleString('pt-BR')}</span>
+                    <span className="text-slate-400 font-bold text-xs">({o.attendance.turnoutPercent}%)</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-slate-500 font-bold uppercase text-xs tracking-wider">Abstenção:</span>
+                    <span className="font-black text-slate-800 text-base">{o.attendance.abstention.toLocaleString('pt-BR')}</span>
+                    <span className="text-slate-400 font-bold text-xs">({o.attendance.abstentionPercent}%)</span>
+                  </div>
+                </div>
+              </div>
             </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-100 font-sans pb-20">
+      <header className="bg-slate-900 text-white p-4 sticky top-0 z-50 shadow-md">
+        <div className="max-w-5xl mx-auto flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-black uppercase tracking-tight flex items-center gap-3">
+              <Activity className="text-indigo-400 w-7 h-7" />
+              Painel Eleitoral 2026
+            </h1>
+            <p className="text-sm text-slate-400 font-bold tracking-widest uppercase mt-0.5 ml-10">Concórdia / SC</p>
+          </div>
+          <div className="flex gap-2 bg-slate-800 p-1.5 rounded-xl border border-slate-700">
+            <button 
+              onClick={() => setRound(1)} 
+              className={`px-6 py-2.5 rounded-lg font-black text-sm transition-colors uppercase tracking-widest ${round === 1 ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'}`}
+            >
+              1º Turno
+            </button>
+            <button 
+              onClick={() => setRound(2)} 
+              className={`px-6 py-2.5 rounded-lg font-black text-sm transition-colors uppercase tracking-widest ${round === 2 ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'}`}
+            >
+              2º Turno
+            </button>
           </div>
         </div>
       </header>
-      <main className="flex-1 max-w-7xl w-full mx-auto px-4 md:px-6 py-6 flex flex-col gap-6">
-        
-        {totals?.election?.rounds && totals.election.rounds.length > 0 && (
-          <div className="flex items-center gap-2 overflow-x-auto pb-2">
-            {totals.election.rounds.map(r => {
-              const isActiveTab = (selectedRound || totals.round?.roundNumber) === r.roundNumber;
-              return (
-                <button
-                  key={r.roundNumber}
-                  onClick={() => setSelectedRound(r.roundNumber)}
-                  className={`px-4 py-2 rounded-lg font-bold uppercase text-sm tracking-wide transition-colors whitespace-nowrap border ${
-                    isActiveTab 
-                      ? 'bg-indigo-600 border-indigo-600 text-white shadow-md'
-                      : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
-                  }`}
-                >
-                  {r.roundNumber}º Turno — {
-                    r.status === 'ACTIVE' ? 'Ao vivo' :
-                    r.status === 'FINISHED' ? 'Encerrado' : 'Planejado'
-                  }
-                </button>
-              );
-            })}
-          </div>
-        )}
-        <div className="bg-white rounded-xl p-5 md:p-6 shadow-sm border border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
-              loading ? 'bg-slate-100 text-slate-400' :
-              error ? 'bg-red-100 text-red-600' :
-              totals?.processedReports === totals?.expectedReports ? 'bg-emerald-100 text-emerald-600' :
-              'bg-amber-100 text-amber-600'
-            }`}>
-              {loading ? <RefreshCw className="w-6 h-6 animate-spin" /> :
-               error ? <AlertCircle className="w-6 h-6" /> :
-               totals?.processedReports === totals?.expectedReports ? <CheckCircle2 className="w-6 h-6" /> :
-               <AlertTriangle className="w-6 h-6" />}
+
+      <main className="max-w-5xl mx-auto p-4 md:p-6 mt-2">
+        <div className="flex flex-col md:flex-row gap-4 mb-8">
+          <button 
+            onClick={() => setSource('PARALELA')}
+            className={`flex-1 p-5 rounded-2xl border-2 transition-all flex items-center gap-4 ${source === 'PARALELA' ? 'border-indigo-600 bg-white shadow-md' : 'border-slate-200 bg-slate-50 text-slate-500 hover:bg-white hover:border-slate-300'}`}
+          >
+            <div className={`p-3 rounded-full ${source === 'PARALELA' ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-200 text-slate-400'}`}>
+              <Archive className="w-6 h-6" />
             </div>
-            <div>
-              <h2 className="text-lg font-bold text-slate-800">
-                {loading ? 'Carregando dados...' :
-                 error ? 'Erro de conexão' :
-                 totals?.processedReports === totals?.expectedReports ? 'Apuração Concluída' :
-                 'Apuração em Andamento'}
-              </h2>
-              {totals && (
-                <p className="text-sm font-medium text-slate-500">
-                  {totals.processedReports} de {totals.expectedReports} urnas processadas
-                </p>
-              )}
+            <div className="text-left">
+              <div className={`font-black uppercase tracking-widest ${source === 'PARALELA' ? 'text-slate-900' : ''}`}>Apuração Paralela</div>
+              <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mt-1">Fonte independente local</div>
             </div>
-          </div>
-          {totals && totals.expectedReports > 0 && (
-            <div className="flex-1 max-w-xs w-full">
-              <div className="flex justify-between text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
-                <span>Progresso</span>
-                <span>{((totals.processedReports / totals.expectedReports) * 100).toFixed(2).replace('.', ',')}%</span>
-              </div>
-              <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-indigo-600 transition-all duration-1000 ease-out"
-                  style={{ width: `${(totals.processedReports / totals.expectedReports) * 100}%` }}
-                />
-              </div>
+          </button>
+          <button 
+            onClick={() => setSource('TSE')}
+            className={`flex-1 p-5 rounded-2xl border-2 transition-all flex items-center gap-4 ${source === 'TSE' ? 'border-emerald-500 bg-white shadow-md' : 'border-slate-200 bg-slate-50 text-slate-500 hover:bg-white hover:border-slate-300'}`}
+          >
+            <div className={`p-3 rounded-full ${source === 'TSE' ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-200 text-slate-400'}`}>
+              <ShieldCheck className="w-6 h-6" />
             </div>
-          )}
+            <div className="text-left">
+              <div className={`font-black uppercase tracking-widest ${source === 'TSE' ? 'text-slate-900' : ''}`}>Resultado Oficial TSE</div>
+              <div className="text-xs font-bold text-slate-400 uppercase tracking-wider mt-1">Fonte governamental</div>
+            </div>
+          </button>
         </div>
-        {loading && !totals && (
-          <div className="flex flex-col items-center justify-center py-20 text-slate-400">
-            <RefreshCw className="w-10 h-10 animate-spin mb-4" />
-            <p className="font-medium">Sincronizando dados...</p>
+
+        {loading && !paralela && !tse && (
+          <div className="text-center p-12 text-slate-400 font-bold uppercase tracking-widest animate-pulse flex flex-col items-center gap-4">
+            <RefreshCw className="w-8 h-8 animate-spin" />
+            Carregando painel...
           </div>
         )}
-        {totals && offices.length > 0 && (
-          <div className="flex flex-col gap-6">
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-              <div className="flex overflow-x-auto scrollbar-hide">
-                {offices.map(office => (
-                  <button
-                    key={office}
-                    onClick={() => {
-                      setActiveOffice(office);
-                    }}
-                    className={`flex-1 min-w-[140px] px-4 py-4 font-bold text-sm uppercase tracking-wide transition-colors border-b-2 outline-none focus-visible:bg-slate-50 ${
-                      activeOffice === office
-                        ? 'bg-indigo-50/50 text-indigo-700 border-indigo-600'
-                        : 'text-slate-500 border-transparent hover:text-slate-800 hover:bg-slate-50'
-                    }`}
-                  >
-                    {office}
-                  </button>
-                ))}
-              </div>
-            </div>
-            {activeData && (
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-                <div className="lg:col-span-2 flex flex-col gap-4">
-                  <div className="flex bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                    <button
-                      onClick={() => setActiveTab('CANDIDATOS')}
-                      className={`flex-1 px-4 py-3 text-sm font-bold uppercase flex items-center justify-center gap-2 transition-colors border-b-2 ${
-                        activeTab === 'CANDIDATOS'
-                          ? 'text-indigo-700 border-indigo-600 bg-indigo-50/30'
-                          : 'text-slate-500 border-transparent hover:bg-slate-50'
-                      }`}
-                    >
-                      <Users className="w-4 h-4" />
-                      Candidatos
-                    </button>
-                    {hasLegenda && (
-                      <button
-                        onClick={() => setActiveTab('LEGENDA')}
-                        className={`flex-1 px-4 py-3 text-sm font-bold uppercase flex items-center justify-center gap-2 transition-colors border-b-2 ${
-                          activeTab === 'LEGENDA'
-                            ? 'text-indigo-700 border-indigo-600 bg-indigo-50/30'
-                            : 'text-slate-500 border-transparent hover:bg-slate-50'
-                        }`}
-                      >
-                        <FileText className="w-4 h-4" />
-                        Legenda
-                      </button>
-                    )}
-                    <button
-                      onClick={() => setActiveTab('BRANCOS_NULOS')}
-                      className={`flex-1 px-4 py-3 text-sm font-bold uppercase flex items-center justify-center gap-2 transition-colors border-b-2 ${
-                        activeTab === 'BRANCOS_NULOS'
-                          ? 'text-indigo-700 border-indigo-600 bg-indigo-50/30'
-                          : 'text-slate-500 border-transparent hover:bg-slate-50'
-                      }`}
-                    >
-                      <Ban className="w-4 h-4" />
-                      Brancos / Nulos
-                    </button>
-                  </div>
-                  {activeTab === 'CANDIDATOS' && (
-                    <div className="flex flex-col gap-3">
-                      {activeData.candidates.length === 0 ? (
-                        <div className="bg-white p-8 text-center rounded-xl shadow-sm border border-slate-200 text-slate-500">
-                          Nenhum voto válido nominal contabilizado para este cargo.
-                        </div>
-                      ) : (
-                        activeData.candidates.map((cand, idx) => {
-                          const percent = activeData.totalValidos > 0
-                            ? ((cand.quantity / activeData.totalValidos) * 100)
-                            : 0;
-                          return (
-                            <div key={idx} className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 md:p-5 relative overflow-hidden group">
-                              <div
-                                className="absolute left-0 top-0 bottom-0 bg-indigo-50/50 -z-10 transition-all duration-1000 ease-out"
-                                style={{ width: `${percent}%` }}
-                              />
-                              <div className="absolute left-0 top-0 bottom-0 w-1 bg-indigo-500" />
-                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 z-10">
-                                <div className="flex-1 pl-3">
-                                  <h3 className="text-2xl md:text-3xl font-black text-slate-900 leading-none">
-                                    {cand.candidateName}
-                                  </h3>
-                                  <p className="text-sm font-semibold text-slate-500 uppercase tracking-wider mt-1.5 flex items-center gap-2">
-                                    <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded border border-slate-200">{cand.candidateNumber}</span>
-                                    {cand.partyAbbreviation ? (
-                                      <span>{cand.partyAbbreviation}</span>
-                                    ) : (
-                                      <span>Partido {cand.partyNumber}</span>
-                                    )}
-                                  </p>
-                                </div>
-                                <div className="flex flex-row sm:flex-col items-end justify-between sm:justify-center border-t sm:border-t-0 pt-3 sm:pt-0 mt-3 sm:mt-0 border-slate-100">
-                                  <div className="text-left sm:text-right">
-                                    <p className="text-2xl md:text-3xl font-black text-indigo-700 leading-none">
-                                      {cand.quantity.toLocaleString('pt-BR')}
-                                    </p>
-                                    <p className="text-xs uppercase font-bold text-slate-400 mt-1">votos</p>
-                                  </div>
-                                  <div className="text-right sm:mt-1">
-                                    <p className="text-xl md:text-2xl font-bold text-slate-800">
-                                      {percent.toFixed(2).replace('.', ',')}%
-                                    </p>
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })
-                      )}
-                    </div>
-                  )}
-                  {activeTab === 'LEGENDA' && (
-                    <div className="flex flex-col gap-3">
-                      {activeData.legendas.length === 0 ? (
-                        <div className="bg-white p-8 text-center rounded-xl shadow-sm border border-slate-200 text-slate-500">
-                          Nenhum voto de legenda contabilizado para este cargo.
-                        </div>
-                      ) : (
-                        activeData.legendas.map((leg, idx) => {
-                          const percent = activeData.totalValidos > 0
-                            ? ((leg.quantity / activeData.totalValidos) * 100)
-                            : 0;
-                          return (
-                            <div key={idx} className="bg-white rounded-xl shadow-sm border border-slate-200 p-4 md:p-5 relative overflow-hidden group">
-                              <div
-                                className="absolute left-0 top-0 bottom-0 bg-slate-100/50 -z-10 transition-all duration-1000 ease-out"
-                                style={{ width: `${percent}%` }}
-                              />
-                              <div className="absolute left-0 top-0 bottom-0 w-1 bg-slate-400" />
-                              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 z-10">
-                                <div className="flex-1 pl-3">
-                                  <h3 className="text-xl md:text-2xl font-black text-slate-800 leading-none">
-                                    {leg.partyAbbreviation ? leg.partyAbbreviation : `Partido ${leg.partyNumber}`}
-                                  </h3>
-                                  <p className="text-sm font-semibold text-slate-500 uppercase tracking-wider mt-1.5 flex items-center gap-2">
-                                    <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded border border-slate-200">{leg.partyNumber}</span>
-                                    <span>Voto de Legenda</span>
-                                  </p>
-                                </div>
-                                <div className="flex flex-row sm:flex-col items-end justify-between sm:justify-center border-t sm:border-t-0 pt-3 sm:pt-0 mt-3 sm:mt-0 border-slate-100">
-                                  <div className="text-left sm:text-right">
-                                    <p className="text-xl md:text-2xl font-black text-slate-700 leading-none">
-                                      {leg.quantity.toLocaleString('pt-BR')}
-                                    </p>
-                                    <p className="text-xs uppercase font-bold text-slate-400 mt-1">votos</p>
-                                  </div>
-                                  <div className="text-right sm:mt-1">
-                                    <p className="text-lg md:text-xl font-bold text-slate-600">
-                                      {percent.toFixed(2).replace('.', ',')}%
-                                    </p>
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })
-                      )}
-                    </div>
-                  )}
-                  {activeTab === 'BRANCOS_NULOS' && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 flex flex-col justify-between">
-                        <div>
-                          <h3 className="text-lg font-bold text-slate-800 uppercase">Em Branco</h3>
-                          <p className="text-sm text-slate-500 mt-1">Votos registrados na tecla Branco.</p>
-                        </div>
-                        <div className="mt-6 text-right">
-                          <span className="text-4xl font-black text-slate-900">{activeData.brancos.toLocaleString('pt-BR')}</span>
-                        </div>
-                      </div>
-                      <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 flex flex-col justify-between">
-                        <div>
-                          <h3 className="text-lg font-bold text-slate-800 uppercase">Nulos</h3>
-                          <p className="text-sm text-slate-500 mt-1">Votos anulados diretamente na urna.</p>
-                        </div>
-                        <div className="mt-6 text-right">
-                          <span className="text-4xl font-black text-slate-900">{activeData.nulos.toLocaleString('pt-BR')}</span>
-                        </div>
-                      </div>
-                      {activeData.nulosTecnicos > 0 && (
-                        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 flex flex-col justify-between">
-                          <div>
-                            <h3 className="text-lg font-bold text-amber-700 uppercase">Nulos Técnicos</h3>
-                            <p className="text-sm text-slate-500 mt-1">Votos nominais atribuídos a candidaturas sem validade ou sub judice.</p>
-                          </div>
-                          <div className="mt-6 text-right">
-                            <span className="text-4xl font-black text-amber-700">{activeData.nulosTecnicos.toLocaleString('pt-BR')}</span>
-                          </div>
-                        </div>
-                      )}
-                      {activeData.pendentes > 0 && (
-                        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 flex flex-col justify-between">
-                          <div>
-                            <h3 className="text-lg font-bold text-slate-800 uppercase">Outros / Pendentes</h3>
-                            <p className="text-sm text-slate-500 mt-1">Votos nominais que não puderam ser atribuídos a candidatos.</p>
-                          </div>
-                          <div className="mt-6 text-right">
-                            <span className="text-4xl font-black text-slate-900">{activeData.pendentes.toLocaleString('pt-BR')}</span>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-                <div className="flex flex-col gap-3 lg:sticky lg:top-24">
-                  <h2 className="text-lg font-bold uppercase tracking-tight text-slate-800 mb-1 flex items-center gap-2">
-                    <Activity className="w-5 h-5 text-slate-400" />
-                    Composição dos Votos
-                  </h2>
-                  <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                    <div className="p-5 flex flex-col gap-4">
-                      <div className="flex justify-between items-center">
-                        <span className="text-sm font-bold uppercase text-slate-500">Válidos</span>
-                        <span className="text-lg font-black text-slate-800">{activeData.totalValidos.toLocaleString('pt-BR')}</span>
-                      </div>
-                      <div className="h-px bg-slate-100" />
-                      <div className="flex justify-between items-center">
-                        <span className="text-sm font-bold uppercase text-slate-500">Brancos</span>
-                        <span className="text-lg font-black text-slate-800">{activeData.brancos.toLocaleString('pt-BR')}</span>
-                      </div>
-                      <div className="h-px bg-slate-100" />
-                      <div className="flex justify-between items-center">
-                        <span className="text-sm font-bold uppercase text-slate-500">Nulos Total</span>
-                        <span className="text-lg font-black text-slate-800">
-                          {(activeData.nulos + activeData.nulosTecnicos + activeData.pendentes).toLocaleString('pt-BR')}
-                        </span>
-                      </div>
-                    </div>
-                    <div className="bg-slate-50 p-5 border-t border-slate-200">
-                      <div className="flex justify-between items-end">
-                        <div>
-                          <span className="block text-xs font-bold uppercase text-slate-400 mb-1">Total Processado</span>
-                          <span className="text-sm font-bold text-slate-600">Neste cargo</span>
-                        </div>
-                        <span className="text-3xl font-black text-indigo-700 leading-none">
-                          {activeData.totalGeral.toLocaleString('pt-BR')}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="bg-slate-100 p-4 rounded-xl text-xs text-slate-500 mt-2 border border-slate-200">
-                    Os percentuais de candidatos e legendas são calculados exclusivamente sobre os votos <strong>válidos</strong>, seguindo a regra da Justiça Eleitoral. Brancos e Nulos não são considerados votos válidos.
-                  </div>
-                </div>
-              </div>
-            )}
+        
+        {(!loading || paralela || tse) && (
+          <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+            {source === 'PARALELA' ? renderParalela() : renderTSE()}
           </div>
         )}
       </main>

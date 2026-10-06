@@ -43,9 +43,7 @@ export default function PrepararApuracaoPage() {
       <div className="w-full max-w-2xl">
         
         <div className="mb-6">
-          <Link href="/admin" className="text-sm font-bold uppercase tracking-wider text-indigo-600 hover:text-indigo-800 flex items-center gap-2 mb-4">
-            ← Voltar ao Painel
-          </Link>
+
           <h1 className="text-2xl font-black uppercase tracking-tight text-slate-900 flex items-center gap-3">
             <Trash2 className="w-7 h-7 text-red-600" />
             Preparar Apuração Real

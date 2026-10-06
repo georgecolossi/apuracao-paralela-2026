@@ -12,18 +12,7 @@ export default async function ConferenciaGlobal() {
 
   return (
     <div className="min-h-screen bg-slate-100 font-sans flex flex-col">
-      <header className="bg-slate-900 text-white shadow-md border-b-4 border-indigo-600">
-        <div className="max-w-7xl mx-auto px-4 md:px-6 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Database className="w-6 h-6 text-indigo-400" />
-            <h1 className="text-xl font-bold uppercase tracking-tight">Conferência <span className="text-indigo-400">Global</span></h1>
-          </div>
-          <Link href="/admin" className="flex items-center gap-2 text-sm bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg text-white border border-slate-700 transition-colors">
-            <ArrowLeft className="w-4 h-4" />
-            <span className="hidden sm:inline font-bold uppercase tracking-wide">Voltar ao Painel</span>
-          </Link>
-        </div>
-      </header>
+
 
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6 py-8">
         <div className="bg-white p-6 shadow-sm rounded-2xl border border-slate-200">
