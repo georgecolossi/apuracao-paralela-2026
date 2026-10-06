@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 import { useEffect, useState } from 'react';
 import { Activity, Radio, AlertCircle, RefreshCw, Archive, CheckCircle2, AlertTriangle, Users, FileText, Ban } from 'lucide-react';
 import { getOfficeDataAggregate, TotalItem } from '@/lib/presentation/apuracaoHelper';
@@ -6,7 +6,7 @@ interface TotalsData {
   processedReports: number;
   expectedReports: number;
   totals: TotalItem[];
-  election?: { year: number; name: string };
+  election?: { plei: string | null; year: number; name: string };
   round?: { roundNumber: number };
 }
 export default function ApuracaoPage() {
@@ -72,7 +72,7 @@ export default function ApuracaoPage() {
   const offices = totals?.totals ? Array.from(new Set(totals.totals.map(t => t.officeName))) : [];
   const getOfficeData = (officeName: string) => {
     if (!totals) return null;
-    return getOfficeDataAggregate(officeName, totals.totals);
+    return getOfficeDataAggregate(totals.election?.plei, totals.round?.roundNumber, officeName, totals.totals);
   };
   const activeData = activeOffice ? getOfficeData(activeOffice) : null;
   const hasLegenda = activeData && activeData.legendas.length > 0;
@@ -350,14 +350,14 @@ export default function ApuracaoPage() {
                           </div>
                         </div>
                       )}
-                      {activeData.outrosAnulados > 0 && (
+                      {activeData.pendentes > 0 && (
                         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 flex flex-col justify-between">
                           <div>
                             <h3 className="text-lg font-bold text-slate-800 uppercase">Outros / Pendentes</h3>
                             <p className="text-sm text-slate-500 mt-1">Votos nominais que não puderam ser atribuídos a candidatos.</p>
                           </div>
                           <div className="mt-6 text-right">
-                            <span className="text-4xl font-black text-slate-900">{activeData.outrosAnulados.toLocaleString('pt-BR')}</span>
+                            <span className="text-4xl font-black text-slate-900">{activeData.pendentes.toLocaleString('pt-BR')}</span>
                           </div>
                         </div>
                       )}
@@ -384,7 +384,7 @@ export default function ApuracaoPage() {
                       <div className="flex justify-between items-center">
                         <span className="text-sm font-bold uppercase text-slate-500">Nulos Total</span>
                         <span className="text-lg font-black text-slate-800">
-                          {(activeData.nulos + activeData.nulosTecnicos + activeData.outrosAnulados).toLocaleString('pt-BR')}
+                          {(activeData.nulos + activeData.nulosTecnicos + activeData.pendentes).toLocaleString('pt-BR')}
                         </span>
                       </div>
                     </div>

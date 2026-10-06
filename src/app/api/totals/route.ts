@@ -96,6 +96,7 @@ export async function GET() {
       expectedReports: expectedBUsCount,
       totals,
       election: {
+        plei: election.plei,
         year: election.year,
         name: election.name
       },

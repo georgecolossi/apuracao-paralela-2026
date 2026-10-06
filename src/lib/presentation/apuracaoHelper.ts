@@ -1,5 +1,4 @@
-﻿
-export interface TotalItem {
+﻿export interface TotalItem {
   officeName: string;
   candidateNumber?: string | null;
   partyNumber?: string | null;
@@ -9,8 +8,10 @@ export interface TotalItem {
   candidateName?: string;
   partyAbbreviation?: string;
 }
-export type VoteDestiny = 'CANDIDATO_VALIDO' | 'LEGENDA' | 'BRANCO' | 'NULO' | 'NULO_TECNICO' | 'OUTROS_ANULADOS';
+export type VoteDestiny = 'CANDIDATO_VALIDO' | 'LEGENDA' | 'BRANCO' | 'NULO' | 'NULO_TECNICO' | 'PENDENTE_CLASSIFICACAO';
 export function classifyVotePresentation(
+  pleito: string | null | undefined,
+  turno: number | null | undefined,
   officeName: string,
   voteType: string,
   candidateNumber: string | null | undefined,
@@ -20,15 +21,15 @@ export function classifyVotePresentation(
   if (voteType === 'NULO') return 'NULO';
   if (voteType === 'LEGENDA') return 'LEGENDA';
   if (voteType === 'NOMINAL') {
-    if (officeName === 'Presidente' && candidateNumber === '28') {
+    if (String(pleito) === '3220' && String(turno) === '1' && officeName === 'Presidente' && candidateNumber === '28') {
       return 'NULO_TECNICO';
     }
     if (hasResolvedName) {
       return 'CANDIDATO_VALIDO';
     }
-    return 'OUTROS_ANULADOS';
+    return 'PENDENTE_CLASSIFICACAO';
   }
-  return 'OUTROS_ANULADOS';
+  return 'PENDENTE_CLASSIFICACAO';
 }
 export interface CandidateDisplay {
   candidateNumber: string;
@@ -42,7 +43,12 @@ export interface LegendaDisplay {
   partyAbbreviation?: string;
   quantity: number;
 }
-export function getOfficeDataAggregate(officeName: string, allTotals: TotalItem[]) {
+export function getOfficeDataAggregate(
+  pleito: string | null | undefined,
+  turno: number | null | undefined,
+  officeName: string,
+  allTotals: TotalItem[]
+) {
   const officeVotes = allTotals.filter(t => t.officeName === officeName);
   let totalGeral = 0;
   let validosNominais = 0;
@@ -50,13 +56,13 @@ export function getOfficeDataAggregate(officeName: string, allTotals: TotalItem[
   let brancos = 0;
   let nulos = 0;
   let nulosTecnicos = 0;
-  let outrosAnulados = 0;
+  let pendentes = 0;
   const candidateMap = new Map<string, CandidateDisplay>();
   const legendaMap = new Map<string, LegendaDisplay>();
   for (const v of officeVotes) {
     totalGeral += v.quantity;
     const hasResolvedName = Boolean(v.candidateName && v.candidateName.trim().length > 0);
-    const destiny = classifyVotePresentation(officeName, v.voteType, v.candidateNumber, hasResolvedName);
+    const destiny = classifyVotePresentation(pleito, turno, officeName, v.voteType, v.candidateNumber, hasResolvedName);
     switch (destiny) {
       case 'BRANCO':
         brancos += v.quantity;
@@ -67,8 +73,8 @@ export function getOfficeDataAggregate(officeName: string, allTotals: TotalItem[
       case 'NULO_TECNICO':
         nulosTecnicos += v.quantity;
         break;
-      case 'OUTROS_ANULADOS':
-        outrosAnulados += v.quantity;
+      case 'PENDENTE_CLASSIFICACAO':
+        pendentes += v.quantity;
         break;
       case 'LEGENDA':
         validosLegenda += v.quantity;
@@ -108,5 +114,5 @@ export function getOfficeDataAggregate(officeName: string, allTotals: TotalItem[
   const legendas = Array.from(legendaMap.values())
     .filter(l => l.quantity > 0)
     .sort((a, b) => b.quantity - a.quantity);
-  return { candidates, legendas, brancos, nulos, nulosTecnicos, outrosAnulados, totalValidos: validosNominais + validosLegenda, totalGeral };
+  return { candidates, legendas, brancos, nulos, nulosTecnicos, pendentes, totalValidos: validosNominais + validosLegenda, totalGeral };
 }
