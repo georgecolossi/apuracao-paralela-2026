@@ -42,42 +42,75 @@ export async function GET(req: Request) {
 
   const eleC = await fetchEleC();
   if (eleC && eleC.eleicoes) {
-    const roundEles = eleC.eleicoes.filter((e: any) => e.t === round);
-    // Find federal vs estadual by looking at cargos or id
-    // This is robust if ele-c is present
+    const roundEles = eleC.eleicoes.filter((e: any) => e.t === round || String(e.t) === String(round));
+    
+    // Improved dynamic discovery: look at 'cargos' array if available, or 'nm' (name), or fallback to suffixes
     for (const e of roundEles) {
-      if (e.cd.endsWith('7') || e.cd.endsWith('8')) federalEle = e.cd;
-      if (e.cd.endsWith('9') || e.cd.endsWith('0')) estadualEle = e.cd;
+      let isFederal = false;
+      let isEstadual = false;
+      
+      if (e.cargos && Array.isArray(e.cargos)) {
+        if (e.cargos.some((c: any) => c.cd === '1' || c.cd === '6')) isFederal = true;
+        if (e.cargos.some((c: any) => c.cd === '3' || c.cd === '7')) isEstadual = true;
+      }
+      
+      const nmLower = (e.nm || '').toLowerCase();
+      if (!isFederal && !isEstadual) {
+        if (nmLower.includes('federal') || nmLower.includes('presidente')) isFederal = true;
+        if (nmLower.includes('estadual') || nmLower.includes('governador')) isEstadual = true;
+      }
+      
+      if (!isFederal && !isEstadual) {
+        if (e.cd.endsWith('7') || e.cd.endsWith('8')) isFederal = true;
+        if (e.cd.endsWith('9') || e.cd.endsWith('0')) isEstadual = true;
+      }
+
+      if (isFederal) federalEle = e.cd;
+      if (isEstadual) estadualEle = e.cd;
     }
   }
 
   // Fallback for Round 1 since we know it exists and might not have ele-c
   if (round === '1' && (!federalEle || !estadualEle)) {
-    federalEle = '6257';
-    estadualEle = '6259';
+    if (!federalEle) federalEle = '6257';
+    if (!estadualEle) estadualEle = '6259';
   }
 
-  if (!federalEle || !estadualEle) {
+  if (!federalEle && !estadualEle) {
     return NextResponse.json({
       status: 'NOT_YET_AVAILABLE',
-      message: 'Configurao da eleio (ele-c) no encontrada para o turno ' + round
+      message: 'Configuracao da eleicao (ele-c) nao encontrada para o turno ' + round
     });
   }
+  
+  // se só um for descoberto, o outro não realiza chamada
+  const calls = [];
+  if (federalEle) {
+    calls.push(fetchEA20(federalEle, uf, muni, '1')); // Presidente
+  } else {
+    calls.push(Promise.resolve({ status: 'NOT_YET_AVAILABLE', cargo: '1' }));
+  }
+  
+  if (estadualEle) {
+    calls.push(fetchEA20(estadualEle, uf, muni, '3')); // Governador
+    calls.push(fetchEA20(estadualEle, uf, muni, '5')); // Senador
+    calls.push(fetchEA20(estadualEle, uf, muni, '6')); // Dep Federal
+    calls.push(fetchEA20(estadualEle, uf, muni, '7')); // Dep Estadual
+  } else {
+    calls.push(Promise.resolve({ status: 'NOT_YET_AVAILABLE', cargo: '3' }));
+    calls.push(Promise.resolve({ status: 'NOT_YET_AVAILABLE', cargo: '5' }));
+    calls.push(Promise.resolve({ status: 'NOT_YET_AVAILABLE', cargo: '6' }));
+    calls.push(Promise.resolve({ status: 'NOT_YET_AVAILABLE', cargo: '7' }));
+  }
 
-  const results = await Promise.all([
-    fetchEA20(federalEle, uf, muni, '1'), // Presidente
-    fetchEA20(estadualEle, uf, muni, '3'), // Governador
-    fetchEA20(estadualEle, uf, muni, '5'), // Senador
-    fetchEA20(estadualEle, uf, muni, '6'), // Dep Federal
-    fetchEA20(estadualEle, uf, muni, '7'), // Dep Estadual
-  ]);
+  const results = await Promise.all(calls);
 
   const parsedOffices = results.map(r => {
     if (r.status !== 'AVAILABLE') return r;
-    const j = r.data;
+    const j = (r as any).data;
     
     // Validate
-    if (j.cdabr !== muni || j.t !== round) {
+    if (j.cdabr !== muni || (j.t !== round && String(j.t) !== String(round))) {
       return { status: 'INVALID_RESPONSE', cargo: r.cargo };
     }
 
@@ -130,7 +163,6 @@ export async function GET(req: Request) {
     };
   });
 
-  // Overall status is NOT_YET_AVAILABLE if all are NOT_YET_AVAILABLE
   const overallStatus = parsedOffices.every(o => o.status === 'NOT_YET_AVAILABLE') ? 'NOT_YET_AVAILABLE' : 'AVAILABLE';
 
   return NextResponse.json({

@@ -87,7 +87,7 @@ export default function TurnoResetClient({ roundId, roundNumber }: { roundId: st
                   type="text" 
                   value={confirmText}
                   onChange={e => setConfirmText(e.target.value)}
-                  className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:border-red-500 focus:ring-1 focus:ring-red-500 font-bold uppercase"
+                  className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:border-red-500 focus:ring-1 focus:ring-red-500 font-bold uppercase text-slate-900 placeholder:text-slate-500 bg-white"
                   placeholder="ZERAR APURAÇÃO"
                   disabled={loading || success}
                 />

@@ -81,7 +81,7 @@ export default function TurnoManagerClient({ roundId, roundNumber, hasActiveRoun
                   type="text" 
                   value={confirmText}
                   onChange={e => setConfirmText(e.target.value)}
-                  className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-bold uppercase"
+                  className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-bold uppercase text-slate-900 placeholder:text-slate-500 bg-white"
                   placeholder={`ATIVAR ${roundNumber}º TURNO`}
                   disabled={loading}
                 />

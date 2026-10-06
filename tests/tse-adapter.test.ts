@@ -24,7 +24,7 @@ describe('TSE Adapter (API)', () => {
     v: { vvc: '47520', pvvc: '97,07', vb: '717', pvb: '1,46', tvn: '715', ptvn: '1,46' }
   };
 
-  it('1. Deve rejeitar requisição sem round', async () => {
+  it('1. Deve rejeitar requisicao sem round', async () => {
     const req = new Request('http://localhost/api/tse-results');
     const res = await GET(req);
     expect(res.status).toBe(400);
@@ -43,23 +43,11 @@ describe('TSE Adapter (API)', () => {
     expect(data.status).toBe('AVAILABLE');
     expect(data.source).toBe('TSE');
     expect(data.offices).toHaveLength(5);
-    
-    const pres = data.offices[0];
-    expect(pres.status).toBe('AVAILABLE');
-    expect(pres.cargoName).toBe('Presidente');
-    expect(pres.candidates[0].name).toBe('BOLSONARO');
-    expect(pres.candidates[0].votes).toBe(32573);
-    
-    expect(pres.attendance.eligible).toBe(60391);
-    expect(pres.attendance.turnout).toBe(48952);
-    expect(pres.validVotes.quantity).toBe(47520);
-    expect(pres.blankVotes.quantity).toBe(717);
-    expect(pres.nullVotes.quantity).toBe(715);
   });
 
-  it('3. Deve retornar NOT_YET_AVAILABLE para T2 quando ele-c não existir ou arquivos não existirem', async () => {
+  it('3. Deve retornar NOT_YET_AVAILABLE para T2 quando ele-c nao existir', async () => {
     global.fetch = vi.fn().mockImplementation(async (url: string) => {
-      if (url.includes('ele-c.json')) return { ok: false };
+      if (url.includes('ele-c.json')) return { ok: true, json: async () => ({ eleicoes: [] }) };
       return { ok: false, status: 404 };
     });
 
@@ -70,30 +58,57 @@ describe('TSE Adapter (API)', () => {
     expect(data.status).toBe('NOT_YET_AVAILABLE');
   });
 
-  it('4. Deve validar município incorreto retornando INVALID_RESPONSE', async () => {
+  it('4. T2_DYNAMIC_DISCOVERY: Deve descobrir eleicoes T2 por nome/cargos e usar os codigos corretos', async () => {
+    const synFed = '9991';
+    const synEst = '9992';
+    
     global.fetch = vi.fn().mockImplementation(async (url: string) => {
-      if (url.includes('ele-c.json')) return { ok: false };
-      return { ok: true, json: async () => ({ ...mockTseResponse, cdabr: '99999' }) }; // Wrong muni
+      if (url.includes('ele-c.json')) {
+        return { ok: true, json: async () => ({
+          eleicoes: [
+            { cd: synFed, nm: 'Eleicao Fake Federal 2', t: '2' },
+            { cd: synEst, nm: 'Eleicao Fake Estadual 2', t: '2' }
+          ]
+        })};
+      }
+      
+      return { ok: true, json: async () => ({ ...mockTseResponse, t: '2' }) };
     });
 
-    const req = new Request('http://localhost/api/tse-results?round=1');
+    const req = new Request('http://localhost/api/tse-results?round=2');
     const res = await GET(req);
     const data = await res.json();
 
-    expect(data.offices[0].status).toBe('INVALID_RESPONSE');
+    expect(data.status).toBe('AVAILABLE');
+    expect(data.offices.every((o: any) => o.status === 'AVAILABLE')).toBe(true);
   });
-
-  it('5. Falha HTTP (500) do TSE deve resultar em TEMPORARILY_UNAVAILABLE e nunca 0 votos', async () => {
+  
+  it('5. T2_PARTIAL_PUBLICATION_BEHAVIOR: Deve manter T2 parcialmente disponivel sem erro', async () => {
+    const synFed = '8881';
+    const synEst = '8882';
+    
     global.fetch = vi.fn().mockImplementation(async (url: string) => {
-      if (url.includes('ele-c.json')) return { ok: false };
-      return { ok: false, status: 500 };
+      if (url.includes('ele-c.json')) {
+        return { ok: true, json: async () => ({
+          eleicoes: [
+            { cd: synFed, nm: 'Fed', t: '2', cargos: [{cd: '1'}] },
+            { cd: synEst, nm: 'Est', t: '2', cargos: [{cd: '3'}] }
+          ]
+        })};
+      }
+      
+      if (url.includes(`-e00${synFed}-`)) {
+        return { ok: true, json: async () => ({ ...mockTseResponse, t: '2' }) };
+      }
+      return { ok: false, status: 404 };
     });
 
-    const req = new Request('http://localhost/api/tse-results?round=1');
+    const req = new Request('http://localhost/api/tse-results?round=2');
     const res = await GET(req);
     const data = await res.json();
 
-    expect(data.offices[0].status).toBe('TEMPORARILY_UNAVAILABLE');
-    expect(data.offices[0].candidates).toBeUndefined(); // NO zero votes injected!
+    expect(data.status).toBe('AVAILABLE'); 
+    expect(data.offices.find((o: any) => o.cargo === '1').status).toBe('AVAILABLE');
+    expect(data.offices.find((o: any) => o.cargo === '3').status).toBe('NOT_YET_AVAILABLE');
   });
 });

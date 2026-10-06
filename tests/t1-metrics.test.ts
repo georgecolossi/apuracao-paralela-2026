@@ -14,13 +14,13 @@ describe('T1 Metrics Validation (Apuracao Paralela)', () => {
     
     // Simulate DB grouping result
     const mockDbResult = [
-      { officeName: 'Presidente', voteType: 'NOMINAL', candidateNumber: '22', quantity: 32573, _sum: { quantity: 32573 } },
-      { officeName: 'Presidente', voteType: 'NOMINAL', candidateNumber: '13', quantity: 11047, _sum: { quantity: 11047 } },
-      { officeName: 'Presidente', voteType: 'NOMINAL', candidateNumber: '55', quantity: 989, _sum: { quantity: 989 } },
-      { officeName: 'Presidente', voteType: 'NOMINAL', candidateNumber: '28', quantity: 3, _sum: { quantity: 3 } }, // Nulo Tecnico
-      { officeName: 'Presidente', voteType: 'NOMINAL', candidateNumber: '99', quantity: 2908, _sum: { quantity: 2908 } }, // Others
-      { officeName: 'Presidente', voteType: 'BRANCO', candidateNumber: null, quantity: 717, _sum: { quantity: 717 } },
-      { officeName: 'Presidente', voteType: 'NULO', candidateNumber: null, quantity: 712, _sum: { quantity: 712 } }
+      { officeName: 'Presidente', voteType: 'NOMINAL', candidateNumber: '22', quantity: 32573, candidateName: 'X', _sum: { quantity: 32573 } },
+      { officeName: 'Presidente', voteType: 'NOMINAL', candidateNumber: '13', quantity: 11047, candidateName: 'X', _sum: { quantity: 11047 } },
+      { officeName: 'Presidente', voteType: 'NOMINAL', candidateNumber: '55', quantity: 989, candidateName: 'X', _sum: { quantity: 989 } },
+      { officeName: 'Presidente', voteType: 'NOMINAL', candidateNumber: '28', quantity: 3, candidateName: 'X', _sum: { quantity: 3 } }, // Nulo Tecnico
+      { officeName: 'Presidente', voteType: 'NOMINAL', candidateNumber: '99', quantity: 2908, candidateName: 'X', _sum: { quantity: 2908 } }, // Others
+      { officeName: 'Presidente', voteType: 'BRANCO', candidateNumber: null, quantity: 717, candidateName: 'X', _sum: { quantity: 717 } },
+      { officeName: 'Presidente', voteType: 'NULO', candidateNumber: null, quantity: 712, candidateName: 'X', _sum: { quantity: 712 } }
     ];
 
     const data = getOfficeDataAggregate('3220', 1, 'Presidente', mockDbResult);
