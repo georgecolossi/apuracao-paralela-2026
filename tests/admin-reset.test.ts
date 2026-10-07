@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+﻿import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { POST } from '../src/app/api/admin/reset/route';
 import { requireAuthenticatedUser } from '../src/lib/auth';
 import { prisma } from '../src/lib/db';
@@ -52,7 +52,7 @@ describe('POST /api/admin/reset', () => {
 
   it('A) should return 401 if user is not authenticated', async () => {
     vi.mocked(requireAuthenticatedUser).mockResolvedValue({ authenticated: false } as any);
-    const req = mockReq({ confirmationText: 'ZERAR APURAÇÃO', roundId: 'round-1' });
+    const req = mockReq({ confirmationText: 'ZERAR PRIMEIRO TURNO', roundId: 'round-1' });
     const res = await POST(req);
     expect(res.status).toBe(401);
   });
@@ -62,7 +62,7 @@ describe('POST /api/admin/reset', () => {
       authenticated: true,
       user: { role: 'OPERATOR' },
     } as any);
-    const req = mockReq({ confirmationText: 'ZERAR APURAÇÃO', roundId: 'round-1' });
+    const req = mockReq({ confirmationText: 'ZERAR PRIMEIRO TURNO', roundId: 'round-1' });
     const res = await POST(req);
     expect(res.status).toBe(403);
   });
@@ -73,7 +73,7 @@ describe('POST /api/admin/reset', () => {
       authenticated: true,
       user: { role: 'ADMIN' },
     } as any);
-    const req = mockReq({ confirmationText: 'ZERAR APURAÇÃO', roundId: 'round-1' });
+    const req = mockReq({ confirmationText: 'ZERAR PRIMEIRO TURNO', roundId: 'round-1' });
     const res = await POST(req);
     expect(res.status).toBe(403);
     const data = await res.json();
@@ -97,7 +97,7 @@ describe('POST /api/admin/reset', () => {
       authenticated: true,
       user: { role: 'ADMIN' },
     } as any);
-    const req = mockReq({ confirmationText: 'ZERAR APURAÇÃO' }); // no roundId
+    const req = mockReq({ confirmationText: 'ZERAR PRIMEIRO TURNO' }); // no roundId
     const res = await POST(req);
     expect(res.status).toBe(400);
   });
@@ -109,7 +109,7 @@ describe('POST /api/admin/reset', () => {
       user: { role: 'ADMIN' },
     } as any);
     vi.mocked(prisma.electionRound.findUnique).mockResolvedValue(null);
-    const req = mockReq({ confirmationText: 'ZERAR APURAÇÃO', roundId: 'invalid' });
+    const req = mockReq({ confirmationText: 'ZERAR PRIMEIRO TURNO', roundId: 'invalid' });
     const res = await POST(req);
     expect(res.status).toBe(404);
   });
@@ -120,7 +120,7 @@ describe('POST /api/admin/reset', () => {
       authenticated: true,
       user: { userId: '1', role: 'ADMIN' },
     } as any);
-    const req = mockReq({ confirmationText: 'ZERAR APURAÇÃO', roundId: 'round-1' });
+    const req = mockReq({ confirmationText: 'ZERAR PRIMEIRO TURNO', roundId: 'round-1' });
     const res = await POST(req);
     expect(res.status).toBe(200);
     expect(prisma.$transaction).toHaveBeenCalled();
@@ -156,7 +156,7 @@ describe('POST /api/admin/reset', () => {
     // Força um erro dentro da transação mockada
     vi.mocked(prisma.$transaction).mockRejectedValueOnce(new Error('Simulated DB Error'));
 
-    const req = mockReq({ confirmationText: 'ZERAR APURAÇÃO', roundId: 'round-1' });
+    const req = mockReq({ confirmationText: 'ZERAR PRIMEIRO TURNO', roundId: 'round-1' });
     const res = await POST(req);
     expect(res.status).toBe(500);
     const data = await res.json();

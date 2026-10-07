@@ -12,11 +12,14 @@ export default function TurnoResetClient({ roundId, roundNumber }: { roundId: st
   const [success, setSuccess] = useState(false);
   const router = useRouter();
 
+  const roundName = roundNumber === 1 ? 'Primeiro Turno' : roundNumber === 2 ? 'Segundo Turno' : `${roundNumber}º Turno`;
+  const roundNameUpper = roundNumber === 1 ? 'PRIMEIRO TURNO' : roundNumber === 2 ? 'SEGUNDO TURNO' : `${roundNumber}º TURNO`;
+  const expectedText = `ZERAR ${roundNameUpper}`;
+
   const handleReset = async () => {
     setError('');
-    const expected = "ZERAR APURAÇÃO";
-    if (confirmText.trim().toUpperCase() !== expected) {
-      setError(`Digite exatamente: ${expected}`);
+    if (confirmText.trim() !== expectedText) {
+      setError(`Digite exatamente: ${expectedText}`);
       return;
     }
 
@@ -25,7 +28,7 @@ export default function TurnoResetClient({ roundId, roundNumber }: { roundId: st
       const res = await fetch('/api/admin/reset', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ confirmationText: confirmText.trim().toUpperCase(), roundId })
+        body: JSON.stringify({ confirmationText: confirmText.trim(), roundId })
       });
       
       const data = await res.json();
@@ -65,14 +68,14 @@ export default function TurnoResetClient({ roundId, roundNumber }: { roundId: st
             <div className="bg-red-50 border-b border-red-100 p-5 flex items-center gap-3 text-red-700">
               <AlertTriangle className="w-6 h-6 shrink-0" />
               <h3 className="font-bold uppercase tracking-wide">
-                Zerar Dados do {roundNumber}º Turno
+                Zerar Dados do {roundName}
               </h3>
             </div>
             
             <div className="p-6 text-sm text-slate-700 space-y-4">
               <p>Ao realizar esta operação:</p>
               <ul className="list-disc pl-5 space-y-1 font-medium text-red-600">
-                <li>Todos os BUs e Votos do <strong>{roundNumber}º Turno</strong> serão excluídos.</li>
+                <li>Todos os BUs e Votos do <strong>{roundName}</strong> serão excluídos.</li>
               </ul>
               <ul className="list-disc pl-5 space-y-1 font-medium text-emerald-600 mt-2">
                 <li>O catálogo geográfico oficial será mantido.</li>
@@ -81,14 +84,14 @@ export default function TurnoResetClient({ roundId, roundNumber }: { roundId: st
               
               <div className="mt-6 pt-4 border-t border-slate-100">
                 <p className="font-bold text-slate-900 mb-2">
-                  Para prosseguir, digite: <span className="font-black text-red-600 select-all">ZERAR APURAÇÃO</span>
+                  Para prosseguir, digite: <span className="font-black text-red-600 select-all">{expectedText}</span>
                 </p>
                 <input 
                   type="text" 
                   value={confirmText}
                   onChange={e => setConfirmText(e.target.value)}
-                  className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:border-red-500 focus:ring-1 focus:ring-red-500 font-bold uppercase text-slate-900 placeholder:text-slate-500 bg-white"
-                  placeholder="ZERAR APURAÇÃO"
+                  className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:border-red-500 focus:ring-1 focus:ring-red-500 font-bold text-slate-900 placeholder:text-slate-500 bg-white"
+                  placeholder={expectedText}
                   disabled={loading || success}
                 />
               </div>
@@ -106,7 +109,7 @@ export default function TurnoResetClient({ roundId, roundNumber }: { roundId: st
               </button>
               <button 
                 onClick={handleReset}
-                disabled={loading || success || confirmText.trim().toUpperCase() !== 'ZERAR APURAÇÃO'}
+                disabled={loading || success || confirmText.trim() !== expectedText}
                 className="px-4 py-2 rounded-lg font-bold uppercase tracking-wider text-xs bg-red-600 hover:bg-red-700 text-white transition-colors disabled:opacity-50 flex items-center gap-2"
               >
                 {loading ? 'Limpando...' : success ? <><CheckCircle2 className="w-4 h-4" /> Zerado!</> : 'Executar Limpeza'}

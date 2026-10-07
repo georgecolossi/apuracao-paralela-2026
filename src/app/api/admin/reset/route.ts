@@ -27,11 +27,6 @@ export async function POST(req: Request) {
     }
 
     const { confirmationText, roundId } = body;
-    
-    const expected = "ZERAR APURAÇÃO";
-    if (!confirmationText || confirmationText.trim().toUpperCase() !== expected) {
-      return NextResponse.json({ error: 'Confirmação incorreta' }, { status: 400 });
-    }
 
     if (!roundId) {
       return NextResponse.json({ error: 'ID do turno é obrigatório para o reset' }, { status: 400 });
@@ -40,6 +35,12 @@ export async function POST(req: Request) {
     const round = await prisma.electionRound.findUnique({ where: { id: roundId }, include: { election: true } });
     if (!round) {
       return NextResponse.json({ error: 'Turno não encontrado' }, { status: 404 });
+    }
+
+    const roundNameUpper = round.roundNumber === 1 ? 'PRIMEIRO TURNO' : round.roundNumber === 2 ? 'SEGUNDO TURNO' : `${round.roundNumber}º TURNO`;
+    const expected = `ZERAR ${roundNameUpper}`;
+    if (!confirmationText || confirmationText.trim() !== expected) {
+      return NextResponse.json({ error: 'Confirmação incorreta' }, { status: 400 });
     }
 
     await prisma.$transaction(async (tx) => {
