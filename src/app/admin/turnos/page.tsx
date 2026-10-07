@@ -11,12 +11,22 @@ export default async function AdminTurnosPage() {
     where: { status: 'ACTIVE' },
     include: {
       rounds: {
-        orderBy: { roundNumber: 'asc' }
-      }
+        orderBy: { roundNumber: 'asc' }, include: { _count: { select: { coverage: true } } } }
     }
   });
 
   const election = activeElections.length === 1 ? activeElections[0] : null;
+
+  const metadataCounts: Record<string, number> = {};
+  if (election) {
+    for (const r of election.rounds) {
+      if (r.plei) {
+        metadataCounts[r.id] = await prisma.candidateMetadata.count({ where: { electionCode: r.plei, round: r.roundNumber } });
+      } else {
+        metadataCounts[r.id] = 0;
+      }
+    }
+  }
 
   return (
     <main className="flex-1 p-4 md:p-6 lg:p-8 max-w-4xl mx-auto w-full flex flex-col gap-6">

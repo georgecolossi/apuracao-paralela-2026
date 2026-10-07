@@ -129,7 +129,7 @@ const createdElection = await prisma.election.create({
       body: JSON.stringify({ coverageCodes: ['81051'] }) 
     });
     const res = await POST(req);
-    expect(res.status).toBe(409);
+    expect(res.status).toBe(403);
 
     // Cobertura anterior preservada
     const cvg = await prisma.municipality.findMany({ where: { isCoverage: true } });

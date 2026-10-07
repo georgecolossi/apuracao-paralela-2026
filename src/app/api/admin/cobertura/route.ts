@@ -27,9 +27,29 @@ export async function POST(request: Request) {
           officialCode: { in: dedupedCodes }
         }
       });
-      
+
       if (validMunicipalities.length !== dedupedCodes.length) {
         return NextResponse.json({ error: 'Invalid municipalities' }, { status: 400 });
+      }
+    }
+
+
+    // Guard: Impedir alteração se a ElectionRound estiver FINISHED ou tiver BallotReport
+    const activeRounds = await prisma.electionRound.findMany({
+      where: { status: 'ACTIVE' }
+    });
+
+    for (const round of activeRounds) {
+      if (round.status === 'FINISHED') {
+        return NextResponse.json({ error: 'Operação não permitida: Turno já está finalizado.' }, { status: 403 });
+      }
+
+      const reportsCount = await prisma.ballotReport.count({
+        where: { roundId: round.id, isSimulation: false }
+      });
+
+      if (reportsCount > 0) {
+        return NextResponse.json({ error: 'Operação não permitida: Turno já possui Boletins de Urna processados.' }, { status: 403 });
       }
     }
 
@@ -50,9 +70,9 @@ export async function POST(request: Request) {
         }
       });
       if (reportsInRemoved) {
-        return NextResponse.json({ 
+        return NextResponse.json({
           error: 'CONFLITO_DADOS_REAIS',
-          message: 'Não é possível remover da cobertura um município que já possui BUs reais processados.' 
+          message: 'Não é possível remover da cobertura um município que já possui BUs reais processados.'
         }, { status: 409 });
       }
     }

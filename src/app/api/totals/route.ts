@@ -92,18 +92,23 @@ export async function GET(req: Request) {
       };
     });
 
-    const expectedAgg = await prisma.pollingSection.aggregate({
-      where: { zone: { municipality: { isCoverage: true } } },
+    const expectedAgg = await prisma.roundCoverage.aggregate({
+      where: { electionRoundId: targetRound.id },
       _sum: { expectedBUs: true }
     });
-    const expectedBUsCount = expectedAgg._sum.expectedBUs || 0;
+    const coverageCount = await prisma.roundCoverage.count({
+      where: { electionRoundId: targetRound.id }
+    });
+    const coverageConfigured = coverageCount > 0;
+    const expectedBUsCount = coverageConfigured ? (expectedAgg._sum.expectedBUs || 0) : 0;
 
     return NextResponse.json({
+      coverageConfigured,
       processedReports: processedReportsCount,
       expectedReports: expectedBUsCount,
       totals,
       election: {
-        plei: election.plei,
+        plei: targetRound.plei,
         year: election.year,
         name: election.name,
         rounds: election.rounds.map(r => ({ roundNumber: r.roundNumber, status: r.status }))

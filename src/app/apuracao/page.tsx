@@ -205,6 +205,17 @@ export default function ApuracaoDashboard() {
 
   const renderParalela = () => {
     if (!paralela || !paralela.totals) return <div className="p-8 text-center text-slate-500 font-bold uppercase tracking-widest">Sem dados no sistema local</div>;
+
+    if (paralela.coverageConfigured === false) {
+      return (
+        <div className="bg-white p-12 rounded-2xl border border-slate-200 text-center shadow-sm">
+          <Archive className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+          <h2 className="text-xl font-black text-slate-700 tracking-tight">Cobertura ainda não configurada</h2>
+          <p className="text-slate-500 text-sm mt-2 font-medium">Aguardando configuração das seções do turno para iniciar a apuração paralela.</p>
+        </div>
+      );
+    }
+
     const p = paralela.processedReports;
     const e = paralela.expectedReports;
     

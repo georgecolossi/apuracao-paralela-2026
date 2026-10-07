@@ -25,12 +25,14 @@ model ElectionRound {
   id           String   @id @default(uuid())
   electionId   String
   roundNumber  Int
+  plei         String?
   status       String   @default("PLANNED")
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
   election     Election       @relation(fields: [electionId], references: [id])
   reports      BallotReport[]
+  coverage     RoundCoverage[]
 }
 
 model State {
@@ -66,6 +68,7 @@ model PollingSection {
   expectedBUs   Int?     @default(1)
   stations      PollingStation[]
   zone          PollingZone @relation(fields: [pollingZoneId], references: [id])
+  coverages     RoundCoverage[]
 }
 
 model PollingStation {
@@ -101,7 +104,7 @@ model Candidate {
   officialIdentifier String   @unique // Numero do candidato
   name               String
   ballotName         String
-  
+
   party              Party    @relation(fields: [partyId], references: [id])
   office             Office   @relation(fields: [officeId], references: [id])
   votes              BallotVote[]
@@ -160,7 +163,7 @@ model BallotReportPart {
 
   session        ScanSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   operator       User?        @relation(fields: [operatorId], references: [id])
-  
+
   @@unique([sessionId, partIndex])
 }
 
@@ -240,4 +243,16 @@ model CandidateMetadata {
   source            String?
   importedAt        DateTime @default(now())
   updatedAt         DateTime @updatedAt
+}
+
+model RoundCoverage {
+  id               String   @id @default(uuid())
+  electionRoundId  String
+  pollingSectionId String
+  expectedBUs      Int      @default(1)
+
+  electionRound    ElectionRound  @relation(fields: [electionRoundId], references: [id], onDelete: Cascade)
+  pollingSection   PollingSection @relation(fields: [pollingSectionId], references: [id], onDelete: Cascade)
+
+  @@unique([electionRoundId, pollingSectionId])
 }

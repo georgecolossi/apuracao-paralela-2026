@@ -40,6 +40,17 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'O turno alvo não está em estado PLANNED.' }, { status: 400 });
     }
 
+    if (!targetRound.plei) {
+      return NextResponse.json({ error: 'Não é possível ativar um turno sem PLEI configurado.' }, { status: 400 });
+    }
+
+    const coverageCount = await prisma.roundCoverage.count({
+      where: { electionRoundId: targetRound.id }
+    });
+    if (coverageCount === 0) {
+      return NextResponse.json({ error: 'Não é possível ativar um turno sem cobertura (Coverage) configurada.' }, { status: 400 });
+    }
+
     const currentActiveRounds = election.rounds.filter(r => r.status === 'ACTIVE');
     if (currentActiveRounds.length > 1) {
       return NextResponse.json({ error: 'Configuração ambígua: múltiplos turnos ativos.' }, { status: 500 });

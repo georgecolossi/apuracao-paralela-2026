@@ -10,6 +10,13 @@ describe('Totalization and Aggregation Service', () => {
   let officeId: string;
 
   beforeAll(async () => {
+    // Cleanup first
+    await prisma.ballotVote.deleteMany({});
+    await prisma.ballotReport.deleteMany({});
+    await prisma.office.deleteMany({});
+    await prisma.electionRound.deleteMany({});
+    await prisma.election.deleteMany({});
+
     // Setup Election
     const election = await prisma.election.create({
       data: { plei: '456', name: 'Eleição Teste Agregação', year: 2026, status: 'ACTIVE' }

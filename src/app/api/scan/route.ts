@@ -132,7 +132,7 @@ export async function POST(req: Request) {
     if (typeof fullPayloadOrError !== 'string') {
       return NextResponse.json({ error: fullPayloadOrError.code }, { status: 400 });
     }
-    
+
     const reportData = parser.parseReport(fullPayloadOrError, rawPartsArray);
 
     if ('code' in reportData) {
@@ -147,50 +147,102 @@ export async function POST(req: Request) {
     // Determina DeterministicID real a partir do parser
     const { electionId, roundNumber, stateCode, cityCode, zoneCode, sectionCode, urnCode } = reportData;
 
+
+      const activeRounds = await prisma.electionRound.findMany({
+        where: { status: 'ACTIVE', roundNumber },
+        include: { election: true }
+      });
+
+      if (activeRounds.length === 0) {
+        return NextResponse.json({
+          error: 'ELECTION_CONTEXT_MISMATCH',
+          message: 'O BU pertence a outro turno ou a um turno que não está ativo.',
+          received: { plei: electionId, turn: roundNumber }
+        }, { status: 400 });
+      }
+
+      if (activeRounds.length > 1) {
+        return NextResponse.json({
+          error: 'CONFIGURATION_ERROR',
+          message: 'Múltiplos turnos ativos com o mesmo número.',
+        }, { status: 500 });
+      }
+
+      const activeRound = activeRounds[0];
+
+      if (!activeRound.plei) {
+        return NextResponse.json({
+          error: 'ROUND_PLEI_NOT_CONFIGURED',
+          message: 'O pleito do turno ativo não está configurado.',
+        }, { status: 400 });
+      }
+
+      if (activeRound.plei !== electionId) {
+        return NextResponse.json({
+          error: 'ELECTION_CONTEXT_MISMATCH',
+          message: 'O BU pertence a outro pleito não configurado ou inativo.',
+          received: { plei: electionId, turn: roundNumber }
+        }, { status: 400 });
+      }
+
+      const activeElection = activeRound.election;
+
+
     // Checagem de Escopo Geográfico (Cobertura Regional)
-    // Checagem de Escopo Geográfico (Cobertura Regional)
-    const coverageMunicipalities = await prisma.municipality.findMany({
-      where: { isCoverage: true },
-      select: { officialCode: true }
+    const sectionInDB = await prisma.pollingSection.findFirst({
+      where: {
+        sectionNumber: sectionCode,
+        zone: {
+          zoneNumber: zoneCode,
+          municipality: { officialCode: cityCode }
+        }
+      }
     });
-    
-    const coverageCities = coverageMunicipalities.map(m => m.officialCode);
-    
-    // 1. BU REAL e sem nenhuma cobertura configurada -> FAIL CLOSED
-    if (coverageCities.length === 0 && !isSimulation) {
-      return NextResponse.json({
-        error: 'OUT_OF_COVERAGE',
-        message: 'Área de cobertura ainda não configurada.'
-      }, { status: 403 });
+
+    if (!sectionInDB && !isSimulation) {
+       // Se não existe a seção no DB, não está na cobertura
+       return NextResponse.json({
+         error: 'OUT_OF_COVERAGE',
+         message: 'Seção não encontrada.'
+       }, { status: 403 });
     }
 
-    // 2. Cobertura existente -> Rejeitar se não estiver nela
-    if (coverageCities.length > 0 && !coverageCities.includes(cityCode)) {
-      // Registrar tentativa fora de cobertura
-      await prisma.auditLog.create({
-        data: {
-          action: 'SCAN_OUT_OF_COVERAGE',
-          result: 'REJECTED',
-          identifiers: `City: ${cityCode}, Zone: ${zoneCode}, Sec: ${sectionCode}`,
-          errors: 'Município fora da área de cobertura configurada.',
-          userId: operatorId
+    if (sectionInDB) {
+      const coverage = await prisma.roundCoverage.findUnique({
+        where: {
+          electionRoundId_pollingSectionId: {
+            electionRoundId: activeRound.id,
+            pollingSectionId: sectionInDB.id
+          }
         }
       });
 
-      return NextResponse.json({
-        error: 'OUT_OF_COVERAGE',
-        message: 'Este Boletim de Urna pertence a um município fora da área de cobertura configurada.'
-      }, { status: 403 });
+      if (!coverage && !isSimulation) {
+        await prisma.auditLog.create({
+          data: {
+            action: 'SCAN_OUT_OF_COVERAGE',
+            result: 'REJECTED',
+            identifiers: `City: ${cityCode}, Zone: ${zoneCode}, Sec: ${sectionCode}`,
+            errors: 'Seção fora da área de cobertura configurada.',
+            userId: operatorId
+          }
+        });
+
+        return NextResponse.json({
+          error: 'OUT_OF_COVERAGE',
+          message: 'Este Boletim de Urna pertence a uma seção fora da área de cobertura configurada.'
+        }, { status: 403 });
+      }
     }
 
-    const deterministicId = buildBallotReportIdentity({ 
-      plei: electionId, 
-      turn: String(roundNumber), 
-      stateCode, 
-      cityCode, 
-      zoneCode, 
-      sectionCode, 
-      urnCode 
+    const deterministicId = buildBallotReportIdentity({
+      plei: electionId,
+      turn: String(roundNumber),
+      stateCode,
+      cityCode,
+      zoneCode,
+      sectionCode,
+      urnCode
     });
 
     // Checar Duplicidade real
@@ -210,12 +262,36 @@ export async function POST(req: Request) {
     // Tentar criar via Transação para previnir condição de corrida exata no mesmo milissegundo.
     let reportId: string;
     try {
-      const activeElections = await prisma.election.findMany({
-        where: { plei: electionId, status: 'ACTIVE' },
-        include: { rounds: true }
+      const activeRounds = await prisma.electionRound.findMany({
+        where: { status: 'ACTIVE', roundNumber },
+        include: { election: true }
       });
 
-      if (activeElections.length === 0) {
+      if (activeRounds.length === 0) {
+        return NextResponse.json({
+          error: 'ELECTION_CONTEXT_MISMATCH',
+          message: 'O BU pertence a outro turno ou a um turno que não está ativo.',
+          received: { plei: electionId, turn: roundNumber }
+        }, { status: 400 });
+      }
+
+      if (activeRounds.length > 1) {
+        return NextResponse.json({
+          error: 'CONFIGURATION_ERROR',
+          message: 'Múltiplos turnos ativos com o mesmo número.',
+        }, { status: 500 });
+      }
+
+      const activeRound = activeRounds[0];
+
+      if (!activeRound.plei) {
+        return NextResponse.json({
+          error: 'ROUND_PLEI_NOT_CONFIGURED',
+          message: 'O pleito do turno ativo não está configurado.',
+        }, { status: 400 });
+      }
+
+      if (activeRound.plei !== electionId) {
         return NextResponse.json({
           error: 'ELECTION_CONTEXT_MISMATCH',
           message: 'O BU pertence a outro pleito não configurado ou inativo.',
@@ -223,25 +299,7 @@ export async function POST(req: Request) {
         }, { status: 400 });
       }
 
-      if (activeElections.length > 1) {
-        return NextResponse.json({
-          error: 'CONFIGURATION_ERROR',
-          message: 'Múltiplas eleições ativas para o mesmo pleito.',
-        }, { status: 500 });
-      }
-
-      const activeElection = activeElections[0];
-      const activeRound = activeElection.rounds.find(
-        r => r.roundNumber === roundNumber && r.status === 'ACTIVE'
-      );
-
-      if (!activeRound) {
-        return NextResponse.json({
-          error: 'ELECTION_CONTEXT_MISMATCH',
-          message: 'O BU pertence a outro turno ou a um turno que não está ativo.',
-          received: { plei: electionId, turn: roundNumber }
-        }, { status: 400 });
-      }
+      const activeElection = activeRound.election;
 
       const result = await prisma.$transaction(async (tx) => {
         const newReport = await tx.ballotReport.create({
@@ -257,10 +315,10 @@ export async function POST(req: Request) {
             hash: reportData.hash || '',
             signature: reportData.signature || '',
             status: 'PENDENTE_CONFIRMACAO',
-            validationData: JSON.stringify({ 
-              parsed: true, 
-              hashStatus: reportData.hashStatus, 
-              sigStatus: reportData.sigStatus 
+            validationData: JSON.stringify({
+              parsed: true,
+              hashStatus: reportData.hashStatus,
+              sigStatus: reportData.sigStatus
             }),
             metadata: sequenceId,
             isSimulation: session!.isSimulation,

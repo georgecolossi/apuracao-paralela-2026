@@ -32,6 +32,11 @@ describe('Admin Turnos Activation', () => {
     await prisma.auditLog.deleteMany({});
     await prisma.ballotVote.deleteMany({});
     await prisma.ballotReport.deleteMany({});
+    await prisma.roundCoverage.deleteMany({});
+    await prisma.pollingSection.deleteMany({});
+    await prisma.pollingZone.deleteMany({});
+    await prisma.municipality.deleteMany({});
+    await prisma.state.deleteMany({});
     await prisma.electionRound.deleteMany({});
     await prisma.election.deleteMany({});
     await prisma.user.deleteMany({});
@@ -52,7 +57,8 @@ describe('Admin Turnos Activation', () => {
       data: {
         electionId,
         roundNumber: 1,
-        status: 'ACTIVE'
+        status: 'ACTIVE',
+        plei: '3220'
       }
     });
     round1Id = r1.id;
@@ -61,10 +67,20 @@ describe('Admin Turnos Activation', () => {
       data: {
         electionId,
         roundNumber: 2,
-        status: 'PLANNED'
+        status: 'PLANNED',
+        plei: '3220'
       }
     });
     round2Id = r2.id;
+
+    // Create fake coverage for r1 and r2
+    const state = await prisma.state.create({ data: { name: 'Test', abbreviation: 'TS' } });
+    const mun = await prisma.municipality.create({ data: { name: 'A', officialCode: '1', stateId: state.id } });
+    const zone = await prisma.pollingZone.create({ data: { municipalityId: mun.id, zoneNumber: '1' } });
+    const sec = await prisma.pollingSection.create({ data: { pollingZoneId: zone.id, sectionNumber: '1', expectedBUs: 1 } });
+
+    await prisma.roundCoverage.create({ data: { electionRoundId: r1.id, pollingSectionId: sec.id, expectedBUs: 1 } });
+    await prisma.roundCoverage.create({ data: { electionRoundId: r2.id, pollingSectionId: sec.id, expectedBUs: 1 } });
   });
 
   it('A. PLANNED -> ACTIVE: Deve transicionar round 1 para FINISHED e round 2 para ACTIVE', async () => {
@@ -118,7 +134,7 @@ describe('Admin Turnos Activation', () => {
 
   it('C. REABERTURA: Tentativa de ativar turno FINISHED deve falhar', async () => {
     vi.mocked(requireAuthenticatedUser).mockResolvedValue({ authenticated: true, user: { userId: adminUserId, role: 'ADMIN' } } as any);
-    
+
     await prisma.electionRound.update({ where: { id: round1Id }, data: { status: 'FINISHED' } });
     await prisma.electionRound.update({ where: { id: round2Id }, data: { status: 'ACTIVE' } });
 
@@ -127,7 +143,7 @@ describe('Admin Turnos Activation', () => {
       body: JSON.stringify({ roundId: round1Id })
     });
     const res = await POST(req);
-    
+
     expect(res.status).toBe(400);
     const json = await res.json();
     expect(json.error).toMatch(/PLANNED/);
@@ -135,22 +151,26 @@ describe('Admin Turnos Activation', () => {
 
   it('D. AMBIGUIDADE: Se múltiplos rounds ACTIVE antes da chamada, deve falhar', async () => {
     vi.mocked(requireAuthenticatedUser).mockResolvedValue({ authenticated: true, user: { userId: adminUserId, role: 'ADMIN' } } as any);
-    
+
     // Força ambiguidade no setup
     await prisma.electionRound.update({ where: { id: round2Id }, data: { status: 'ACTIVE' } });
 
     // Tenta ativar um terceiro (ou um dos dois) - aqui o req envia round2Id, que já tá ACTIVE (não PLANNED)
     // Mas se ele estivesse PLANNED e houvesse DOIS ACTIVEs?
     const r3 = await prisma.electionRound.create({
-      data: { electionId, roundNumber: 3, status: 'PLANNED' }
+      data: { electionId, roundNumber: 3, status: 'PLANNED', plei: '9999' }
     });
+    const sec = await prisma.pollingSection.findFirst();
+    if (sec) {
+      await prisma.roundCoverage.create({ data: { electionRoundId: r3.id, pollingSectionId: sec.id, expectedBUs: 1 } });
+    }
 
     const req = new Request('http://localhost', {
       method: 'POST',
       body: JSON.stringify({ roundId: r3.id })
     });
     const res = await POST(req);
-    
+
     expect(res.status).toBe(500);
     const json = await res.json();
     expect(json.error).toMatch(/múltiplos turnos/);
