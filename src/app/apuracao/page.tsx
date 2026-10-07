@@ -334,7 +334,9 @@ export default function ApuracaoDashboard() {
               <Activity className="text-indigo-400 w-5 h-5" />
               Painel Eleitoral 2026
             </h1>
-            <p className="text-[10px] text-slate-400 font-bold tracking-widest uppercase mt-0.5 ml-7">Concórdia / SC</p>
+            <p className="text-[10px] text-slate-400 font-bold tracking-widest uppercase mt-0.5 ml-7">
+              {process.env.NEXT_PUBLIC_CITY_NAME || 'Concórdia'} / {process.env.NEXT_PUBLIC_STATE_CODE || 'SC'}
+            </p>
           </div>
           <div className="flex gap-2 bg-slate-800 p-1 rounded-lg border border-slate-700 self-start md:self-auto">
             <button 

@@ -111,4 +111,23 @@ describe('TSE Adapter (API)', () => {
     expect(data.offices.find((o: any) => o.cargo === '1').status).toBe('AVAILABLE');
     expect(data.offices.find((o: any) => o.cargo === '3').status).toBe('NOT_YET_AVAILABLE');
   });
+
+  it('6. Deve normalizar os labels flexionados de cargos (GOVERNADORA -> Governador)', async () => {
+    const mockFlexionado = {
+      ...mockTseResponse,
+      carg: [{ cd: '3', nmf: 'Governadora', agr: [] }]
+    };
+    global.fetch = vi.fn().mockImplementation(async (url: string) => {
+      if (url.includes('ele-c.json')) return { ok: false };
+      if (url.includes('c0003')) return { ok: true, json: async () => mockFlexionado };
+      return { ok: true, json: async () => mockTseResponse };
+    });
+
+    const req = new Request('http://localhost/api/tse-results?round=1');
+    const res = await GET(req);
+    const data = await res.json();
+    
+    const govOffice = data.offices.find((o: any) => o.cargo === '3');
+    expect(govOffice.cargoName).toBe('Governador');
+  });
 });

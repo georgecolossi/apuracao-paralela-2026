@@ -131,10 +131,18 @@ export async function GET(req: Request) {
     // Sort by votes
     candidates.sort((a: any, b: any) => b.votes - a.votes);
 
+    const CANONICAL_OFFICES: Record<string, string> = {
+      '1': 'Presidente',
+      '3': 'Governador',
+      '5': 'Senador',
+      '6': 'Deputado Federal',
+      '7': 'Deputado Estadual'
+    };
+
     return {
       status: 'AVAILABLE',
       cargo: r.cargo,
-      cargoName: firstCarg.nmf,
+      cargoName: CANONICAL_OFFICES[r.cargo] || firstCarg.ds || firstCarg.nm || firstCarg.nmf,
       progress: {
         total: parseInt(j.s?.ts || '0', 10),
         processed: parseInt(j.s?.st || '0', 10),
