@@ -89,7 +89,7 @@ export default function PrepararApuracaoPage() {
             </label>
             <input 
               type="text" 
-              className="w-full border-2 border-slate-300 bg-slate-50 p-4 rounded-xl text-slate-900 font-bold focus:ring-4 focus:ring-red-500/20 focus:border-red-500 outline-none transition-all text-center uppercase tracking-widest text-lg"
+              className="w-full border-2 border-slate-300 bg-slate-50 p-4 rounded-xl text-slate-900 font-bold focus:ring-4 focus:ring-red-500/20 focus:border-red-500 outline-none transition-all text-center tracking-widest text-lg"
               value={confirmation}
               onChange={(e) => setConfirmation(e.target.value)}
               placeholder="ZERAR APURAÇÃO"
