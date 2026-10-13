@@ -143,6 +143,18 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: reportData.code }, { status: 400 });
     }
 
+    // Rejeição estrita de QRBU de teste/simulação em modo oficial
+    if (!isSimulation && reportData.fase && reportData.fase !== 'O' && process.env.ALLOW_SIMULATED_FASE !== 'true') {
+      await prisma.scanSession.update({
+        where: { id: session.id },
+        data: { status: 'ERROR' }
+      });
+      return NextResponse.json({
+        error: 'SIMULATED_QRBU_REJECTED',
+        message: `Boletim de Urna de teste/simulação (FASE: ${reportData.fase}) rejeitado em modo oficial.`
+      }, { status: 400 });
+    }
+
     const { buildBallotReportIdentity } = await import('@/lib/identity');
     // Determina DeterministicID real a partir do parser
     const { electionId, roundNumber, stateCode, cityCode, zoneCode, sectionCode, urnCode } = reportData;
@@ -189,11 +201,14 @@ export async function POST(req: Request) {
 
 
     // Checagem de Escopo Geográfico (Cobertura Regional)
+    const secVariants = Array.from(new Set([sectionCode, sectionCode.padStart(4, '0'), parseInt(sectionCode, 10).toString()]));
+    const zoneVariants = Array.from(new Set([zoneCode, zoneCode.padStart(4, '0'), parseInt(zoneCode, 10).toString()]));
+
     const sectionInDB = await prisma.pollingSection.findFirst({
       where: {
-        sectionNumber: sectionCode,
+        sectionNumber: { in: secVariants },
         zone: {
-          zoneNumber: zoneCode,
+          zoneNumber: { in: zoneVariants },
           municipality: { officialCode: cityCode }
         }
       }
@@ -231,6 +246,28 @@ export async function POST(req: Request) {
         return NextResponse.json({
           error: 'OUT_OF_COVERAGE',
           message: 'Este Boletim de Urna pertence a uma seção fora da área de cobertura configurada.'
+        }, { status: 403 });
+      }
+
+      // EIXO A: Proteção estrita contra seções agregadas sem BU independente (expectedBUs <= 0)
+      if (coverage && coverage.expectedBUs <= 0) {
+        try {
+          await prisma.auditLog.create({
+            data: {
+              action: 'SCAN_INELIGIBLE_SECTION_REJECTED',
+              result: 'REJECTED',
+              identifiers: `City: ${cityCode}, Zone: ${zoneCode}, Sec: ${sectionCode}`,
+              errors: 'Seção eleitoral agregada não possui Boletim de Urna independente (expectedBUs = 0).',
+              userId: operatorId
+            }
+          });
+        } catch (logErr) {
+          console.error('Falha ao registrar AuditLog de rejeição de seção agregada:', logErr);
+        }
+
+        return NextResponse.json({
+          error: 'SECTION_AGGREGATED_NO_BU',
+          message: 'Esta seção eleitoral é agregada e não possui Boletim de Urna independente. Seus votos foram computados na urna da seção principal.'
         }, { status: 403 });
       }
     }

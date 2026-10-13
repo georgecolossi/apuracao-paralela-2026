@@ -32,29 +32,85 @@ export async function GET(req: Request) {
       targetRound = activeRounds[0];
     }
 
-    const processedReportsCount = await prisma.ballotReport.count({
+    // EIXO A: Elegibilidade Positiva Estrita para o turno consultado
+    const eligibleCoverages = await prisma.roundCoverage.findMany({
       where: {
-        electionId: election.id,
-        roundId: targetRound.id,
-        status: 'PROCESSADO',
-        isSimulation: false
+        electionRoundId: targetRound.id,
+        expectedBUs: { gt: 0 }
+      },
+      select: {
+        pollingSection: {
+          select: {
+            sectionNumber: true,
+            zone: {
+              select: {
+                zoneNumber: true,
+                municipality: {
+                  select: { officialCode: true }
+                }
+              }
+            }
+          }
+        }
       }
     });
 
-    const rawTotals = await prisma.ballotVote.groupBy({
-      by: ['officeId', 'candidateNumber', 'partyNumber', 'voteType'],
-      where: {
-        report: {
-          electionId: election.id,
-          roundId: targetRound.id,
-          status: 'PROCESSADO',
-          isSimulation: false
-        }
-      },
-      _sum: {
-        quantity: true
-      }
+    const eligiblePairs = eligibleCoverages.flatMap(c => {
+      const cityCode = c.pollingSection.zone.municipality.officialCode;
+      const rawZone = c.pollingSection.zone.zoneNumber;
+      const unpaddedZone = parseInt(rawZone, 10).toString();
+      const paddedZone = rawZone.padStart(4, '0');
+      const rawSec = c.pollingSection.sectionNumber;
+      const unpaddedSec = parseInt(rawSec, 10).toString();
+      const paddedSec = rawSec.padStart(4, '0');
+
+      return [
+        { cityCode, zoneCode: unpaddedZone, sectionCode: unpaddedSec },
+        { cityCode, zoneCode: paddedZone, sectionCode: paddedSec },
+        { cityCode, zoneCode: unpaddedZone, sectionCode: paddedSec },
+        { cityCode, zoneCode: paddedZone, sectionCode: unpaddedSec }
+      ];
     });
+
+    const seenConds = new Set<string>();
+    const eligibleConditions: Array<{ cityCode: string; zoneCode: string; sectionCode: string }> = [];
+    for (const p of eligiblePairs) {
+      const k = `${p.cityCode}:${p.zoneCode}:${p.sectionCode}`;
+      if (!seenConds.has(k)) {
+        seenConds.add(k);
+        eligibleConditions.push(p);
+      }
+    }
+
+    const coverageCount = eligibleCoverages.length;
+    const coverageConfigured = coverageCount > 0;
+
+    let processedReportsCount = 0;
+    let rawTotals: any[] = [];
+
+    if (coverageConfigured && eligibleConditions.length > 0) {
+      const baseReportFilter: any = {
+        electionId: election.id,
+        roundId: targetRound.id,
+        status: 'PROCESSADO',
+        isSimulation: false,
+        OR: eligibleConditions
+      };
+
+      processedReportsCount = await prisma.ballotReport.count({
+        where: baseReportFilter
+      });
+
+      rawTotals = await (prisma.ballotVote.groupBy as any)({
+        by: ['officeId', 'candidateNumber', 'partyNumber', 'voteType'],
+        where: {
+          report: baseReportFilter
+        },
+        _sum: {
+          quantity: true
+        }
+      });
+    }
 
     const offices = await prisma.office.findMany();
     const officeMap = Object.fromEntries(offices.map(o => [o.id, o.name]));
@@ -93,13 +149,12 @@ export async function GET(req: Request) {
     });
 
     const expectedAgg = await prisma.roundCoverage.aggregate({
-      where: { electionRoundId: targetRound.id },
+      where: { 
+        electionRoundId: targetRound.id,
+        expectedBUs: { gt: 0 }
+      },
       _sum: { expectedBUs: true }
     });
-    const coverageCount = await prisma.roundCoverage.count({
-      where: { electionRoundId: targetRound.id }
-    });
-    const coverageConfigured = coverageCount > 0;
     const expectedBUsCount = coverageConfigured ? (expectedAgg._sum.expectedBUs || 0) : 0;
 
     return NextResponse.json({
