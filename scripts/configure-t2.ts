@@ -164,6 +164,20 @@ export async function configureT2(options: ConfigureT2Options) {
     }
 
     console.log(`[T2-CONFIG] ${configuredCount} registros de RoundCoverage configurados para o T2.`);
+
+    try {
+      await prisma.auditLog.create({
+        data: {
+          action: 'OFFICIAL_COVERAGE_RECONCILED',
+          identifiers: JSON.stringify({
+            roundId: status.t2.id,
+            reconciledCount: configuredCount,
+            officialSource: TSE_2026_T2_OFFICIAL_PARAMS.sourceUrl
+          }),
+          result: 'SUCCESS'
+        }
+      });
+    } catch (_) {}
   }
 
   // Registra no AuditLog

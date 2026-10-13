@@ -83,33 +83,68 @@ export async function GET(req: Request) {
     }
 
     const coverageCount = eligibleCoverages.length;
-    const coverageConfigured = coverageCount > 0;
+    
+    const expectedAgg = await prisma.roundCoverage.aggregate({
+      where: { 
+        electionRoundId: targetRound.id,
+        expectedBUs: { gt: 0 }
+      },
+      _sum: { expectedBUs: true }
+    });
+    const expectedBUsCount = expectedAgg._sum.expectedBUs || 0;
+
+    // Definição de status de cobertura:
+    // Round 1: Confirmada se possuir cobertura configurada
+    // Round 2: Confirmada apenas quando possuir malha oficial homologada (>= 190 seções com soma expectedBUs >= 193)
+    // Demais casos em turnos subsequentes operam em regime de cobertura provisória dinâmica
+    const isRound1 = targetRound.roundNumber === 1;
+    const isOfficialT2 = targetRound.roundNumber === 2 && coverageCount >= 190 && expectedBUsCount >= 193;
+    const isProvisional = targetRound.roundNumber >= 2 && !isOfficialT2;
+    const coverageConfigured = isRound1 ? coverageCount > 0 : isOfficialT2;
+    const coverageStatus = isProvisional ? 'PROVISORIA' : 'CONFIRMADA';
+
+    const receivedReportsCount = await prisma.ballotReport.count({
+      where: {
+        electionId: election.id,
+        roundId: targetRound.id,
+        isSimulation: false
+      }
+    });
+
+    const dynamicSectionsCount = isProvisional ? coverageCount : 0;
 
     let processedReportsCount = 0;
     let rawTotals: any[] = [];
 
-    if (coverageConfigured && eligibleConditions.length > 0) {
-      const baseReportFilter: any = {
-        electionId: election.id,
-        roundId: targetRound.id,
-        status: 'PROCESSADO',
-        isSimulation: false,
-        OR: eligibleConditions
-      };
+    const baseReportFilter: any = {
+      electionId: election.id,
+      roundId: targetRound.id,
+      status: 'PROCESSADO',
+      isSimulation: false
+    };
 
+    // Para cobertura confirmada, aplica filtro estrito de elegibilidade por seção
+    if (!isProvisional && eligibleConditions.length > 0) {
+      baseReportFilter.OR = eligibleConditions;
+    }
+
+    // Apenas busca totais se a cobertura estiver configurada OU se estiver em regime provisório com relatórios recebidos
+    if (coverageConfigured || (isProvisional && receivedReportsCount > 0)) {
       processedReportsCount = await prisma.ballotReport.count({
         where: baseReportFilter
       });
 
-      rawTotals = await (prisma.ballotVote.groupBy as any)({
-        by: ['officeId', 'candidateNumber', 'partyNumber', 'voteType'],
-        where: {
-          report: baseReportFilter
-        },
-        _sum: {
-          quantity: true
-        }
-      });
+      if (processedReportsCount > 0) {
+        rawTotals = await (prisma.ballotVote.groupBy as any)({
+          by: ['officeId', 'candidateNumber', 'partyNumber', 'voteType'],
+          where: {
+            report: baseReportFilter
+          },
+          _sum: {
+            quantity: true
+          }
+        });
+      }
     }
 
     const offices = await prisma.office.findMany();
@@ -148,19 +183,15 @@ export async function GET(req: Request) {
       };
     });
 
-    const expectedAgg = await prisma.roundCoverage.aggregate({
-      where: { 
-        electionRoundId: targetRound.id,
-        expectedBUs: { gt: 0 }
-      },
-      _sum: { expectedBUs: true }
-    });
-    const expectedBUsCount = coverageConfigured ? (expectedAgg._sum.expectedBUs || 0) : 0;
-
     return NextResponse.json({
       coverageConfigured,
+      coverageStatus,
+      isProvisional,
+      receivedReports: receivedReportsCount,
       processedReports: processedReportsCount,
-      expectedReports: expectedBUsCount,
+      expectedReports: isProvisional ? 0 : expectedBUsCount,
+      officialExpectedReports: isProvisional ? null : expectedBUsCount,
+      dynamicallyRegisteredSections: dynamicSectionsCount,
       totals,
       election: {
         plei: targetRound.plei,
