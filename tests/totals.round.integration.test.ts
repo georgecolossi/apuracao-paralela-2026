@@ -9,6 +9,7 @@ describe('Round Isolation', () => {
 
   beforeAll(async () => {
     // Limpa a base
+    await prisma.roundCoverage.deleteMany();
     await prisma.ballotVote.deleteMany();
     await prisma.ballotReport.deleteMany();
     await prisma.electionRound.deleteMany();
@@ -30,6 +31,7 @@ describe('Round Isolation', () => {
       data: {
         electionId,
         roundNumber: 1,
+        plei: '3220',
         status: 'FINISHED'
       }
     });
@@ -39,10 +41,58 @@ describe('Round Isolation', () => {
       data: {
         electionId,
         roundNumber: 2,
+        plei: '3220',
         status: 'ACTIVE'
       }
     });
     round2Id = r2.id;
+
+    // Configura Cobertura Positiva para Zona 90 Seção 100
+    const state = await prisma.state.upsert({
+      where: { abbreviation: 'SC' },
+      update: {},
+      create: { abbreviation: 'SC', name: 'Santa Catarina' }
+    });
+
+    const muni = await prisma.municipality.upsert({
+      where: { officialCode: '80837' },
+      update: {},
+      create: { officialCode: '80837', name: 'Concórdia', stateId: state.id, isCoverage: true }
+    });
+
+    let zone = await prisma.pollingZone.findFirst({
+      where: { municipalityId: muni.id, zoneNumber: '0090' }
+    });
+    if (!zone) {
+      zone = await prisma.pollingZone.create({
+        data: { municipalityId: muni.id, zoneNumber: '0090', expectedBUs: 1 }
+      });
+    }
+
+    let section = await prisma.pollingSection.findFirst({
+      where: { pollingZoneId: zone.id, sectionNumber: '0100' }
+    });
+    if (!section) {
+      section = await prisma.pollingSection.create({
+        data: { pollingZoneId: zone.id, sectionNumber: '0100', expectedBUs: 1 }
+      });
+    }
+
+    await prisma.roundCoverage.create({
+      data: {
+        electionRoundId: round1Id,
+        pollingSectionId: section.id,
+        expectedBUs: 1
+      }
+    });
+
+    await prisma.roundCoverage.create({
+      data: {
+        electionRoundId: round2Id,
+        pollingSectionId: section.id,
+        expectedBUs: 1
+      }
+    });
 
     // Encontra o Office PRESIDENTE
     let presOffice = await prisma.office.findFirst({ where: { name: 'Presidente' } });
@@ -131,6 +181,7 @@ describe('Round Isolation', () => {
   });
 
   afterAll(async () => {
+    await prisma.roundCoverage.deleteMany();
     await prisma.ballotVote.deleteMany();
     await prisma.ballotReport.deleteMany();
     await prisma.electionRound.deleteMany();

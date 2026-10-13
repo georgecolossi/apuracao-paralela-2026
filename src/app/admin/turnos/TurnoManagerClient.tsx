@@ -11,10 +11,13 @@ export default function TurnoManagerClient({ roundId, roundNumber, hasActiveRoun
   const [error, setError] = useState('');
   const router = useRouter();
 
+  const roundLabel = roundNumber === 2 ? 'Segundo Turno' : `${roundNumber}º Turno`;
+  const roundLabelUpper = roundNumber === 2 ? 'SEGUNDO TURNO' : `${roundNumber}º TURNO`;
+
   const handleActivate = async () => {
     setError('');
-    const expected = `ATIVAR ${roundNumber}º TURNO`;
-    if (confirmText.trim().toUpperCase() !== expected.toUpperCase()) {
+    const expected = `ATIVAR ${roundLabelUpper}`;
+    if (confirmText.trim() !== expected) {
       setError(`Digite exatamente: ${expected}`);
       return;
     }
@@ -60,7 +63,7 @@ export default function TurnoManagerClient({ roundId, roundNumber, hasActiveRoun
             <div className="bg-red-50 border-b border-red-100 p-5 flex items-center gap-3 text-red-700">
               <AlertTriangle className="w-6 h-6 shrink-0" />
               <h3 className="font-bold uppercase tracking-wide">
-                {hasActiveRound ? `Você está prestes a encerrar o turno atual e ativar o ${roundNumber}º Turno.` : `Você está prestes a ativar o ${roundNumber}º Turno.`}
+                {hasActiveRound ? `Você está prestes a encerrar o turno atual e ativar o ${roundLabel}.` : `Você está prestes a ativar o ${roundLabel}.`}
               </h3>
             </div>
             
@@ -69,20 +72,20 @@ export default function TurnoManagerClient({ roundId, roundNumber, hasActiveRoun
               <ul className="list-disc pl-5 space-y-1 font-medium">
                 <li>BUs dos turnos encerrados <strong>NÃO</strong> serão apagados.</li>
                 <li>O histórico continuará disponível em /admin/conferencia.</li>
-                <li>O Painel Público passará a mostrar exclusivamente o <strong>{roundNumber}º Turno</strong>.</li>
+                <li>O Painel Público passará a mostrar exclusivamente o <strong>{roundLabel}</strong>.</li>
                 <li>O Scanner passará a aceitar somente QRBUs compatíveis com o novo turno ativo.</li>
               </ul>
               
               <div className="mt-6 pt-4 border-t border-slate-100">
                 <p className="font-bold text-slate-900 mb-2">
-                  Para prosseguir, digite: <span className="font-black bg-slate-100 px-2 py-0.5 rounded select-all">ATIVAR {roundNumber}º TURNO</span>
+                  Para prosseguir, digite: <span className="font-black bg-slate-100 px-2 py-0.5 rounded select-all">ATIVAR {roundLabelUpper}</span>
                 </p>
                 <input 
                   type="text" 
                   value={confirmText}
                   onChange={e => setConfirmText(e.target.value)}
-                  className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-bold uppercase text-slate-900 placeholder:text-slate-500 bg-white"
-                  placeholder={`ATIVAR ${roundNumber}º TURNO`}
+                  className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-bold text-slate-900 placeholder:text-slate-500 bg-white"
+                  placeholder={`ATIVAR ${roundLabelUpper}`}
                   disabled={loading}
                 />
               </div>

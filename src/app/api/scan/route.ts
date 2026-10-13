@@ -143,6 +143,18 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: reportData.code }, { status: 400 });
     }
 
+    // Rejeição estrita de QRBU de teste/simulação em modo oficial
+    if (!isSimulation && reportData.fase && reportData.fase !== 'O' && process.env.ALLOW_SIMULATED_FASE !== 'true') {
+      await prisma.scanSession.update({
+        where: { id: session.id },
+        data: { status: 'ERROR' }
+      });
+      return NextResponse.json({
+        error: 'SIMULATED_QRBU_REJECTED',
+        message: `Boletim de Urna de teste/simulação (FASE: ${reportData.fase}) rejeitado em modo oficial.`
+      }, { status: 400 });
+    }
+
     const { buildBallotReportIdentity } = await import('@/lib/identity');
     // Determina DeterministicID real a partir do parser
     const { electionId, roundNumber, stateCode, cityCode, zoneCode, sectionCode, urnCode } = reportData;
@@ -189,49 +201,165 @@ export async function POST(req: Request) {
 
 
     // Checagem de Escopo Geográfico (Cobertura Regional)
-    const sectionInDB = await prisma.pollingSection.findFirst({
+    const secVariants = Array.from(new Set([sectionCode, sectionCode.padStart(4, '0'), parseInt(sectionCode, 10).toString()]));
+    const zoneVariants = Array.from(new Set([zoneCode, zoneCode.padStart(4, '0'), parseInt(zoneCode, 10).toString()]));
+
+    // Validação de Município e Zona Eleitoral
+    const zoneInDB = await prisma.pollingZone.findFirst({
       where: {
-        sectionNumber: sectionCode,
-        zone: {
-          zoneNumber: zoneCode,
-          municipality: { officialCode: cityCode }
-        }
-      }
+        zoneNumber: { in: zoneVariants },
+        municipality: { officialCode: cityCode }
+      },
+      include: { municipality: true }
     });
 
-    if (!sectionInDB && !isSimulation) {
-       // Se não existe a seção no DB, não está na cobertura
-       return NextResponse.json({
-         error: 'OUT_OF_COVERAGE',
-         message: 'Seção não encontrada.'
-       }, { status: 403 });
-    }
-
-    if (sectionInDB) {
-      const coverage = await prisma.roundCoverage.findUnique({
-        where: {
-          electionRoundId_pollingSectionId: {
-            electionRoundId: activeRound.id,
-            pollingSectionId: sectionInDB.id
-          }
+    if (!zoneInDB && !isSimulation) {
+      await prisma.auditLog.create({
+        data: {
+          action: 'SCAN_OUT_OF_COVERAGE',
+          result: 'REJECTED',
+          identifiers: `City: ${cityCode}, Zone: ${zoneCode}, Sec: ${sectionCode}`,
+          errors: 'Município ou zona eleitoral fora da área de apuração configurada.',
+          userId: operatorId
         }
       });
 
-      if (!coverage && !isSimulation) {
+      return NextResponse.json({
+        error: 'OUT_OF_COVERAGE',
+        message: 'Este Boletim de Urna pertence a um município ou zona eleitoral fora da área de apuração.'
+      }, { status: 403 });
+    }
+
+    let sectionInDB = zoneInDB ? await prisma.pollingSection.findFirst({
+      where: {
+        sectionNumber: { in: secVariants },
+        pollingZoneId: zoneInDB.id
+      }
+    }) : null;
+
+    // Proteção estrita contra seções agregadas sem BU independente (expectedBUs <= 0)
+    let isAggregated = false;
+    if (sectionInDB && sectionInDB.expectedBUs !== null && sectionInDB.expectedBUs <= 0) {
+      isAggregated = true;
+    }
+    if (sectionInDB) {
+      const existingAggregatedCoverage = await prisma.roundCoverage.findFirst({
+        where: {
+          pollingSectionId: sectionInDB.id,
+          expectedBUs: { lte: 0 }
+        }
+      });
+      if (existingAggregatedCoverage) {
+        isAggregated = true;
+      }
+    }
+
+    if (isAggregated) {
+      try {
         await prisma.auditLog.create({
           data: {
-            action: 'SCAN_OUT_OF_COVERAGE',
+            action: 'SCAN_INELIGIBLE_SECTION_REJECTED',
             result: 'REJECTED',
             identifiers: `City: ${cityCode}, Zone: ${zoneCode}, Sec: ${sectionCode}`,
-            errors: 'Seção fora da área de cobertura configurada.',
+            errors: 'Seção eleitoral agregada não possui Boletim de Urna independente (expectedBUs = 0).',
             userId: operatorId
           }
         });
+      } catch (logErr) {
+        console.error('Falha ao registrar AuditLog de rejeição de seção agregada:', logErr);
+      }
 
+      return NextResponse.json({
+        error: 'SECTION_AGGREGATED_NO_BU',
+        message: 'Esta seção eleitoral é agregada e não possui Boletim de Urna independente. Seus votos foram computados na urna da seção principal.'
+      }, { status: 403 });
+    }
+
+    // Regras de Cobertura por Turno
+    if (activeRound.roundNumber === 1) {
+      // 1º Turno: Cobertura estrita pré-cadastrada (193 urnas)
+      if (!sectionInDB && !isSimulation) {
         return NextResponse.json({
           error: 'OUT_OF_COVERAGE',
-          message: 'Este Boletim de Urna pertence a uma seção fora da área de cobertura configurada.'
+          message: 'Seção não encontrada.'
         }, { status: 403 });
+      }
+
+      if (sectionInDB) {
+        const coverage = await prisma.roundCoverage.findUnique({
+          where: {
+            electionRoundId_pollingSectionId: {
+              electionRoundId: activeRound.id,
+              pollingSectionId: sectionInDB.id
+            }
+          }
+        });
+
+        if (!coverage && !isSimulation) {
+          await prisma.auditLog.create({
+            data: {
+              action: 'SCAN_OUT_OF_COVERAGE',
+              result: 'REJECTED',
+              identifiers: `City: ${cityCode}, Zone: ${zoneCode}, Sec: ${sectionCode}`,
+              errors: 'Seção fora da área de cobertura configurada.',
+              userId: operatorId
+            }
+          });
+
+          return NextResponse.json({
+            error: 'OUT_OF_COVERAGE',
+            message: 'Este Boletim de Urna pertence a uma seção fora da área de cobertura configurada.'
+          }, { status: 403 });
+        }
+
+        if (coverage && coverage.expectedBUs <= 0) {
+          return NextResponse.json({
+            error: 'SECTION_AGGREGATED_NO_BU',
+            message: 'Esta seção eleitoral é agregada e não possui Boletim de Urna independente. Seus votos foram computados na urna da seção principal.'
+          }, { status: 403 });
+        }
+      }
+    } else if (activeRound.roundNumber === 2 && !isSimulation) {
+      // 2º Turno: Cobertura dinâmica — aceita e cadastra seções elegíveis sem lista prévia
+      if (!sectionInDB && zoneInDB) {
+        const canonicalSec = sectionCode.padStart(4, '0');
+        sectionInDB = await prisma.pollingSection.create({
+          data: {
+            pollingZoneId: zoneInDB.id,
+            sectionNumber: canonicalSec,
+            expectedBUs: 1
+          }
+        });
+
+        await prisma.auditLog.create({
+          data: {
+            action: 'DYNAMIC_SECTION_REGISTERED',
+            result: 'SUCCESS',
+            identifiers: `Round: 2, Zone: ${zoneInDB.zoneNumber}, Sec: ${canonicalSec}`,
+            userId: operatorId
+          }
+        });
+      }
+
+      if (sectionInDB) {
+        const existingCoverage = await prisma.roundCoverage.findUnique({
+          where: {
+            electionRoundId_pollingSectionId: {
+              electionRoundId: activeRound.id,
+              pollingSectionId: sectionInDB.id
+            }
+          }
+        });
+
+        if (!existingCoverage) {
+          await prisma.roundCoverage.create({
+            data: {
+              electionRoundId: activeRound.id,
+              pollingSectionId: sectionInDB.id,
+              expectedBUs: 1
+            }
+          });
+        }
       }
     }
 
@@ -245,17 +373,47 @@ export async function POST(req: Request) {
       urnCode
     });
 
-    // Checar Duplicidade real
+    // 1. Checar duplicidade exata de identidade (Deterministic ID)
     const duplicate = await prisma.ballotReport.findUnique({
       where: { deterministicId }
     });
 
     if (duplicate) {
-      // Já existe. Lida com a duplicidade concorrente ou sequencial.
       return NextResponse.json({
         status: 'DUPLICADO',
         reportId: duplicate.id,
         error: 'Este Boletim de Urna já foi processado ou está na fila.'
+      }, { status: 409 });
+    }
+
+    // 2. Checar duplicidade / conflito por seção/turno
+    const conflictingSectionReport = await prisma.ballotReport.findFirst({
+      where: {
+        roundId: activeRound.id,
+        isSimulation: false,
+        cityCode: cityCode,
+        zoneCode: { in: zoneVariants },
+        sectionCode: { in: secVariants },
+        status: { in: ['PROCESSADO', 'PENDENTE_CONFIRMACAO', 'CONFLITO'] }
+      }
+    });
+
+    if (conflictingSectionReport) {
+      await prisma.auditLog.create({
+        data: {
+          action: 'BALLOT_REPORT_CONFLICT',
+          result: 'FLAGGED_FOR_REVIEW',
+          identifiers: `Round: ${roundNumber}, City: ${cityCode}, Zone: ${zoneCode}, Sec: ${sectionCode}, ExistingReportId: ${conflictingSectionReport.id}, IncomingDeterministicId: ${deterministicId}`,
+          errors: `Conflito de seção/turno: já existe BU (${conflictingSectionReport.id}) registrado para a seção ${sectionCode} neste turno.`,
+          userId: operatorId
+        }
+      });
+
+      return NextResponse.json({
+        status: 'CONFLITO',
+        error: 'CONFLITO_SECAO',
+        message: 'Conflito detectado: já existe um Boletim de Urna registrado para esta seção no turno. Sinalizado para revisão sem contabilização automática.',
+        conflictingReportId: conflictingSectionReport.id
       }, { status: 409 });
     }
 

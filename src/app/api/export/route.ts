@@ -49,12 +49,74 @@ export async function GET(req: Request) {
     targetRound = activeRounds[0];
   }
 
+  // EIXO A: Elegibilidade Positiva em Exportação
+  const eligibleCoverages = await prisma.roundCoverage.findMany({
+    where: {
+      electionRoundId: targetRound.id,
+      expectedBUs: { gt: 0 }
+    },
+    select: {
+      pollingSection: {
+        select: {
+          sectionNumber: true,
+          zone: {
+            select: {
+              zoneNumber: true,
+              municipality: {
+                select: { officialCode: true }
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+
+  const eligiblePairs = eligibleCoverages.flatMap(c => {
+    const cityCode = c.pollingSection.zone.municipality.officialCode;
+    const rawZone = c.pollingSection.zone.zoneNumber;
+    const unpaddedZone = parseInt(rawZone, 10).toString();
+    const paddedZone = rawZone.padStart(4, '0');
+    const rawSec = c.pollingSection.sectionNumber;
+    const unpaddedSec = parseInt(rawSec, 10).toString();
+    const paddedSec = rawSec.padStart(4, '0');
+
+    return [
+      { cityCode, zoneCode: unpaddedZone, sectionCode: unpaddedSec },
+      { cityCode, zoneCode: paddedZone, sectionCode: paddedSec },
+      { cityCode, zoneCode: unpaddedZone, sectionCode: paddedSec },
+      { cityCode, zoneCode: paddedZone, sectionCode: unpaddedSec }
+    ];
+  });
+
+  const seenConds = new Set<string>();
+  const eligibleConditions: Array<{ cityCode: string; zoneCode: string; sectionCode: string }> = [];
+  for (const p of eligiblePairs) {
+    const k = `${p.cityCode}:${p.zoneCode}:${p.sectionCode}`;
+    if (!seenConds.has(k)) {
+      seenConds.add(k);
+      eligibleConditions.push(p);
+    }
+  }
+
+  if (eligibleConditions.length === 0) {
+    return format === 'csv' 
+      ? new NextResponse('Estado,Municipio,Zona,Secao,Urna,Cargo,Candidato/Partido,Votos\n', { 
+          headers: { 
+            'Content-Type': 'text/csv',
+            'Content-Disposition': `attachment; filename="export_bu_T${targetRound.roundNumber}.csv"`
+          } 
+        })
+      : NextResponse.json([]);
+  }
+
   const reports = await prisma.ballotReport.findMany({
     where: { 
       electionId: election.id,
       roundId: targetRound.id,
       status: 'PROCESSADO', 
-      isSimulation: false 
+      isSimulation: false,
+      OR: eligibleConditions
     },
     include: { votes: { include: { office: true } } }
   });

@@ -22,6 +22,7 @@ function OfficeResultCard({
   source,
   round,
   isMajoritario,
+  isProvisional,
   expandedKey,
   isExpanded,
   onToggleExpand
@@ -40,16 +41,25 @@ function OfficeResultCard({
   const displayedCandidates = isExpanded ? sortedCandidates : sortedCandidates.slice(0, INITIAL_LIMIT);
 
   // Projection logic
-  const coverage = progressTotal > 0 ? progressProcessed / progressTotal : 0;
-  const hasProjection = source === 'PARALELA' && isMajoritario && coverage >= 0.25 && progressProcessed < progressTotal;
+  const coverage = (!isProvisional && progressTotal > 0) ? progressProcessed / progressTotal : 0;
+  const hasProjection = source === 'PARALELA' && isMajoritario && !isProvisional && coverage >= 0.25 && progressProcessed < progressTotal;
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm flex flex-col">
       <div className="bg-slate-50 border-b border-slate-200 p-3 md:px-5 flex justify-between items-center flex-wrap gap-4">
         <h3 className="font-black text-slate-800 uppercase tracking-widest text-base md:text-lg">{officeName}</h3>
         <div className={`px-3 py-1.5 rounded-lg border text-right ${source === 'PARALELA' ? 'bg-indigo-50 border-indigo-100 text-indigo-900' : 'bg-emerald-50 border-emerald-100 text-emerald-900'}`}>
-          <div className="text-sm font-black">{progressProcessed.toLocaleString('pt-BR')} / {progressTotal.toLocaleString('pt-BR')} {(source === 'TSE' ? 'seções' : 'urnas')}</div>
-          {source === 'TSE' && <div className="text-[10px] uppercase font-bold tracking-widest text-center mt-0.5 opacity-80">{progressPercent}% apurado</div>}
+          {isProvisional ? (
+            <div>
+              <div className="text-sm font-black">{progressProcessed.toLocaleString('pt-BR')} {(progressProcessed === 1 ? 'urna contabilizada' : 'urnas contabilizadas')}</div>
+              <div className="text-[10px] uppercase font-bold tracking-widest text-indigo-700 mt-0.5">Cobertura Provisória</div>
+            </div>
+          ) : (
+            <div>
+              <div className="text-sm font-black">{progressProcessed.toLocaleString('pt-BR')} / {progressTotal.toLocaleString('pt-BR')} {(source === 'TSE' ? 'seções' : 'urnas')}</div>
+              {source === 'TSE' && <div className="text-[10px] uppercase font-bold tracking-widest text-center mt-0.5 opacity-80">{progressPercent}% apurado</div>}
+            </div>
+          )}
         </div>
       </div>
       
@@ -206,25 +216,44 @@ export default function ApuracaoDashboard() {
   const renderParalela = () => {
     if (!paralela || !paralela.totals) return <div className="p-8 text-center text-slate-500 font-bold uppercase tracking-widest">Sem dados no sistema local</div>;
 
-    if (paralela.coverageConfigured === false) {
+    const p = paralela.processedReports || 0;
+    const e = paralela.expectedReports || 0;
+    const isProvisional = Boolean(paralela.isProvisional);
+
+    if (paralela.coverageConfigured === false && p === 0) {
       return (
         <div className="bg-white p-12 rounded-2xl border border-slate-200 text-center shadow-sm">
           <Archive className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-          <h2 className="text-xl font-black text-slate-700 tracking-tight">Cobertura ainda não configurada</h2>
-          <p className="text-slate-500 text-sm mt-2 font-medium">Aguardando configuração das seções do turno para iniciar a apuração paralela.</p>
+          <h2 className="text-xl font-black text-slate-700 tracking-tight">
+            {isProvisional ? 'Aguardando Boletins de Urna' : 'Cobertura ainda não configurada'}
+          </h2>
+          <p className="text-slate-500 text-sm mt-2 font-medium">
+            {isProvisional
+              ? 'Segundo Turno operando em regime de cobertura dinâmica. Os votos serão exibidos assim que os primeiros BUs forem contabilizados.'
+              : 'Aguardando configuração das seções do turno para iniciar a apuração paralela.'}
+          </p>
         </div>
       );
     }
 
-    const p = paralela.processedReports;
-    const e = paralela.expectedReports;
-    
     // Check if any visible office has projection enabled
-    const coverage = e > 0 ? p / e : 0;
-    const hasAnyProjection = coverage >= 0.25 && p < e; // Applies only to Majoritario
+    const coverage = (!isProvisional && e > 0) ? p / e : 0;
+    const hasAnyProjection = !isProvisional && coverage >= 0.25 && p < e; // Applies only to Majoritario
 
     return (
       <div className="space-y-6">
+        {isProvisional && (
+          <div className="bg-amber-50 border border-amber-200 text-amber-900 p-4 rounded-xl text-sm flex gap-4 shadow-sm items-start">
+            <AlertCircle className="w-5 h-5 shrink-0 text-amber-600 mt-0.5" />
+            <div className="leading-relaxed">
+              <strong className="block text-amber-900 tracking-wide text-xs uppercase font-black">COBERTURA PROVISÓRIA — SEGUNDO TURNO</strong>
+              <span className="text-[11px] opacity-90">
+                Seções eleitorais cadastradas dinamicamente via coleta presencial de QRBUs ({paralela.dynamicallyRegisteredSections || p} seções recebidas). Denominador oficial em confirmação pela Justiça Eleitoral.
+              </span>
+            </div>
+          </div>
+        )}
+
         {hasAnyProjection && (
           <div className="bg-indigo-50 border border-indigo-200 text-indigo-800 p-4 rounded-xl text-sm flex gap-4 shadow-sm items-start">
             <AlertCircle className="w-5 h-5 shrink-0 text-indigo-600 mt-0.5" />
@@ -256,6 +285,7 @@ export default function ApuracaoDashboard() {
                 source="PARALELA"
                 round={round}
                 isMajoritario={isMajoritario(office)}
+                isProvisional={isProvisional}
                 expandedKey={expKey}
                 isExpanded={!!expanded[expKey]}
                 onToggleExpand={handleToggleExpand}

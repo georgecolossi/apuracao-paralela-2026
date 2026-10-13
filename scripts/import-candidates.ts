@@ -95,6 +95,16 @@ async function processFile(filePath: string, allowedRoles: Set<string>) {
       process.exit(1);
     }
 
+    if (round !== 1) {
+      console.error(`ERRO DE SEGURANÇA: scripts/import-candidates.ts é exclusivo para o Primeiro Turno (NR_TURNO = 1). Linha contém NR_TURNO = ${round}. Para o Segundo Turno, utilize obrigatoriamente scripts/import-candidates-t2.ts.`);
+      process.exit(1);
+    }
+
+    if (candidateSequence.endsWith('-T2')) {
+      console.error(`ERRO DE INTEGRIDADE: Detectada chave com sufixo de Segundo Turno (${candidateSequence}). Abortando importação do Primeiro Turno.`);
+      process.exit(1);
+    }
+
     await prisma.candidateMetadata.upsert({
       where: { candidateSequence },
       update: {
