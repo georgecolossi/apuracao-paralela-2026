@@ -143,6 +143,18 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: reportData.code }, { status: 400 });
     }
 
+    // Rejeição estrita de QRBU de teste/simulação em modo oficial
+    if (!isSimulation && reportData.fase && reportData.fase !== 'O' && process.env.ALLOW_SIMULATED_FASE !== 'true') {
+      await prisma.scanSession.update({
+        where: { id: session.id },
+        data: { status: 'ERROR' }
+      });
+      return NextResponse.json({
+        error: 'SIMULATED_QRBU_REJECTED',
+        message: `Boletim de Urna de teste/simulação (FASE: ${reportData.fase}) rejeitado em modo oficial.`
+      }, { status: 400 });
+    }
+
     const { buildBallotReportIdentity } = await import('@/lib/identity');
     // Determina DeterministicID real a partir do parser
     const { electionId, roundNumber, stateCode, cityCode, zoneCode, sectionCode, urnCode } = reportData;

@@ -115,6 +115,7 @@ export class Tse2026SemanticParser {
       signature: map.get('ASSI') || '',
       hashStatus: 'UNAVAILABLE',
       sigStatus: 'UNAVAILABLE',
+      fase: map.get('FASE'),
       warnings: unknownFields.size > 0 ? [`Campos opcionais desconhecidos: ${Array.from(unknownFields).join(', ')}`] : []
     };
   }
