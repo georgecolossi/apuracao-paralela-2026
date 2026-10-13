@@ -9,7 +9,21 @@ vi.mock('../src/lib/auth', () => ({
 
 vi.mock('../src/lib/db', () => ({
   prisma: {
-    election: { findMany: vi.fn().mockResolvedValue([{ id: 'E1', rounds: [{ roundNumber: 1, id: 'R1', status: 'ACTIVE' }] }]) }, ballotReport: {
+    election: { findMany: vi.fn().mockResolvedValue([{ id: 'E1', rounds: [{ roundNumber: 1, id: 'R1', status: 'ACTIVE' }] }]) },
+    roundCoverage: {
+      findMany: vi.fn().mockResolvedValue([
+        {
+          pollingSection: {
+            sectionNumber: '0001',
+            zone: {
+              zoneNumber: '0090',
+              municipality: { officialCode: '80837' },
+            },
+          },
+        },
+      ]),
+    },
+    ballotReport: {
       findMany: vi.fn().mockResolvedValue([]),
     },
   },

@@ -8,6 +8,7 @@ export default defineConfig({
     }
   },
   test: {
-    setupFiles: ['./tests/setup.ts']
+    setupFiles: ['./tests/setup.ts'],
+    fileParallelism: false
   }
 });

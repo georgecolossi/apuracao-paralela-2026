@@ -16,6 +16,42 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return NextResponse.json({ error: 'BU inválido ou já processado' }, { status: 400 });
     }
 
+    const secVariants = Array.from(new Set([report.sectionCode, report.sectionCode.padStart(4, '0'), parseInt(report.sectionCode, 10).toString()]));
+    const zoneVariants = Array.from(new Set([report.zoneCode, report.zoneCode.padStart(4, '0'), parseInt(report.zoneCode, 10).toString()]));
+
+    const sectionInDB = await prisma.pollingSection.findFirst({
+      where: {
+        sectionNumber: { in: secVariants },
+        zone: {
+          zoneNumber: { in: zoneVariants },
+          municipality: { officialCode: report.cityCode }
+        }
+      }
+    });
+
+    if (!sectionInDB) {
+      return NextResponse.json({ 
+        error: 'SECTION_NOT_FOUND', 
+        message: 'Seção eleitoral não encontrada na base de cobertura.' 
+      }, { status: 403 });
+    }
+
+    const coverage = await prisma.roundCoverage.findUnique({
+      where: {
+        electionRoundId_pollingSectionId: {
+          electionRoundId: report.roundId,
+          pollingSectionId: sectionInDB.id
+        }
+      }
+    });
+
+    if (!coverage || coverage.expectedBUs <= 0) {
+      return NextResponse.json({
+        error: 'SECTION_INELIGIBLE_FOR_CONFIRMATION',
+        message: 'Esta seção eleitoral não possui cobertura positiva (expectedBUs <= 0) e não pode ser confirmada para totalização.'
+      }, { status: 403 });
+    }
+
     // Transação de confirmação e auditoria
     await prisma.$transaction(async (tx) => {
       await tx.ballotReport.update({
