@@ -351,9 +351,9 @@ describe('Validação Operacional do Scanner T2 e API /api/scan', () => {
   // -------------------------------------------------------------------------
   // 4. Rejeição de zona ou seção fora do escopo configurado
   // -------------------------------------------------------------------------
-  it('4. Deve rejeitar zona ou seção fora da área de cobertura (OUT_OF_COVERAGE)', async () => {
+  it('4. Deve rejeitar zona ou município fora da área de cobertura (OUT_OF_COVERAGE)', async () => {
     const oocBodies = [
-      'VRQR:6.0 ORIG:VOTA ORLC:LEG PROC:2002 DTPL:20261025 PLEI:3221 TURN:2 FASE:O UNFE:SC MUNI:80837 ZONA:0090 SECA:9999 AGRE: IDUE:9900003 IDCA:990000000000000000000003 VERS:10.20.0.0 LOCA:1 APTO:100 COMP:80 FALT:20 HBBM:0 HBBG:0 HBSB:0 DTAB:20261025 HRAB:080000 DTFC:20261025 HRFC:170000 IDEL:6258 CARG:1 TIPO:0 VERC:00 13:50 22:30'
+      'VRQR:6.0 ORIG:VOTA ORLC:LEG PROC:2002 DTPL:20261025 PLEI:3221 TURN:2 FASE:O UNFE:SC MUNI:81000 ZONA:0090 SECA:0001 AGRE: IDUE:9900003 IDCA:990000000000000000000003 VERS:10.20.0.0 LOCA:1 APTO:100 COMP:80 FALT:20 HBBM:0 HBBG:0 HBSB:0 DTAB:20261025 HRAB:080000 DTFC:20261025 HRFC:170000 IDEL:6258 CARG:1 TIPO:0 VERC:00 13:50 22:30'
     ];
     const oocParts = buildQrbuParts(oocBodies, 'O');
     const sessionId = `SESSION-OOC-${Date.now()}`;

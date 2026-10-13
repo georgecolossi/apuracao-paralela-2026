@@ -47,7 +47,7 @@ export async function POST(req: Request) {
     const coverageCount = await prisma.roundCoverage.count({
       where: { electionRoundId: targetRound.id }
     });
-    if (coverageCount === 0) {
+    if (coverageCount === 0 && targetRound.roundNumber !== 2) {
       return NextResponse.json({ error: 'Não é possível ativar um turno sem cobertura (Coverage) configurada.' }, { status: 400 });
     }
 
