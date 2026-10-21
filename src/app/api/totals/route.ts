@@ -183,6 +183,102 @@ export async function GET(req: Request) {
       };
     });
 
+    if (targetRound.roundNumber === 2) {
+      const t2Candidates = await prisma.candidateMetadata.findMany({
+        where: {
+          electionYear: election.year,
+          round: 2,
+          officeCode: '1'
+        },
+        orderBy: { candidateNumber: 'asc' }
+      });
+
+      for (const c of t2Candidates) {
+        const exists = totals.some(t => t.officeName === 'Presidente' && t.candidateNumber === c.candidateNumber);
+        if (!exists) {
+          totals.push({
+            officeName: 'Presidente',
+            candidateNumber: c.candidateNumber,
+            partyNumber: c.partyNumber,
+            voteType: 'NOMINAL',
+            quantity: 0,
+            metadataStatus: 'OFFICIAL',
+            candidateName: c.ballotName,
+            partyAbbreviation: c.partyAbbreviation
+          });
+        }
+      }
+    }
+
+    let attendance: {
+      eligible: number;
+      turnout: number;
+      abstention: number;
+      turnoutPercent: string | null;
+      abstentionPercent: string | null;
+      available: boolean;
+    } | null = null;
+
+    if (processedReportsCount > 0) {
+      const confirmedReports = await prisma.ballotReport.findMany({
+        where: baseReportFilter,
+        select: {
+          stateCode: true,
+          cityCode: true,
+          zoneCode: true,
+          sectionCode: true,
+          validationData: true
+        }
+      });
+
+      const seenSections = new Set<string>();
+      let totalEligible = 0;
+      let totalTurnout = 0;
+      let hasValidAttendance = false;
+
+      for (const rep of confirmedReports) {
+        const secKey = `${rep.stateCode}:${rep.cityCode}:${rep.zoneCode}:${rep.sectionCode}`;
+        if (seenSections.has(secKey)) continue;
+        seenSections.add(secKey);
+
+        if (rep.validationData) {
+          try {
+            const parsedVal = JSON.parse(rep.validationData);
+            if (parsedVal.attendance && typeof parsedVal.attendance.apto === 'number') {
+              hasValidAttendance = true;
+              totalEligible += parsedVal.attendance.apto;
+              if (typeof parsedVal.attendance.comp === 'number') {
+                totalTurnout += parsedVal.attendance.comp;
+              }
+            }
+          } catch (e) {}
+        }
+      }
+
+      if (hasValidAttendance && totalEligible > 0) {
+        const abstention = Math.max(0, totalEligible - totalTurnout);
+        attendance = {
+          eligible: totalEligible,
+          turnout: totalTurnout,
+          abstention,
+          turnoutPercent: ((totalTurnout / totalEligible) * 100).toFixed(2).replace('.', ','),
+          abstentionPercent: ((abstention / totalEligible) * 100).toFixed(2).replace('.', ','),
+          available: true
+        };
+      }
+    }
+
+    if (!attendance) {
+      attendance = {
+        eligible: 0,
+        turnout: 0,
+        abstention: 0,
+        turnoutPercent: null,
+        abstentionPercent: null,
+        available: false
+      };
+    }
+
     return NextResponse.json({
       coverageConfigured,
       coverageStatus,
@@ -191,7 +287,9 @@ export async function GET(req: Request) {
       processedReports: processedReportsCount,
       expectedReports: isProvisional ? 0 : expectedBUsCount,
       officialExpectedReports: isProvisional ? null : expectedBUsCount,
+      estimatedReferenceBUs: isProvisional ? 193 : null,
       dynamicallyRegisteredSections: dynamicSectionsCount,
+      attendance,
       totals,
       election: {
         plei: targetRound.plei,
