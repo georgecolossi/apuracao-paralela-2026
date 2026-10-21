@@ -29,6 +29,9 @@ export type BallotReportData = {
   sigStatus?: VerificationState;
   fase?: string;
   warnings?: string[];
+  apto?: number;
+  comp?: number;
+  falt?: number;
 };
 
 export interface BallotReportParser {

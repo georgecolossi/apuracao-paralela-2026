@@ -102,6 +102,13 @@ export class Tse2026SemanticParser {
       validVotes.push(v);
     }
 
+    const aptoStr = map.get('APTO');
+    const compStr = map.get('COMP');
+    const faltStr = map.get('FALT');
+    const apto = aptoStr && !isNaN(parseInt(aptoStr, 10)) ? parseInt(aptoStr, 10) : undefined;
+    const comp = compStr && !isNaN(parseInt(compStr, 10)) ? parseInt(compStr, 10) : undefined;
+    const falt = faltStr && !isNaN(parseInt(faltStr, 10)) ? parseInt(faltStr, 10) : undefined;
+
     return {
       electionId: map.get('PLEI') || 'DESCONHECIDO',
       roundNumber: parseInt(map.get('TURN') || '1', 10),
@@ -116,7 +123,10 @@ export class Tse2026SemanticParser {
       hashStatus: 'UNAVAILABLE',
       sigStatus: 'UNAVAILABLE',
       fase: map.get('FASE'),
-      warnings: unknownFields.size > 0 ? [`Campos opcionais desconhecidos: ${Array.from(unknownFields).join(', ')}`] : []
+      warnings: unknownFields.size > 0 ? [`Campos opcionais desconhecidos: ${Array.from(unknownFields).join(', ')}`] : [],
+      apto,
+      comp,
+      falt
     };
   }
 }
