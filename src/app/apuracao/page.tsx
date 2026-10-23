@@ -16,6 +16,7 @@ function OfficeResultCard({
   abstention,
   turnoutPercent,
   abstentionPercent,
+  attendance,
   progressProcessed,
   progressTotal,
   progressPercent,
@@ -29,10 +30,10 @@ function OfficeResultCard({
 }: any) {
   // Sort candidates by votes DESC, then candidateNumber ASC
   const sortedCandidates = [...candidates].sort((a, b) => {
-    const votesDiff = (b.quantity ?? b.votes) - (a.quantity ?? a.votes);
+    const votesDiff = (b.quantity ?? b.votes ?? 0) - (a.quantity ?? a.votes ?? 0);
     if (votesDiff !== 0) return votesDiff;
-    const numA = parseInt(a.candidateNumber ?? a.number) || 0;
-    const numB = parseInt(b.candidateNumber ?? b.number) || 0;
+    const numA = parseInt(a.candidateNumber ?? a.number, 10) || 0;
+    const numB = parseInt(b.candidateNumber ?? b.number, 10) || 0;
     return numA - numB;
   });
 
@@ -41,8 +42,37 @@ function OfficeResultCard({
   const displayedCandidates = isExpanded ? sortedCandidates : sortedCandidates.slice(0, INITIAL_LIMIT);
 
   // Projection logic
-  const coverage = (!isProvisional && progressTotal > 0) ? progressProcessed / progressTotal : 0;
-  const hasProjection = source === 'PARALELA' && isMajoritario && !isProvisional && coverage >= 0.25 && progressProcessed < progressTotal;
+  let hasProjection = false;
+  let projFn: ((v: number) => number) | null = null;
+
+  if (source === 'PARALELA' && isMajoritario) {
+    if (round === 1) {
+      const coverage = (!isProvisional && progressTotal > 0) ? progressProcessed / progressTotal : 0;
+      hasProjection = !isProvisional && coverage >= 0.25 && progressProcessed < progressTotal;
+      if (hasProjection) {
+        projFn = (v: number) => Math.round(v * (progressTotal / progressProcessed));
+      }
+    } else if (round === 2) {
+      if (isProvisional) {
+        hasProjection = progressProcessed >= 1;
+        if (hasProjection) {
+          projFn = (v: number) => {
+            if (progressProcessed >= 193) return v;
+            return Math.round((v * 193) / progressProcessed);
+          };
+        }
+      } else {
+        hasProjection = progressProcessed >= 1 && progressProcessed < progressTotal;
+        if (hasProjection) {
+          projFn = (v: number) => Math.round(v * (progressTotal / progressProcessed));
+        }
+      }
+    }
+  }
+
+  const isExceeded = isProvisional && progressProcessed > 193;
+  const estPct = isProvisional ? ((progressProcessed / 193) * 100).toFixed(1).replace('.', ',') : null;
+  const totalApurados = validVotes + blankVotes + nullVotes;
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm flex flex-col">
@@ -50,10 +80,17 @@ function OfficeResultCard({
         <h3 className="font-black text-slate-800 uppercase tracking-widest text-base md:text-lg">{officeName}</h3>
         <div className={`px-3 py-1.5 rounded-lg border text-right ${source === 'PARALELA' ? 'bg-indigo-50 border-indigo-100 text-indigo-900' : 'bg-emerald-50 border-emerald-100 text-emerald-900'}`}>
           {isProvisional ? (
-            <div>
-              <div className="text-sm font-black">{progressProcessed.toLocaleString('pt-BR')} {(progressProcessed === 1 ? 'urna contabilizada' : 'urnas contabilizadas')}</div>
-              <div className="text-[10px] uppercase font-bold tracking-widest text-indigo-700 mt-0.5">Cobertura Provisória</div>
-            </div>
+            isExceeded ? (
+              <div>
+                <div className="text-sm font-black text-indigo-950">{progressProcessed.toLocaleString('pt-BR')} urnas apuradas</div>
+                <div className="text-[10px] uppercase font-bold tracking-wider text-amber-700 mt-0.5">Referência (~193 BUs) superada</div>
+              </div>
+            ) : (
+              <div>
+                <div className="text-sm font-black text-indigo-950">{progressProcessed.toLocaleString('pt-BR')} / ~193 urnas apuradas</div>
+                <div className="text-[10px] uppercase font-bold tracking-wider text-indigo-700 mt-0.5">{estPct}% — cobertura estimada</div>
+              </div>
+            )
           ) : (
             <div>
               <div className="text-sm font-black">{progressProcessed.toLocaleString('pt-BR')} / {progressTotal.toLocaleString('pt-BR')} {(source === 'TSE' ? 'seções' : 'urnas')}</div>
@@ -62,6 +99,13 @@ function OfficeResultCard({
           )}
         </div>
       </div>
+
+      {round === 2 && source === 'PARALELA' && progressProcessed === 0 && (
+        <div className="bg-amber-50/70 border-b border-amber-100 px-3 md:px-5 py-2 text-xs font-semibold text-amber-900 flex items-center gap-2">
+          <span className="inline-block w-2 h-2 rounded-full bg-amber-500 animate-pulse" />
+          <span>Apuração ainda não iniciada — aguardando confirmação dos primeiros Boletins de Urna</span>
+        </div>
+      )}
       
       <div className="p-0 overflow-x-auto">
         <table className="w-full text-left border-collapse min-w-[500px]">
@@ -70,12 +114,12 @@ function OfficeResultCard({
               <th className="p-3 px-5 text-xs font-bold uppercase text-slate-500 tracking-wider">Candidato</th>
               <th className="p-3 px-5 text-xs font-bold uppercase text-slate-500 tracking-wider text-right w-24">Votos</th>
               <th className="p-3 px-5 text-xs font-bold uppercase text-slate-500 tracking-wider text-right w-24">% Válidos</th>
-              {hasProjection && <th className="p-3 px-5 text-xs font-bold uppercase text-indigo-500 tracking-wider text-right w-32">Projeção*</th>}
+              {hasProjection && <th className="p-3 px-5 text-xs font-bold uppercase text-indigo-500 tracking-wider text-right w-36">Projeção*</th>}
             </tr>
           </thead>
           <tbody>
             {displayedCandidates.map((c: any) => {
-              const v = c.quantity ?? c.votes;
+              const v = c.quantity ?? c.votes ?? 0;
               const num = c.candidateNumber ?? c.number;
               const name = c.candidateName ?? c.name;
               const party = c.partyAbbreviation ?? 'Partido ' + (c.partyNumber ?? '');
@@ -84,7 +128,7 @@ function OfficeResultCard({
                 ? c.percent 
                 : (validVotes > 0 ? ((v / validVotes) * 100).toFixed(2).replace('.', ',') : '0,00');
 
-              const proj = hasProjection ? Math.round(v * (progressTotal / progressProcessed)) : null;
+              const proj = hasProjection && projFn ? projFn(v) : null;
 
               return (
                 <tr key={num} className="border-b border-slate-50 hover:bg-slate-50/80 transition-colors">
@@ -125,40 +169,77 @@ function OfficeResultCard({
           <div className="flex items-center gap-1.5">
             <span className="text-slate-500 font-bold uppercase text-[10px] tracking-wider">Válidos:</span>
             <span className="font-black text-slate-800 text-sm">{validVotes.toLocaleString('pt-BR')}</span>
-            {totalGeral > 0 && <span className="text-slate-400 font-bold text-[10px]">({((validVotes/totalGeral)*100).toFixed(2).replace(".", ",")}%)</span>}
+            {totalApurados > 0 ? (
+              <span className="text-slate-400 font-bold text-[10px]">({((validVotes / totalApurados) * 100).toFixed(2).replace('.', ',')}%)</span>
+            ) : (
+              <span className="text-slate-400 font-bold text-[10px]">(0,00%)</span>
+            )}
           </div>
           <div className="flex items-center gap-1.5">
             <span className="text-slate-500 font-bold uppercase text-[10px] tracking-wider">Brancos:</span>
             <span className="font-black text-slate-800 text-sm">{blankVotes.toLocaleString('pt-BR')}</span>
-            {totalGeral > 0 && <span className="text-slate-400 font-bold text-[10px]">({((blankVotes/totalGeral)*100).toFixed(2).replace(".", ",")}%)</span>}
+            {totalApurados > 0 ? (
+              <span className="text-slate-400 font-bold text-[10px]">({((blankVotes / totalApurados) * 100).toFixed(2).replace('.', ',')}%)</span>
+            ) : (
+              <span className="text-slate-400 font-bold text-[10px]">(0,00%)</span>
+            )}
           </div>
           <div className="flex items-center gap-1.5">
             <span className="text-slate-500 font-bold uppercase text-[10px] tracking-wider">Nulos:</span>
             <span className="font-black text-slate-800 text-sm">{nullVotes.toLocaleString('pt-BR')}</span>
-            {totalGeral > 0 && <span className="text-slate-400 font-bold text-[10px]">({((nullVotes/totalGeral)*100).toFixed(2).replace(".", ",")}%)</span>}
+            {totalApurados > 0 ? (
+              <span className="text-slate-400 font-bold text-[10px]">({((nullVotes / totalApurados) * 100).toFixed(2).replace('.', ',')}%)</span>
+            ) : (
+              <span className="text-slate-400 font-bold text-[10px]">(0,00%)</span>
+            )}
           </div>
         </div>
         
-        {source === 'TSE' && (
-          <>
-            <div className="h-px bg-slate-200 w-full" />
+        <div className="h-px bg-slate-200 w-full" />
+
+        {source === 'TSE' ? (
+          <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
+            <div className="flex items-center gap-1.5">
+              <span className="text-slate-500 font-bold uppercase text-[10px] tracking-wider">Aptos:</span>
+              <span className="font-black text-slate-800 text-sm">{eligible ? eligible.toLocaleString('pt-BR') : '0'}</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-slate-500 font-bold uppercase text-[10px] tracking-wider">Comparec:</span>
+              <span className="font-black text-slate-800 text-sm">{turnout ? turnout.toLocaleString('pt-BR') : '0'}</span>
+              <span className="text-slate-400 font-bold text-[10px]">({turnoutPercent ?? '0,00'}%)</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-slate-500 font-bold uppercase text-[10px] tracking-wider">Abstenção:</span>
+              <span className="font-black text-slate-800 text-sm">{abstention ? abstention.toLocaleString('pt-BR') : '0'}</span>
+              <span className="text-slate-400 font-bold text-[10px]">({abstentionPercent ?? '0,00'}%)</span>
+            </div>
+          </div>
+        ) : (
+          attendance && attendance.available && attendance.eligible > 0 ? (
             <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
               <div className="flex items-center gap-1.5">
                 <span className="text-slate-500 font-bold uppercase text-[10px] tracking-wider">Aptos:</span>
-                <span className="font-black text-slate-800 text-sm">{eligible.toLocaleString('pt-BR')}</span>
+                <span className="font-black text-slate-800 text-sm">{attendance.eligible.toLocaleString('pt-BR')}</span>
               </div>
               <div className="flex items-center gap-1.5">
-                <span className="text-slate-500 font-bold uppercase text-[10px] tracking-wider">Comparec:</span>
-                <span className="font-black text-slate-800 text-sm">{turnout.toLocaleString('pt-BR')}</span>
-                <span className="text-slate-400 font-bold text-[10px]">({turnoutPercent}%)</span>
+                <span className="text-slate-500 font-bold uppercase text-[10px] tracking-wider">Comparecimento:</span>
+                <span className="font-black text-slate-800 text-sm">{attendance.turnout.toLocaleString('pt-BR')}</span>
+                <span className="text-slate-400 font-bold text-[10px]">({attendance.turnoutPercent}%)</span>
               </div>
               <div className="flex items-center gap-1.5">
-                <span className="text-slate-500 font-bold uppercase text-[10px] tracking-wider">Abstenção:</span>
-                <span className="font-black text-slate-800 text-sm">{abstention.toLocaleString('pt-BR')}</span>
-                <span className="text-slate-400 font-bold text-[10px]">({abstentionPercent}%)</span>
+                <span className="text-slate-500 font-bold uppercase text-[10px] tracking-wider">Abstenções:</span>
+                <span className="font-black text-slate-800 text-sm">{attendance.abstention.toLocaleString('pt-BR')}</span>
+                <span className="text-slate-400 font-bold text-[10px]">({attendance.abstentionPercent}%)</span>
               </div>
             </div>
-          </>
+          ) : (
+            <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
+              <div className="flex items-center gap-1.5">
+                <span className="text-slate-500 font-bold uppercase text-[10px] tracking-wider">Comparecimento / Abstenções:</span>
+                <span className="font-medium text-slate-400 text-xs italic">Dados indisponíveis</span>
+              </div>
+            </div>
+          )
         )}
       </div>
     </div>
@@ -220,17 +301,15 @@ export default function ApuracaoDashboard() {
     const e = paralela.expectedReports || 0;
     const isProvisional = Boolean(paralela.isProvisional);
 
-    if (paralela.coverageConfigured === false && p === 0) {
+    if (round !== 2 && paralela.coverageConfigured === false && p === 0) {
       return (
         <div className="bg-white p-12 rounded-2xl border border-slate-200 text-center shadow-sm">
           <Archive className="w-12 h-12 text-slate-300 mx-auto mb-3" />
           <h2 className="text-xl font-black text-slate-700 tracking-tight">
-            {isProvisional ? 'Aguardando Boletins de Urna' : 'Cobertura ainda não configurada'}
+            Cobertura ainda não configurada
           </h2>
           <p className="text-slate-500 text-sm mt-2 font-medium">
-            {isProvisional
-              ? 'Segundo Turno operando em regime de cobertura dinâmica. Os votos serão exibidos assim que os primeiros BUs forem contabilizados.'
-              : 'Aguardando configuração das seções do turno para iniciar a apuração paralela.'}
+            Aguardando configuração das seções do turno para iniciar a apuração paralela.
           </p>
         </div>
       );
@@ -238,7 +317,8 @@ export default function ApuracaoDashboard() {
 
     // Check if any visible office has projection enabled
     const coverage = (!isProvisional && e > 0) ? p / e : 0;
-    const hasAnyProjection = !isProvisional && coverage >= 0.25 && p < e; // Applies only to Majoritario
+    const hasT1Projection = round === 1 && !isProvisional && coverage >= 0.25 && p < e;
+    const isRound2 = round === 2;
 
     return (
       <div className="space-y-6">
@@ -248,26 +328,57 @@ export default function ApuracaoDashboard() {
             <div className="leading-relaxed">
               <strong className="block text-amber-900 tracking-wide text-xs uppercase font-black">COBERTURA PROVISÓRIA — SEGUNDO TURNO</strong>
               <span className="text-[11px] opacity-90">
-                Seções eleitorais cadastradas dinamicamente via coleta presencial de QRBUs ({paralela.dynamicallyRegisteredSections || p} seções recebidas). Denominador oficial em confirmação pela Justiça Eleitoral.
+                Seções eleitorais cadastradas dinamicamente via coleta presencial de QRBUs ({paralela.dynamicallyRegisteredSections || p} seções recebidas). Referência histórica de 193 urnas apuradas.
               </span>
             </div>
           </div>
         )}
 
-        {hasAnyProjection && (
-          <div className="bg-indigo-50 border border-indigo-200 text-indigo-800 p-4 rounded-xl text-sm flex gap-4 shadow-sm items-start">
-            <AlertCircle className="w-5 h-5 shrink-0 text-indigo-600 mt-0.5" />
-            <div className="leading-relaxed">
-              <strong className="block text-indigo-900 tracking-wide text-xs">PROJEÇÃO COM BASE NAS URNAS APURADAS*</strong>
-              <span className="text-[11px] opacity-90">Estimativa matemática baseada nas urnas já apuradas. Não representa resultado oficial nem declaração de vencedor. (Apenas majoritários).</span>
+        {isRound2 ? (
+          p === 0 ? (
+            <div className="bg-slate-50 border border-slate-200 text-slate-700 p-4 rounded-xl text-sm flex gap-4 shadow-sm items-start">
+              <AlertCircle className="w-5 h-5 shrink-0 text-slate-400 mt-0.5" />
+              <div className="leading-relaxed">
+                <strong className="block text-slate-800 tracking-wide text-xs uppercase font-black">PROJEÇÃO — SEGUNDO TURNO</strong>
+                <span className="text-[11px] opacity-90">Aguardando primeiro BU para iniciar a projeção.</span>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="bg-indigo-50 border border-indigo-200 text-indigo-800 p-4 rounded-xl text-sm flex gap-4 shadow-sm items-start">
+              <AlertCircle className="w-5 h-5 shrink-0 text-indigo-600 mt-0.5" />
+              <div className="leading-relaxed">
+                <strong className="block text-indigo-900 tracking-wide text-xs uppercase font-black">
+                  {isProvisional ? 'EXTRAPOLAÇÃO PROVISÓRIA — REFERÊNCIA DE 193 URNAS*' : 'PROJEÇÃO COM BASE NAS URNAS APURADAS*'}
+                </strong>
+                <span className="text-[11px] opacity-90">
+                  {isProvisional ? (
+                    <>
+                      Estimativa calculada a partir de {p} {p === 1 ? 'BU contabilizado' : 'BUs contabilizados'} com base na referência histórica de 193 urnas. Não representa resultado oficial nem declaração antecipada de vencedor.
+                      {p > 193 && ' (Referência histórica de 193 urnas superada — projeção mantida no total de votos contabilizados).'}
+                    </>
+                  ) : (
+                    'Estimativa matemática baseada nas urnas já apuradas. Não representa resultado oficial nem declaração de vencedor.'
+                  )}
+                </span>
+              </div>
+            </div>
+          )
+        ) : (
+          hasT1Projection && (
+            <div className="bg-indigo-50 border border-indigo-200 text-indigo-800 p-4 rounded-xl text-sm flex gap-4 shadow-sm items-start">
+              <AlertCircle className="w-5 h-5 shrink-0 text-indigo-600 mt-0.5" />
+              <div className="leading-relaxed">
+                <strong className="block text-indigo-900 tracking-wide text-xs">PROJEÇÃO COM BASE NAS URNAS APURADAS*</strong>
+                <span className="text-[11px] opacity-90">Estimativa matemática baseada nas urnas já apuradas. Não representa resultado oficial nem declaração de vencedor. (Apenas majoritários).</span>
+              </div>
+            </div>
+          )
         )}
 
         <div className="grid grid-cols-1 gap-6">
-          {offices.map(office => {
+          {(round === 2 ? ['Presidente'] : offices).map(office => {
             const data = getOfficeDataAggregate(paralela.election?.plei, round, office, paralela.totals);
-            if (data.totalGeral === 0) return null;
+            if (data.totalGeral === 0 && !(round === 2 && office === 'Presidente' && data.candidates.length > 0)) return null;
             
             const expKey = `PARALELA:${round}:${office}`;
             return (
@@ -279,6 +390,7 @@ export default function ApuracaoDashboard() {
                 blankVotes={data.brancos}
                 nullVotes={data.nulos + data.nulosTecnicos + data.pendentes}
                 totalGeral={data.totalGeral}
+                attendance={paralela.attendance}
                 progressProcessed={p}
                 progressTotal={e}
                 progressPercent={e > 0 ? ((p / e) * 100).toFixed(2).replace('.', ',') : '0,00'}

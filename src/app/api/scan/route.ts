@@ -476,7 +476,12 @@ export async function POST(req: Request) {
             validationData: JSON.stringify({
               parsed: true,
               hashStatus: reportData.hashStatus,
-              sigStatus: reportData.sigStatus
+              sigStatus: reportData.sigStatus,
+              attendance: (reportData.apto !== undefined || reportData.comp !== undefined || reportData.falt !== undefined) ? {
+                apto: reportData.apto,
+                comp: reportData.comp,
+                falt: reportData.falt
+              } : undefined
             }),
             metadata: sequenceId,
             isSimulation: session!.isSimulation,
