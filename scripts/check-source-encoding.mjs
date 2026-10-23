@@ -8,7 +8,7 @@ function checkDir(dir) {
   let hasError = false;
   const files = fs.readdirSync(dir);
   for (const file of files) {
-    if (EXCLUDED_DIRS.includes(file)) continue;
+    if (EXCLUDED_DIRS.includes(file) || file === 'check-source-encoding.mjs') continue;
     
     const fullPath = path.join(dir, file);
     const stat = fs.statSync(fullPath);
@@ -22,6 +22,14 @@ function checkDir(dir) {
         // Search for literal U+FFFD (Replacement Character)
         if (content.includes('\uFFFD')) {
           console.error(`\x1b[31m[ERROR]\x1b[0m Arquivo contém caractere U+FFFD (Replacement Character): ${fullPath}`);
+          hasError = true;
+        }
+
+        // Search for mojibake patterns using unicode escapes to avoid self-matching
+        const mojibakeRegex = new RegExp('\\u00C3[\\u00A0-\\u00BF]|\\u00C2[\\u00A0-\\u00BF]', 'g');
+        const mojibakeMatch = content.match(mojibakeRegex);
+        if (mojibakeMatch && !fullPath.includes('pre-election-audit.test.ts')) {
+          console.error(`\x1b[31m[ERROR]\x1b[0m Arquivo contém padrão de mojibake (${mojibakeMatch.slice(0, 3).join(', ')}): ${fullPath}`);
           hasError = true;
         }
       }

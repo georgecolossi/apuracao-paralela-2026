@@ -104,19 +104,26 @@ export default async function ConferirPage({ params }: { params: Promise<{ id: s
               Identidade do BU
             </h2>
             
-            {validation.hashStatus === 'VERIFIED' ? (
-              <span className="inline-flex items-center bg-emerald-100 text-emerald-800 text-xs font-bold px-3 py-1.5 rounded-full border border-emerald-200 uppercase tracking-wide">
-                <CheckCircle2 className="w-4 h-4 mr-1.5" /> HASH VERIFICADO
-              </span>
-            ) : validation.hashStatus === 'INVALID' ? (
-              <span className="inline-flex items-center bg-red-100 text-red-800 text-xs font-bold px-3 py-1.5 rounded-full border border-red-200 uppercase tracking-wide">
-                <XCircle className="w-4 h-4 mr-1.5" /> HASH INVÁLIDO
-              </span>
-            ) : (
-              <span className="inline-flex items-center bg-slate-100 text-slate-700 text-xs font-bold px-3 py-1.5 rounded-full border border-slate-300 uppercase tracking-wide">
-                <HelpCircle className="w-4 h-4 mr-1.5" /> HASH NÃO VERIFICADO
-              </span>
-            )}
+            <div className="flex flex-col sm:items-end gap-1">
+              {validation.hashStatus === 'VERIFIED' ? (
+                <span className="inline-flex items-center bg-emerald-100 text-emerald-800 text-xs font-bold px-3 py-1.5 rounded-full border border-emerald-200 uppercase tracking-wide self-start sm:self-auto">
+                  <CheckCircle2 className="w-4 h-4 mr-1.5" /> HASH VERIFICADO
+                </span>
+              ) : validation.hashStatus === 'INVALID' ? (
+                <span className="inline-flex items-center bg-red-100 text-red-800 text-xs font-bold px-3 py-1.5 rounded-full border border-red-200 uppercase tracking-wide self-start sm:self-auto">
+                  <XCircle className="w-4 h-4 mr-1.5" /> HASH INVÁLIDO
+                </span>
+              ) : (
+                <span className="inline-flex items-center bg-slate-100 text-slate-700 text-xs font-bold px-3 py-1.5 rounded-full border border-slate-300 uppercase tracking-wide self-start sm:self-auto">
+                  <HelpCircle className="w-4 h-4 mr-1.5" /> HASH NÃO VERIFICADO
+                </span>
+              )}
+              {validation.hashStatus === 'VERIFIED' && (
+                <span className="text-[11px] text-slate-500 font-medium sm:text-right">
+                  Integridade SHA-512 verificada. A assinatura digital da urna não foi autenticada criptograficamente pelo sistema.
+                </span>
+              )}
+            </div>
           </div>
           
           <div className="p-5 grid grid-cols-2 md:grid-cols-4 gap-4">

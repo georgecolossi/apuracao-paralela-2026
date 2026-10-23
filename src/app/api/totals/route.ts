@@ -1,6 +1,11 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
+const CACHE_CONTROL_HEADER = 'no-store, no-cache, must-revalidate, proxy-revalidate';
+
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
@@ -10,9 +15,16 @@ export async function GET(req: Request) {
       where: { status: 'ACTIVE' },
       include: { rounds: true }
     });
-    if (activeElections.length === 0) return NextResponse.json({ processedReports: 0, expectedReports: 0, totals: [] });
+    if (activeElections.length === 0) {
+      return NextResponse.json({ processedReports: 0, expectedReports: 0, totals: [] }, {
+        headers: { 'Cache-Control': CACHE_CONTROL_HEADER }
+      });
+    }
     if (activeElections.length > 1) {
-      return NextResponse.json({ error: 'Configuração ambígua: múltiplas eleições ativas.' }, { status: 500 });
+      return NextResponse.json({ error: 'Configuração ambígua: múltiplas eleições ativas.' }, {
+        status: 500,
+        headers: { 'Cache-Control': CACHE_CONTROL_HEADER }
+      });
     }
     const election = activeElections[0];
 
@@ -21,13 +33,23 @@ export async function GET(req: Request) {
       const parsedRound = parseInt(roundParam, 10);
       targetRound = election.rounds.find(r => r.roundNumber === parsedRound);
       if (!targetRound) {
-        return NextResponse.json({ error: 'Turno inexistente para esta eleição.' }, { status: 404 });
+        return NextResponse.json({ error: 'Turno inexistente para esta eleição.' }, {
+          status: 404,
+          headers: { 'Cache-Control': CACHE_CONTROL_HEADER }
+        });
       }
     } else {
       const activeRounds = election.rounds.filter(r => r.status === 'ACTIVE');
-      if (activeRounds.length === 0) return NextResponse.json({ processedReports: 0, expectedReports: 0, totals: [] });
+      if (activeRounds.length === 0) {
+        return NextResponse.json({ processedReports: 0, expectedReports: 0, totals: [] }, {
+          headers: { 'Cache-Control': CACHE_CONTROL_HEADER }
+        });
+      }
       if (activeRounds.length > 1) {
-        return NextResponse.json({ error: 'Configuração ambígua: múltiplos turnos ativos.' }, { status: 500 });
+        return NextResponse.json({ error: 'Configuração ambígua: múltiplos turnos ativos.' }, {
+          status: 500,
+          headers: { 'Cache-Control': CACHE_CONTROL_HEADER }
+        });
       }
       targetRound = activeRounds[0];
     }
@@ -301,8 +323,15 @@ export async function GET(req: Request) {
         roundNumber: targetRound.roundNumber,
         status: targetRound.status
       }
+    }, {
+      headers: {
+        'Cache-Control': CACHE_CONTROL_HEADER
+      }
     });
   } catch (error) {
-    return NextResponse.json({ error: 'Erro interno' }, { status: 500 });
+    return NextResponse.json({ error: 'Erro interno' }, {
+      status: 500,
+      headers: { 'Cache-Control': CACHE_CONTROL_HEADER }
+    });
   }
 }
