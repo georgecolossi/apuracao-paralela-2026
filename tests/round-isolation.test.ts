@@ -38,7 +38,7 @@ describe('Round Context Isolation Tests', () => {
     expect(expectedAgg._sum.expectedBUs || 0).toBeGreaterThanOrEqual(0);
   });
 
-  it('Scanner aceita QRBU T2 quando configurado com PLEI sintÃ©tico e Coverage sintÃ©tico, mas T1 continua com coverage 193 e PLEI 3220 intocado', async () => {
+  it('Scanner aceita QRBU T2 quando configurado com PLEI sintético e Coverage sintético, mas T1 continua com coverage 193 e PLEI 3220 intocado', async () => {
     const r1 = await prisma.electionRound.findUnique({ where: { id: round1Id } });
     const r2 = await prisma.electionRound.findUnique({ where: { id: round2Id } });
 
@@ -49,7 +49,7 @@ describe('Round Context Isolation Tests', () => {
     expect(coverageT1).toBeGreaterThanOrEqual(0);
   });
 
-  it('Identity (deterministicId) ainda extrai PLEI do QRBU e Ã© backward compatible', () => {
+  it('Identity (deterministicId) ainda extrai PLEI do QRBU e é backward compatible', () => {
     const id = buildBallotReportIdentity({
       plei: '3220',
       turn: '1',
