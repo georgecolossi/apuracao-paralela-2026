@@ -7,8 +7,19 @@ export default async function ConfigPage() {
   const auth = await requireAuthenticatedUser();
   if (!auth.authenticated) redirect('/login');
 
-  const elections = await prisma.election.findMany({ include: { rounds: true } });
+  const elections = await prisma.election.findMany({
+    include: {
+      rounds: {
+        orderBy: { roundNumber: 'asc' }
+      }
+    }
+  });
   const election = elections[0];
+  const activeRound = election?.rounds.find(r => r.status === 'ACTIVE') || election?.rounds[0];
+  const activePlei = activeRound?.plei || election?.plei || '3221';
+  const contextualizedName = activeRound
+    ? `Eleições Gerais ${election?.year || 2026} — ${activeRound.roundNumber}º Turno`
+    : election?.name || 'Eleição Principal';
   
   const coverage = await prisma.municipality.findFirst({ where: { isCoverage: true }, include: { state: true } });
   
@@ -37,11 +48,18 @@ export default async function ConfigPage() {
             <dl className="space-y-4">
               <div>
                 <dt className="text-xs font-bold text-slate-400 uppercase tracking-wider">Identificador (PLEI)</dt>
-                <dd className="text-lg font-medium text-slate-900">{election.plei}</dd>
+                <dd className="text-lg font-medium text-slate-900 flex items-center gap-2 mt-0.5">
+                  <span className="font-mono font-bold text-indigo-700">{activePlei}</span>
+                  <span className="text-xs font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-indigo-100 text-indigo-800">
+                    Turno Ativo ({activeRound?.roundNumber || 2}º)
+                  </span>
+                </dd>
+                <p className="text-xs text-slate-400 mt-1">PLEI do turno operacional ativo (T1 histórico: 3220 • T2 ativo: 3221)</p>
               </div>
               <div>
                 <dt className="text-xs font-bold text-slate-400 uppercase tracking-wider">Nome</dt>
-                <dd className="text-lg font-medium text-slate-900">{election.name}</dd>
+                <dd className="text-lg font-bold text-slate-900 mt-0.5">{contextualizedName}</dd>
+                <p className="text-xs text-slate-400 mt-0.5">Nome contextualizado pelo turno operacional ativo</p>
               </div>
               <div>
                 <dt className="text-xs font-bold text-slate-400 uppercase tracking-wider">Ano</dt>
@@ -71,7 +89,19 @@ export default async function ConfigPage() {
               </div>
               <div>
                 <dt className="text-xs font-bold text-slate-400 uppercase tracking-wider">Urnas Esperadas (Denominador)</dt>
-                <dd className="text-lg font-medium text-slate-900">{expectedBUsCount}</dd>
+                <dd className="text-lg font-medium text-slate-900 flex items-baseline gap-2">
+                  <span>{activeRound?.roundNumber === 2 ? `~${expectedBUsCount} BUs` : expectedBUsCount}</span>
+                  {activeRound?.roundNumber === 2 && (
+                    <span className="text-xs font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200">
+                      Provisória
+                    </span>
+                  )}
+                </dd>
+                {activeRound?.roundNumber === 2 && (
+                  <p className="text-xs text-amber-700 font-medium mt-1">
+                    Estimativa provisória baseada nas 193 seções do 1º Turno (Concórdia/SC), sujeita à confirmação final de agregação pelo TSE.
+                  </p>
+                )}
               </div>
             </dl>
           ) : (
@@ -83,15 +113,54 @@ export default async function ConfigPage() {
       <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-sm">
         <div className="flex items-center gap-3 mb-4 text-blue-600">
           <Hash className="w-6 h-6" />
-          <h2 className="text-lg font-bold uppercase tracking-wider">Turnos</h2>
+          <h2 className="text-lg font-bold uppercase tracking-wider">Turnos Eleitorais</h2>
         </div>
         
         {election?.rounds.length ? (
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {election.rounds.map(r => (
-              <div key={r.id} className={`p-4 rounded-xl border ${r.status === 'ACTIVE' ? 'border-blue-300 bg-blue-50 text-blue-900' : 'border-slate-200 bg-slate-50 text-slate-600'}`}>
-                <div className="text-3xl font-black mb-1">{r.roundNumber}º</div>
-                <div className="text-xs font-bold uppercase tracking-wider">{r.status}</div>
+              <div
+                key={r.id}
+                className={`p-4 rounded-xl border transition-colors ${
+                  r.status === 'ACTIVE'
+                    ? 'border-indigo-300 bg-indigo-50/70 text-indigo-950 shadow-sm'
+                    : r.status === 'FINISHED'
+                    ? 'border-slate-200 bg-slate-50 text-slate-700'
+                    : 'border-slate-200 bg-slate-50/50 text-slate-500'
+                }`}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-2xl font-black">{r.roundNumber}º Turno</div>
+                  <span
+                    className={`text-xs font-black uppercase tracking-wider px-2.5 py-1 rounded ${
+                      r.status === 'ACTIVE'
+                        ? 'bg-indigo-600 text-white'
+                        : r.status === 'FINISHED'
+                        ? 'bg-slate-200 text-slate-700'
+                        : 'bg-slate-100 text-slate-500'
+                    }`}
+                  >
+                    {r.status === 'ACTIVE' ? 'ATIVO' : r.status === 'FINISHED' ? 'FINALIZADO' : r.status}
+                  </span>
+                </div>
+                <div className="text-xs space-y-1">
+                  <div className="flex justify-between">
+                    <span className="font-semibold text-slate-500">PLEI Oficial:</span>
+                    <span className="font-mono font-bold text-slate-800">{r.plei || 'N/D'}</span>
+                  </div>
+                  {r.roundNumber === 1 && (
+                    <div className="flex justify-between text-slate-500">
+                      <span>Boletins Auditados:</span>
+                      <span className="font-bold text-slate-700">193 BUs (Preservados)</span>
+                    </div>
+                  )}
+                  {r.roundNumber === 2 && (
+                    <div className="flex justify-between text-slate-500">
+                      <span>Cobertura Estimada:</span>
+                      <span className="font-bold text-amber-700">~193 BUs (Provisória)</span>
+                    </div>
+                  )}
+                </div>
               </div>
             ))}
           </div>
