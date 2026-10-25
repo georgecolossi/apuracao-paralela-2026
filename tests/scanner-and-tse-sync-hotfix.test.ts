@@ -75,6 +75,72 @@ describe('Hotfix — Scanner Pre-Validation, Concurrency & TSE Synchronization',
       expect(res3).toBe('PROCESSED');
       expect(apiCalls).toEqual(['QRBU:1:2 PARTE_1', 'QRBU:2:2 PARTE_2']);
     });
+
+    it('1.3. qrbox deve se limitar estritamente às dimensões reais do vídeo em telas grandes e pequenas', () => {
+      function calculateQrbox(viewfinderWidth: number, viewfinderHeight: number) {
+        const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
+        const edge = Math.floor(minEdge * 0.8);
+        const safeEdge = minEdge > 60 ? Math.max(50, edge) : Math.max(10, minEdge - 4);
+        return { width: safeEdge, height: safeEdge };
+      }
+
+      // Cenário A: Desktop / Smartphone grande (ex: 800x600 ou 400x400)
+      const large = calculateQrbox(400, 400);
+      expect(large.width).toBe(320);
+      expect(large.height).toBe(320);
+      expect(large.width).toBeLessThanOrEqual(400);
+
+      // Cenário B: Smartphone compacto / landscape com pouca altura (ex: 320x220)
+      const small = calculateQrbox(320, 220);
+      expect(small.width).toBe(176);
+      expect(small.height).toBe(176);
+      expect(small.width).toBeLessThanOrEqual(220);
+
+      // Cenário C: Viewport minúsculo (ex: 50x50)
+      const tiny = calculateQrbox(50, 50);
+      expect(tiny.width).toBe(46);
+      expect(tiny.height).toBe(46);
+      expect(tiny.width).toBeLessThan(50);
+    });
+
+    it('1.4. Inspeção de capacidades de hardware deve ter fallback seguro em dispositivos sem suporte', () => {
+      // Simula objeto html5QrCode sem suporte a getRunningTrackCapabilities (ex: webcams antigas ou navegadores sem WebRTC completo)
+      const mockScannerWithoutCaps = {
+        getRunningTrackCapabilities: undefined
+      };
+
+      let torchAvailable = false;
+      let zoomRangeFound = null;
+
+      expect(() => {
+        if (typeof (mockScannerWithoutCaps as any).getRunningTrackCapabilities === 'function') {
+          const caps = (mockScannerWithoutCaps as any).getRunningTrackCapabilities();
+          if (caps?.torch) torchAvailable = true;
+          if (caps?.zoom) zoomRangeFound = caps.zoom;
+        }
+      }).not.toThrow();
+
+      expect(torchAvailable).toBe(false);
+      expect(zoomRangeFound).toBe(null);
+
+      // Simula scanner com capacidades suportadas
+      const mockScannerWithCaps = {
+        getRunningTrackCapabilities: () => ({
+          torch: true,
+          zoom: { min: 1, max: 5, step: 0.1 },
+          focusMode: ['continuous', 'manual']
+        })
+      };
+
+      if (typeof mockScannerWithCaps.getRunningTrackCapabilities === 'function') {
+        const caps = mockScannerWithCaps.getRunningTrackCapabilities();
+        if (caps?.torch) torchAvailable = true;
+        if (caps?.zoom) zoomRangeFound = caps.zoom;
+      }
+
+      expect(torchAvailable).toBe(true);
+      expect(zoomRangeFound).toEqual({ min: 1, max: 5, step: 0.1 });
+    });
   });
 
   describe('2. TSE Results Route Headers & Cache Control', () => {

@@ -82,8 +82,10 @@ export default function ScannerPage() {
           fps: 15,
           qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
             const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
-            const edge = Math.max(250, Math.floor(minEdge * 0.8));
-            return { width: edge, height: edge };
+            const edge = Math.floor(minEdge * 0.8);
+            // Ensure edge is bounded strictly within viewfinder dimensions even on small screens
+            const safeEdge = minEdge > 60 ? Math.max(50, edge) : Math.max(10, minEdge - 4);
+            return { width: safeEdge, height: safeEdge };
           },
           aspectRatio: 1.0
         },
@@ -97,21 +99,23 @@ export default function ScannerPage() {
 
       // Safe hardware capabilities inspection
       try {
-        const capabilities = html5QrCodeRef.current.getRunningTrackCapabilities();
-        if (capabilities && (capabilities as any).torch) {
-          setHasTorch(true);
-        }
-        if (capabilities && (capabilities as any).zoom) {
-          const z = (capabilities as any).zoom;
-          if (typeof z.min === 'number' && typeof z.max === 'number' && z.max > z.min) {
-            setZoomRange({ min: z.min, max: z.max, step: z.step || 0.1 });
-            setCurrentZoom(z.min);
+        if (typeof html5QrCodeRef.current.getRunningTrackCapabilities === 'function') {
+          const capabilities = html5QrCodeRef.current.getRunningTrackCapabilities();
+          if (capabilities && (capabilities as any).torch) {
+            setHasTorch(true);
           }
-        }
-        if (capabilities && (capabilities as any).focusMode && (capabilities as any).focusMode.includes('continuous')) {
-          await html5QrCodeRef.current.applyVideoConstraints({
-            advanced: [{ focusMode: 'continuous' }] as any
-          }).catch(() => {});
+          if (capabilities && (capabilities as any).zoom) {
+            const z = (capabilities as any).zoom;
+            if (typeof z.min === 'number' && typeof z.max === 'number' && z.max > z.min) {
+              setZoomRange({ min: z.min, max: z.max, step: z.step || 0.1 });
+              setCurrentZoom(z.min);
+            }
+          }
+          if (capabilities && (capabilities as any).focusMode && Array.isArray((capabilities as any).focusMode) && (capabilities as any).focusMode.includes('continuous')) {
+            await html5QrCodeRef.current.applyVideoConstraints({
+              advanced: [{ focusMode: 'continuous' }] as any
+            }).catch(() => {});
+          }
         }
       } catch {
         // Fallback safely if track capabilities are not exposed
