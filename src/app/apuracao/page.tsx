@@ -248,7 +248,14 @@ function OfficeResultCard({
 
 export default function ApuracaoDashboard() {
   const [source, setSource] = useState('PARALELA');
-  const [round, setRound] = useState(1);
+  const [round, setRound] = useState<number>(() => {
+    if (typeof window !== 'undefined') {
+      const p = new URLSearchParams(window.location.search).get('round');
+      if (p === '1') return 1;
+      if (p === '2') return 2;
+    }
+    return 2;
+  });
   const [paralela, setParalela] = useState<any>(null);
   const [tse, setTse] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -266,8 +273,8 @@ export default function ApuracaoDashboard() {
     const fetchData = async () => {
       try {
         const [pRes, tRes] = await Promise.all([
-          fetch('/api/totals?round=' + round),
-          fetch('/api/tse-results?round=' + round)
+          fetch('/api/totals?round=' + round, { cache: 'no-store' }),
+          fetch('/api/tse-results?round=' + round, { cache: 'no-store' })
         ]);
         
         const pData = pRes.ok ? await pRes.json() : null;
