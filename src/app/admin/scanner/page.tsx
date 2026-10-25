@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { Html5Qrcode, CameraDevice } from 'html5-qrcode';
 import { useRouter } from 'next/navigation';
-import { ScanLine, AlertCircle, RefreshCcw, CheckCircle2, ChevronDown, MonitorPlay, Camera, Play, Square } from 'lucide-react';
+import { ScanLine, AlertCircle, RefreshCcw, CheckCircle2, ChevronDown, Camera, Play, Square, Flashlight, ZoomIn } from 'lucide-react';
 import { ScannerDeduplicator } from '@/lib/scanner-deduplicator';
 
 export default function ScannerPage() {
@@ -13,12 +13,17 @@ export default function ScannerPage() {
   const [sessionId, setSessionId] = useState<string>('');
   const [manualInput, setManualInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const isProcessingRef = useRef(false);
   const deduplicatorRef = useRef(new ScannerDeduplicator());
   
   // Custom camera states
   const [cameras, setCameras] = useState<CameraDevice[]>([]);
   const [activeCameraId, setActiveCameraId] = useState<string>('');
   const [isScanning, setIsScanning] = useState(false);
+  const [hasTorch, setHasTorch] = useState(false);
+  const [torchOn, setTorchOn] = useState(false);
+  const [zoomRange, setZoomRange] = useState<{ min: number; max: number; step: number } | null>(null);
+  const [currentZoom, setCurrentZoom] = useState(1);
   const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
   
   const router = useRouter();
@@ -29,17 +34,23 @@ export default function ScannerPage() {
     setErrorMsg(null);
     setStatus('Aguardando leitura do QR Code...');
     deduplicatorRef.current.clear();
+    isProcessingRef.current = false;
+    setIsProcessing(false);
   };
 
   useEffect(() => {
-    // eslint-disable-next-line
     setSessionId(`UI-${Date.now()}-${Math.floor(Math.random() * 10000)}`);
     
-    // Init cameras
+    // Init cameras with rear camera priority
     Html5Qrcode.getCameras().then(devices => {
       if (devices && devices.length > 0) {
         setCameras(devices);
-        setActiveCameraId(devices[0].id);
+        const backCamera = devices.find(d => {
+          const label = (d.label || '').toLowerCase();
+          return label.includes('back') || label.includes('traseira') || label.includes('rear') || label.includes('environment');
+        });
+        const defaultCam = backCamera || devices[devices.length - 1] || devices[0];
+        setActiveCameraId(defaultCam.id);
         setStatus('Câmera pronta. Clique em Iniciar.');
       } else {
         setStatus('Nenhuma câmera encontrada.');
@@ -59,10 +70,23 @@ export default function ScannerPage() {
   const startScanning = async () => {
     if (!activeCameraId) return;
     try {
-      html5QrCodeRef.current = new Html5Qrcode("reader");
+      html5QrCodeRef.current = new Html5Qrcode("reader", {
+        experimentalFeatures: {
+          useBarCodeDetectorIfSupported: true
+        },
+        verbose: false
+      });
       await html5QrCodeRef.current.start(
         activeCameraId,
-        { fps: 10, qrbox: { width: 300, height: 300 } },
+        {
+          fps: 15,
+          qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
+            const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
+            const edge = Math.max(250, Math.floor(minEdge * 0.8));
+            return { width: edge, height: edge };
+          },
+          aspectRatio: 1.0
+        },
         (decodedText) => {
           void processQrContent(decodedText);
         },
@@ -70,6 +94,28 @@ export default function ScannerPage() {
       );
       setIsScanning(true);
       setStatus('Aguardando leitura do QR Code...');
+
+      // Safe hardware capabilities inspection
+      try {
+        const capabilities = html5QrCodeRef.current.getRunningTrackCapabilities();
+        if (capabilities && (capabilities as any).torch) {
+          setHasTorch(true);
+        }
+        if (capabilities && (capabilities as any).zoom) {
+          const z = (capabilities as any).zoom;
+          if (typeof z.min === 'number' && typeof z.max === 'number' && z.max > z.min) {
+            setZoomRange({ min: z.min, max: z.max, step: z.step || 0.1 });
+            setCurrentZoom(z.min);
+          }
+        }
+        if (capabilities && (capabilities as any).focusMode && (capabilities as any).focusMode.includes('continuous')) {
+          await html5QrCodeRef.current.applyVideoConstraints({
+            advanced: [{ focusMode: 'continuous' }] as any
+          }).catch(() => {});
+        }
+      } catch {
+        // Fallback safely if track capabilities are not exposed
+      }
     } catch {
       setErrorMsg('Falha ao iniciar a câmera.');
     }
@@ -80,18 +126,56 @@ export default function ScannerPage() {
       try {
         await html5QrCodeRef.current.stop();
         html5QrCodeRef.current.clear();
-        setIsScanning(false);
-        setStatus('Câmera parada.');
       } catch (err) {
         console.error(err);
       }
     }
+    setIsScanning(false);
+    setHasTorch(false);
+    setTorchOn(false);
+    setZoomRange(null);
+    setStatus('Câmera parada.');
   };
 
-    const processQrContent = async (decodedText: string) => {
-    // 1. Deduplicação física imediata síncrona
-    if (!deduplicatorRef.current.shouldProcess(decodedText)) return;
+  const toggleTorch = async () => {
+    if (!html5QrCodeRef.current || !hasTorch) return;
+    try {
+      const nextTorch = !torchOn;
+      await html5QrCodeRef.current.applyVideoConstraints({
+        advanced: [{ torch: nextTorch }] as any
+      });
+      setTorchOn(nextTorch);
+    } catch (err) {
+      console.warn('Torch toggle failed', err);
+    }
+  };
+
+  const handleZoomChange = async (newZoom: number) => {
+    if (!html5QrCodeRef.current || !zoomRange) return;
+    try {
+      await html5QrCodeRef.current.applyVideoConstraints({
+        advanced: [{ zoom: newZoom }] as any
+      });
+      setCurrentZoom(newZoom);
+    } catch (err) {
+      console.warn('Zoom change failed', err);
+    }
+  };
+
+  const processQrContent = async (rawDecodedText: string) => {
+    // 1. Concurrency guard: ignore new frames while another is in flight
+    if (isProcessingRef.current) return;
+
+    // 2. Local pre-validation: silently ignore non-QRBU content (do not mutate/truncate rawDecodedText)
+    const trimmed = (rawDecodedText || '').trim();
+    if (!trimmed.startsWith('QRBU:')) {
+      return;
+    }
+
+    // 3. Deduplication check
+    if (!deduplicatorRef.current.shouldProcess(rawDecodedText)) return;
     
+    isProcessingRef.current = true;
     setIsProcessing(true);
     setErrorMsg(null);
     setStatus('Processando leitura...');
@@ -100,7 +184,7 @@ export default function ScannerPage() {
       const res = await fetch('/api/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: decodedText, isSimulation: false, sessionId })
+        body: JSON.stringify({ content: rawDecodedText, isSimulation: false, sessionId })
       });
       
       const data = await res.json();
@@ -113,36 +197,38 @@ export default function ScannerPage() {
           }
           router.push(`/admin/conferir/${data.reportId}`);
         } else if (data.status === 'PARCIAL') {
-          // data.partsTotal was in the old code, using data.totalParts or partsTotal safely
           const tParts = data.totalParts || data.partsTotal;
           setStatus(`Parte Lida. Lidos: ${data.partsRead} de ${tParts}`);
           setPartsInfo({ read: data.partsRead, total: tParts });
         }
       } else {
-        const displayError = data.error || 'Erro desconhecido';
+        const displayError = data.error || data.message || 'Erro desconhecido';
         if (displayError.includes('DUPLICADO')) {
           setErrorMsg('Este Boletim já foi processado anteriormente (DUPLICADO).');
-        } else if (displayError.includes('simula')) {
+        } else if (displayError.includes('simula') || displayError.includes('SIMULATED')) {
           setErrorMsg('Modo Simulação detectado: Use a interface correta ou limpe a sessão.');
-        } else if (displayError.includes('ordem')) {
+        } else if (displayError.includes('ordem') || displayError.includes('ORDER')) {
           setErrorMsg('Partes fora de ordem ou inconsistentes. Tente reiniciar a sessão.');
+        } else if (displayError.includes('INVALID_HEADER')) {
+          setErrorMsg('Cabeçalho oficial QRBU mal formatado ou corrompido.');
         } else {
           setErrorMsg(displayError);
         }
         
         setStatus('Aguardando leitura...');
-        // Em caso de erro, permitir que a câmera releia o mesmo QR após um tempo
+        // Em caso de erro, permitir que a câmera releia o mesmo QR após 3 segundos
         setTimeout(() => {
-          deduplicatorRef.current.clearIfMatches(decodedText);
+          deduplicatorRef.current.clearIfMatches(rawDecodedText);
         }, 3000);
       }
     } catch {
       setErrorMsg('Falha de conexão com o servidor. Tente novamente.');
       setStatus('Aguardando leitura...');
       setTimeout(() => {
-        deduplicatorRef.current.clearIfMatches(decodedText);
+        deduplicatorRef.current.clearIfMatches(rawDecodedText);
       }, 3000);
     } finally {
+      isProcessingRef.current = false;
       setIsProcessing(false);
     }
   };
@@ -157,8 +243,6 @@ export default function ScannerPage() {
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans">
-
-
       <main className="flex-1 w-full max-w-3xl mx-auto px-4 py-8 flex flex-col items-center">
         <div className="w-full bg-white rounded-3xl shadow-sm border border-slate-200 overflow-hidden mb-6">
           <div className="bg-slate-50 border-b border-slate-200 p-5 text-center">
@@ -217,6 +301,36 @@ export default function ScannerPage() {
                   </button>
                 )}
               </div>
+
+              {isScanning && (hasTorch || zoomRange) && (
+                <div className="flex items-center justify-between gap-3 bg-slate-900 text-white p-3 rounded-2xl shadow-sm">
+                  {hasTorch ? (
+                    <button
+                      type="button"
+                      onClick={toggleTorch}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold uppercase tracking-wider flex items-center gap-1.5 transition-colors ${torchOn ? 'bg-amber-400 text-slate-900 font-black shadow-sm' : 'bg-slate-800 text-slate-200 hover:bg-slate-700'}`}
+                    >
+                      <Flashlight className="w-3.5 h-3.5" />
+                      {torchOn ? 'Lanterna Ligada' : 'Lanterna'}
+                    </button>
+                  ) : <div />}
+                  {zoomRange && (
+                    <div className="flex items-center gap-2">
+                      <ZoomIn className="w-3.5 h-3.5 text-slate-400" />
+                      <span className="text-xs font-mono font-bold text-slate-300">{currentZoom.toFixed(1)}x</span>
+                      <input
+                        type="range"
+                        min={zoomRange.min}
+                        max={Math.min(zoomRange.max, 3)}
+                        step={zoomRange.step}
+                        value={currentZoom}
+                        onChange={(e) => void handleZoomChange(parseFloat(e.target.value))}
+                        className="w-24 accent-indigo-500 cursor-pointer"
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             <div className={`w-full max-w-md mx-auto rounded-2xl overflow-hidden shadow-inner mb-6 relative border-4 transition-colors ${isScanning ? 'border-indigo-500 bg-slate-950' : 'border-slate-200 bg-slate-100 min-h-[300px] flex items-center justify-center'}`}>

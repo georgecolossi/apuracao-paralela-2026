@@ -1,12 +1,15 @@
 import { NextResponse } from 'next/server';
 
+export const dynamic = 'force-dynamic';
+export const revalidate = 0;
+
 const TSE_BASE_URL = 'https://resultados.tse.jus.br/oficial';
 
 async function fetchEA20(eleCode: string, uf: string, muniCode: string, cargoCode: string) {
   const url = `${TSE_BASE_URL}/ele2026/${eleCode}/dados/${uf.toLowerCase()}/${uf.toLowerCase()}${muniCode}-c${cargoCode.padStart(4, '0')}-e${eleCode.padStart(6, '0')}-u.json`;
   
   try {
-    const res = await fetch(url, { next: { revalidate: 30 } }); // Cache 30 seconds
+    const res = await fetch(url, { next: { revalidate: 15 } }); // Controlled cache 15s
     if (!res.ok) {
       if (res.status === 404) return { status: 'NOT_YET_AVAILABLE', cargo: cargoCode };
       return { status: 'TEMPORARILY_UNAVAILABLE', cargo: cargoCode };
@@ -226,5 +229,9 @@ export async function GET(req: Request) {
     municipality: muni,
     status: overallStatus,
     offices: parsedOffices
+  }, {
+    headers: {
+      'Cache-Control': 'public, max-age=15, stale-while-revalidate=15'
+    }
   });
 }
