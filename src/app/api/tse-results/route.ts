@@ -19,7 +19,7 @@ async function fetchEA20(eleCode: string, uf: string, muniCode: string, cargoCod
 }
 
 async function fetchEleC() {
-  const url = `${TSE_BASE_URL}/ele2026/arquivo/ele-c.json`;
+  const url = `${TSE_BASE_URL}/comum/config/ele-c.json`;
   try {
     const res = await fetch(url, { next: { revalidate: 300 } });
     if (!res.ok) return null;
@@ -41,25 +41,57 @@ export async function GET(req: Request) {
   let estadualEle = '';
 
   const eleC = await fetchEleC();
-  if (eleC && eleC.eleicoes) {
-    const roundEles = eleC.eleicoes.filter((e: any) => e.t === round || String(e.t) === String(round));
+  if (eleC) {
+    const elections: any[] = [];
+    if (Array.isArray(eleC.eleicoes)) {
+      elections.push(...eleC.eleicoes);
+    }
+    if (Array.isArray(eleC.pl)) {
+      for (const p of eleC.pl) {
+        if (p.c === 'ele2026' && Array.isArray(p.e)) {
+          elections.push(...p.e);
+        }
+      }
+    }
+
+    const roundEles = elections.filter((e: any) => e.t === round || String(e.t) === String(round));
     
-    // Improved dynamic discovery: look at 'cargos' array if available, or 'nm' (name), or fallback to suffixes
     for (const e of roundEles) {
+      // Check if election applies to Brazil or SC
+      const appliesToSc = !e.abr || !Array.isArray(e.abr) || e.abr.some((a: any) => {
+        const cd = (a.cd || '').toLowerCase();
+        return cd === 'br' || cd === uf.toLowerCase();
+      });
+
+      if (!appliesToSc) continue;
+
       let isFederal = false;
       let isEstadual = false;
-      
+
+      // In TSE: Cargo 1 is Presidente (Federal). Tp 8 is Federal.
+      if (e.tp === '8') isFederal = true;
+      if (e.tp === '1') isEstadual = true;
+
       if (e.cargos && Array.isArray(e.cargos)) {
-        if (e.cargos.some((c: any) => c.cd === '1' || c.cd === '6')) isFederal = true;
-        if (e.cargos.some((c: any) => c.cd === '3' || c.cd === '7')) isEstadual = true;
+        if (e.cargos.some((c: any) => c.cd === '1')) isFederal = true;
+        if (e.cargos.some((c: any) => c.cd === '3')) isEstadual = true;
       }
-      
+
+      if (e.abr && Array.isArray(e.abr)) {
+        for (const a of e.abr) {
+          if (a.cp && Array.isArray(a.cp)) {
+            if (a.cp.some((c: any) => c.cd === '1')) isFederal = true;
+            if (a.cp.some((c: any) => c.cd === '3')) isEstadual = true;
+          }
+        }
+      }
+
       const nmLower = (e.nm || '').toLowerCase();
       if (!isFederal && !isEstadual) {
         if (nmLower.includes('federal') || nmLower.includes('presidente')) isFederal = true;
         if (nmLower.includes('estadual') || nmLower.includes('governador')) isEstadual = true;
       }
-      
+
       if (!isFederal && !isEstadual) {
         if (e.cd.endsWith('7') || e.cd.endsWith('8')) isFederal = true;
         if (e.cd.endsWith('9') || e.cd.endsWith('0')) isEstadual = true;
@@ -70,10 +102,15 @@ export async function GET(req: Request) {
     }
   }
 
-  // Fallback for Round 1 since we know it exists and might not have ele-c
+  // Fallbacks for Round 1
   if (round === '1' && (!federalEle || !estadualEle)) {
     if (!federalEle) federalEle = '6257';
     if (!estadualEle) estadualEle = '6259';
+  }
+
+  // Fallback for Round 2: Federal Presidential election is 6258
+  if (round === '2' && !federalEle) {
+    federalEle = '6258';
   }
 
   if (!federalEle && !estadualEle) {
@@ -82,25 +119,29 @@ export async function GET(req: Request) {
       message: 'Configuracao da eleicao (ele-c) nao encontrada para o turno ' + round
     });
   }
-  
-  // se só um for descoberto, o outro não realiza chamada
-  const calls = [];
+
+  // Query endpoints: Presidente (1) for federal; State offices only if estadualEle exists and applies
+  const calls: Promise<any>[] = [];
   if (federalEle) {
     calls.push(fetchEA20(federalEle, uf, muni, '1')); // Presidente
   } else {
     calls.push(Promise.resolve({ status: 'NOT_YET_AVAILABLE', cargo: '1' }));
   }
-  
+
   if (estadualEle) {
     calls.push(fetchEA20(estadualEle, uf, muni, '3')); // Governador
-    calls.push(fetchEA20(estadualEle, uf, muni, '5')); // Senador
-    calls.push(fetchEA20(estadualEle, uf, muni, '6')); // Dep Federal
-    calls.push(fetchEA20(estadualEle, uf, muni, '7')); // Dep Estadual
+    if (round === '1') {
+      calls.push(fetchEA20(estadualEle, uf, muni, '5')); // Senador
+      calls.push(fetchEA20(estadualEle, uf, muni, '6')); // Dep Federal
+      calls.push(fetchEA20(estadualEle, uf, muni, '7')); // Dep Estadual
+    }
   } else {
     calls.push(Promise.resolve({ status: 'NOT_YET_AVAILABLE', cargo: '3' }));
-    calls.push(Promise.resolve({ status: 'NOT_YET_AVAILABLE', cargo: '5' }));
-    calls.push(Promise.resolve({ status: 'NOT_YET_AVAILABLE', cargo: '6' }));
-    calls.push(Promise.resolve({ status: 'NOT_YET_AVAILABLE', cargo: '7' }));
+    if (round === '1') {
+      calls.push(Promise.resolve({ status: 'NOT_YET_AVAILABLE', cargo: '5' }));
+      calls.push(Promise.resolve({ status: 'NOT_YET_AVAILABLE', cargo: '6' }));
+      calls.push(Promise.resolve({ status: 'NOT_YET_AVAILABLE', cargo: '7' }));
+    }
   }
 
   const results = await Promise.all(calls);
@@ -108,7 +149,7 @@ export async function GET(req: Request) {
   const parsedOffices = results.map(r => {
     if (r.status !== 'AVAILABLE') return r;
     const j = (r as any).data;
-    
+
     // Validate
     if (j.cdabr !== muni || (j.t !== round && String(j.t) !== String(round))) {
       return { status: 'INVALID_RESPONSE', cargo: r.cargo };
@@ -139,14 +180,20 @@ export async function GET(req: Request) {
       '7': 'Deputado Estadual'
     };
 
+    const totalSec = parseInt(j.s?.ts || '0', 10);
+    const procSec = parseInt(j.s?.st || '0', 10);
+
     return {
       status: 'AVAILABLE',
       cargo: r.cargo,
       cargoName: CANONICAL_OFFICES[r.cargo] || firstCarg.ds || firstCarg.nm || firstCarg.nmf,
       progress: {
-        total: parseInt(j.s?.ts || '0', 10),
-        processed: parseInt(j.s?.st || '0', 10),
-        percent: j.s?.pst || '0,00'
+        total: totalSec,
+        processed: procSec,
+        percent: j.s?.pst || '0,00',
+        isStarted: procSec > 0,
+        isCompleted: totalSec > 0 && procSec === totalSec,
+        status: procSec === 0 ? 'AGUARDANDO_APURACAO' : (procSec < totalSec ? 'EM_ANDAMENTO' : 'CONCLUIDA')
       },
       attendance: {
         eligible: parseInt(j.e?.te || '0', 10),
