@@ -188,4 +188,28 @@ describe('Admin Turnos Activation', () => {
     expect(res2.status).toBe(403);
   });
 
+  it('F. CONFIRMAÇÃO FLEXÍVEL: Aceita variações de caixa e acentos, rejeita incorreta', async () => {
+    vi.mocked(requireAuthenticatedUser).mockResolvedValue({ authenticated: true, user: { userId: adminUserId, role: 'ADMIN' } } as any);
+
+    // 1. Confirmação incorreta -> 400
+    const reqBad = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({ roundId: round2Id, confirmationText: 'CONFIRMAR ATIVAÇÃO' })
+    });
+    const resBad = await POST(reqBad);
+    expect(resBad.status).toBe(400);
+    const jsonBad = await resBad.json();
+    expect(jsonBad.error).toBe('Confirmação incorreta para ativação do turno.');
+
+    // 2. Confirmação flexível em minúsculas -> 200
+    const reqGood = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({ roundId: round2Id, confirmationText: 'ativar segundo turno' })
+    });
+    const resGood = await POST(reqGood);
+    expect(resGood.status).toBe(200);
+
+    const r2 = await prisma.electionRound.findUnique({ where: { id: round2Id } });
+    expect(r2?.status).toBe('ACTIVE');
+  });
 });

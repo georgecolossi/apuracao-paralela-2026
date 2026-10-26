@@ -16,9 +16,9 @@ export default async function ConfigPage() {
   });
   const election = elections[0];
   const activeRound = election?.rounds.find(r => r.status === 'ACTIVE') || election?.rounds[0];
-  const activePlei = activeRound?.plei || election?.plei || '3221';
+  const activePlei = activeRound?.plei || election?.plei || 'N/D';
   const contextualizedName = activeRound
-    ? `Eleições Gerais ${election?.year || 2026} — ${activeRound.roundNumber}º Turno`
+    ? `${election?.name || 'Eleição'} — ${activeRound.roundNumber}º Turno`
     : election?.name || 'Eleição Principal';
   
   const coverage = await prisma.municipality.findFirst({ where: { isCoverage: true }, include: { state: true } });
@@ -54,7 +54,7 @@ export default async function ConfigPage() {
                     Turno Ativo ({activeRound?.roundNumber || 2}º)
                   </span>
                 </dd>
-                <p className="text-xs text-slate-400 mt-1">PLEI do turno operacional ativo (T1 histórico: 3220 • T2 ativo: 3221)</p>
+                <p className="text-xs text-slate-400 mt-1">PLEI do turno operacional ativo</p>
               </div>
               <div>
                 <dt className="text-xs font-bold text-slate-400 uppercase tracking-wider">Nome</dt>
@@ -99,7 +99,7 @@ export default async function ConfigPage() {
                 </dd>
                 {activeRound?.roundNumber === 2 && (
                   <p className="text-xs text-amber-700 font-medium mt-1">
-                    Estimativa provisória baseada nas 193 seções do 1º Turno (Concórdia/SC), sujeita à confirmação final de agregação pelo TSE.
+                    Estimativa provisória baseada nas seções cadastradas, sujeita à confirmação final de agregação pelo TSE.
                   </p>
                 )}
               </div>
@@ -151,13 +151,13 @@ export default async function ConfigPage() {
                   {r.roundNumber === 1 && (
                     <div className="flex justify-between text-slate-500">
                       <span>Boletins Auditados:</span>
-                      <span className="font-bold text-slate-700">193 BUs (Preservados)</span>
+                      <span className="font-bold text-slate-700">{expectedBUsCount ? `${expectedBUsCount} BUs (Preservados)` : 'Preservados'}</span>
                     </div>
                   )}
                   {r.roundNumber === 2 && (
                     <div className="flex justify-between text-slate-500">
                       <span>Cobertura Estimada:</span>
-                      <span className="font-bold text-amber-700">~193 BUs (Provisória)</span>
+                      <span className="font-bold text-amber-700">{expectedBUsCount ? `~${expectedBUsCount} BUs` : 'N/D'} (Provisória)</span>
                     </div>
                   )}
                 </div>

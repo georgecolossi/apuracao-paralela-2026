@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { requireAuthenticatedUser } from '@/lib/auth';
 import { prisma } from '@/lib/db';
+import { getConfirmationAliases, validateAdminConfirmation } from '@/lib/normalization';
 
 export async function POST(req: Request) {
   try {
@@ -37,9 +38,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Turno não encontrado' }, { status: 404 });
     }
 
-    const roundNameUpper = round.roundNumber === 1 ? 'PRIMEIRO TURNO' : round.roundNumber === 2 ? 'SEGUNDO TURNO' : `${round.roundNumber}º TURNO`;
-    const expected = `ZERAR ${roundNameUpper}`;
-    if (!confirmationText || confirmationText.trim() !== expected) {
+    const { aliases } = getConfirmationAliases('RESET', round.roundNumber);
+    if (!confirmationText || !validateAdminConfirmation(confirmationText, aliases)) {
       return NextResponse.json({ error: 'Confirmação incorreta' }, { status: 400 });
     }
 

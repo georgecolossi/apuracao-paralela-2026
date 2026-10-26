@@ -1,4 +1,4 @@
-﻿import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { POST } from '../src/app/api/admin/reset/route';
 import { requireAuthenticatedUser } from '../src/lib/auth';
 import { prisma } from '../src/lib/db';
@@ -161,5 +161,31 @@ describe('POST /api/admin/reset', () => {
     expect(res.status).toBe(500);
     const data = await res.json();
     expect(data.error).toBe('Erro ao zerar sistema');
+  });
+
+  it('G) should accept confirmation in lowercase, without accents, or with ordinal notation', async () => {
+    process.env.ALLOW_OPERATIONAL_RESET = 'true';
+    vi.mocked(requireAuthenticatedUser).mockResolvedValue({
+      authenticated: true,
+      user: { userId: '1', role: 'ADMIN' },
+    } as any);
+
+    const variations = [
+      'zerar primeiro turno',
+      'ZERAR 1º TURNO',
+      'zerar 1 turno',
+      'zerar apuracao',
+      '   zerar   apuração   '
+    ];
+
+    for (const confirmationText of variations) {
+      vi.clearAllMocks();
+      vi.mocked(prisma.electionRound.findUnique).mockResolvedValue({ id: 'round-1', roundNumber: 1, election: { id: 'elec-1' } } as any);
+
+      const req = mockReq({ confirmationText, roundId: 'round-1' });
+      const res = await POST(req);
+      expect(res.status).toBe(200);
+      expect(prisma.$transaction).toHaveBeenCalled();
+    }
   });
 });

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { requireAuthenticatedUser } from '@/lib/auth';
+import { getConfirmationAliases, validateAdminConfirmation } from '@/lib/normalization';
 
 export async function POST(req: Request) {
   try {
@@ -34,6 +35,13 @@ export async function POST(req: Request) {
     const targetRound = election.rounds.find(r => r.id === targetRoundId);
     if (!targetRound) {
       return NextResponse.json({ error: 'Turno alvo não encontrado nesta eleição.' }, { status: 404 });
+    }
+
+    if (payload.confirmationText) {
+      const { aliases } = getConfirmationAliases('ACTIVATE', targetRound.roundNumber);
+      if (!validateAdminConfirmation(payload.confirmationText, aliases)) {
+        return NextResponse.json({ error: 'Confirmação incorreta para ativação do turno.' }, { status: 400 });
+      }
     }
 
     if (targetRound.status !== 'PLANNED') {
