@@ -37,11 +37,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Turno alvo não encontrado nesta eleição.' }, { status: 404 });
     }
 
-    if (payload.confirmationText) {
-      const { aliases } = getConfirmationAliases('ACTIVATE', targetRound.roundNumber);
-      if (!validateAdminConfirmation(payload.confirmationText, aliases)) {
-        return NextResponse.json({ error: 'Confirmação incorreta para ativação do turno.' }, { status: 400 });
-      }
+    const { canonical, aliases } = getConfirmationAliases('ACTIVATE', targetRound.roundNumber);
+    if (!payload.confirmationText || !validateAdminConfirmation(payload.confirmationText, aliases)) {
+      return NextResponse.json({
+        error: `Confirmação obrigatória ausente ou incorreta para ativação do turno. Para ativar, digite: ${canonical}`
+      }, { status: 400 });
     }
 
     if (targetRound.status !== 'PLANNED') {

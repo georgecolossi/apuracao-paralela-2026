@@ -48,13 +48,38 @@ describe('validateAdminConfirmation', () => {
     expect(validateAdminConfirmation('   zerar   apuração   ', 'ZERAR APURAÇÃO')).toBe(true);
   });
 
-  it('aceita correspondência contra lista de aliases', () => {
-    const { aliases } = getConfirmationAliases('RESET', 1);
+  it('aceita correspondência contra lista de aliases contextuais para o 1º turno', () => {
+    const { canonical, aliases } = getConfirmationAliases('RESET', 1);
+    expect(canonical).toBe('ZERAR PRIMEIRO TURNO');
     expect(validateAdminConfirmation('zerar primeiro turno', aliases)).toBe(true);
     expect(validateAdminConfirmation('ZERAR 1º TURNO', aliases)).toBe(true);
     expect(validateAdminConfirmation('zerar 1 turno', aliases)).toBe(true);
     expect(validateAdminConfirmation('zerar turno 1', aliases)).toBe(true);
+    // Deve rejeitar comando genérico ou de outro turno no reset contextual
+    expect(validateAdminConfirmation('zerar apuração', aliases)).toBe(false);
+    expect(validateAdminConfirmation('zerar apuracao', aliases)).toBe(false);
+    expect(validateAdminConfirmation('zerar segundo turno', aliases)).toBe(false);
+  });
+
+  it('aceita correspondência contra lista de aliases contextuais para o 2º turno', () => {
+    const { canonical, aliases } = getConfirmationAliases('RESET', 2);
+    expect(canonical).toBe('ZERAR SEGUNDO TURNO');
+    expect(validateAdminConfirmation('zerar segundo turno', aliases)).toBe(true);
+    expect(validateAdminConfirmation('ZERAR 2º TURNO', aliases)).toBe(true);
+    expect(validateAdminConfirmation('zerar 2 turno', aliases)).toBe(true);
+    expect(validateAdminConfirmation('zerar turno 2', aliases)).toBe(true);
+    // Deve rejeitar comando genérico ou do primeiro turno
+    expect(validateAdminConfirmation('zerar apuração', aliases)).toBe(false);
+    expect(validateAdminConfirmation('zerar apuracao', aliases)).toBe(false);
+    expect(validateAdminConfirmation('zerar primeiro turno', aliases)).toBe(false);
+  });
+
+  it('aceita confirmação genérica exclusivamente para reset global (sem roundNumber)', () => {
+    const { canonical, aliases } = getConfirmationAliases('RESET');
+    expect(canonical).toBe('ZERAR APURAÇÃO');
+    expect(validateAdminConfirmation('ZERAR APURAÇÃO', aliases)).toBe(true);
     expect(validateAdminConfirmation('zerar apuracao', aliases)).toBe(true);
+    expect(validateAdminConfirmation('zerar primeiro turno', aliases)).toBe(false);
   });
 
   it('aceita confirmações de ativação de turno flexíveis', () => {

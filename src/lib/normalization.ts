@@ -44,13 +44,12 @@ export function getConfirmationAliases(
 ): { canonical: string; aliases: string[] } {
   if (action === 'RESET') {
     if (!roundNumber) {
-      // Reset global da apuração
+      // Reset global da apuração (aplicável apenas a operações globais explicitamente definidas)
       return {
         canonical: 'ZERAR APURAÇÃO',
         aliases: [
           'ZERAR APURAÇÃO',
-          'ZERAR APURACAO',
-          'ZERAR SISTEMA'
+          'ZERAR APURACAO'
         ]
       };
     }
@@ -59,12 +58,12 @@ export function getConfirmationAliases(
     const canonical = `ZERAR ${ordinal} TURNO`;
     const wordList = NUMBER_WORDS[roundNumber] || [String(roundNumber)];
 
+    // No reset contextual por turno, aceita exclusivamente equivalências ao turno especificado
     const aliases: string[] = [
       canonical,
+      `ZERAR ${roundNumber}º TURNO`,
       `ZERAR ${roundNumber} TURNO`,
       `ZERAR TURNO ${roundNumber}`,
-      `ZERAR APURAÇÃO`, // Também aceita o comando genérico para o turno em tela
-      `ZERAR APURACAO`,
     ];
 
     for (const w of wordList) {

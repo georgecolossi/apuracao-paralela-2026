@@ -163,7 +163,7 @@ describe('POST /api/admin/reset', () => {
     expect(data.error).toBe('Erro ao zerar sistema');
   });
 
-  it('G) should accept confirmation in lowercase, without accents, or with ordinal notation', async () => {
+  it('G) should accept confirmation in lowercase, without accents, or with ordinal notation for the specific round', async () => {
     process.env.ALLOW_OPERATIONAL_RESET = 'true';
     vi.mocked(requireAuthenticatedUser).mockResolvedValue({
       authenticated: true,
@@ -174,8 +174,8 @@ describe('POST /api/admin/reset', () => {
       'zerar primeiro turno',
       'ZERAR 1º TURNO',
       'zerar 1 turno',
-      'zerar apuracao',
-      '   zerar   apuração   '
+      'zerar turno 1',
+      '   zerar   primeiro   turno   '
     ];
 
     for (const confirmationText of variations) {
@@ -186,6 +186,32 @@ describe('POST /api/admin/reset', () => {
       const res = await POST(req);
       expect(res.status).toBe(200);
       expect(prisma.$transaction).toHaveBeenCalled();
+    }
+  });
+
+  it('H) should reject generic ZERAR APURAÇÃO or cross-round confirmations when resetting an individual round', async () => {
+    process.env.ALLOW_OPERATIONAL_RESET = 'true';
+    vi.mocked(requireAuthenticatedUser).mockResolvedValue({
+      authenticated: true,
+      user: { userId: '1', role: 'ADMIN' },
+    } as any);
+
+    const invalidForRound1 = [
+      'ZERAR APURAÇÃO',
+      'zerar apuracao',
+      'zerar segundo turno',
+      'ZERAR 2º TURNO'
+    ];
+
+    for (const confirmationText of invalidForRound1) {
+      vi.clearAllMocks();
+      vi.mocked(prisma.electionRound.findUnique).mockResolvedValue({ id: 'round-1', roundNumber: 1, election: { id: 'elec-1' } } as any);
+
+      const req = mockReq({ confirmationText, roundId: 'round-1' });
+      const res = await POST(req);
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toBe('Confirmação incorreta');
     }
   });
 });
