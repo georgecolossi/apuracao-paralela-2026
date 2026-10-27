@@ -150,9 +150,9 @@ describe('Validação Operacional do Scanner T2 e API /api/scan', () => {
     });
 
     // Cargo Presidente
-    let presOffice = await prisma.office.findFirst({ where: { name: 'Presidente' } });
+    let presOffice = await prisma.office.findFirst({ where: { electionId: election.id, name: 'Presidente' } });
     if (!presOffice) {
-      presOffice = await prisma.office.create({ data: { name: 'Presidente', orderNumber: 1 } });
+      presOffice = await prisma.office.create({ data: { electionId: election.id, code: '1', name: 'Presidente', orderNumber: 1 } });
     }
     presOfficeId = presOffice.id;
 

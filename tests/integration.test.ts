@@ -66,7 +66,7 @@ describe('Integração de Banco de Dados e Concorrência', () => {
   });
 
   it('Cálculo Dinâmico (Recálculo) ignora BUs cancelados', async () => {
-    const office = await prisma.office.create({ data: { name: 'CargoTeste', orderNumber: 99 }});
+    const office = await prisma.office.create({ data: { electionId, code: '99', name: 'CargoTeste', orderNumber: 99 }});
     const fakeId1 = `TEST-CALC1-${Date.now()}`;
     const fakeId2 = `TEST-CALC2-${Date.now()}`;
 

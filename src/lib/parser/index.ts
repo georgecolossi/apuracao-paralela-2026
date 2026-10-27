@@ -28,6 +28,7 @@ export type BallotReportData = {
   hashStatus?: VerificationState;
   sigStatus?: VerificationState;
   fase?: string;
+  vrqrVersion?: string;
   warnings?: string[];
   apto?: number;
   comp?: number;

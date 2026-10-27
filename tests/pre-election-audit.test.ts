@@ -152,14 +152,7 @@ describe('AUDITORIA TÉCNICA FINAL PRÉ-ELEIÇÃO — T2 2026 (CONCÓRDIA/SC)', 
       });
     }
 
-    // 3. Cargo Presidente
-    let presOffice = await prisma.office.findFirst({ where: { name: 'Presidente' } });
-    if (!presOffice) {
-      presOffice = await prisma.office.create({ data: { name: 'Presidente', orderNumber: 1 } });
-    }
-    presOfficeId = presOffice.id;
-
-    // 4. Eleição e Turnos: T1 e T2
+    // 3. Eleição e Turnos: T1 e T2
     const election = await prisma.election.create({
       data: {
         year: 2026,
@@ -169,6 +162,13 @@ describe('AUDITORIA TÉCNICA FINAL PRÉ-ELEIÇÃO — T2 2026 (CONCÓRDIA/SC)', 
       }
     });
     electionId = election.id;
+
+    // 4. Cargo Presidente
+    let presOffice = await prisma.office.findFirst({ where: { electionId: election.id, name: 'Presidente' } });
+    if (!presOffice) {
+      presOffice = await prisma.office.create({ data: { electionId: election.id, code: '1', name: 'Presidente', orderNumber: 1 } });
+    }
+    presOfficeId = presOffice.id;
 
     const round1 = await prisma.electionRound.create({
       data: {

@@ -4,6 +4,13 @@ import { Tse2026BallotReportParser } from '@/lib/parser/Tse2026BallotReportParse
 import { Tse2026SimulationParser } from '@/lib/parser/Tse2026SimulationParser';
 
 import { requireAuthenticatedUser } from '@/lib/auth';
+import { OFFICE_NAME_TO_CODE } from '@/lib/metadata/voteEnricher';
+import {
+  validateBallotIngestionInvariants,
+  ElectionInvariantError,
+  getSafeOperatorErrorMessage
+} from '@/lib/validation/electionContext';
+import crypto from 'crypto';
 
 export async function POST(req: Request) {
   try {
@@ -323,22 +330,35 @@ export async function POST(req: Request) {
       // 2º Turno: Cobertura dinâmica — aceita e cadastra seções elegíveis sem lista prévia
       if (!sectionInDB && zoneInDB) {
         const canonicalSec = sectionCode.padStart(4, '0');
-        sectionInDB = await prisma.pollingSection.create({
-          data: {
-            pollingZoneId: zoneInDB.id,
-            sectionNumber: canonicalSec,
-            expectedBUs: 1
-          }
-        });
+        try {
+          sectionInDB = await prisma.pollingSection.create({
+            data: {
+              pollingZoneId: zoneInDB.id,
+              sectionNumber: canonicalSec,
+              expectedBUs: 1
+            }
+          });
 
-        await prisma.auditLog.create({
-          data: {
-            action: 'DYNAMIC_SECTION_REGISTERED',
-            result: 'SUCCESS',
-            identifiers: `Round: 2, Zone: ${zoneInDB.zoneNumber}, Sec: ${canonicalSec}`,
-            userId: operatorId
+          await prisma.auditLog.create({
+            data: {
+              action: 'DYNAMIC_SECTION_REGISTERED',
+              result: 'SUCCESS',
+              identifiers: `Round: 2, Zone: ${zoneInDB.zoneNumber}, Sec: ${canonicalSec}`,
+              userId: operatorId
+            }
+          });
+        } catch (secErr: unknown) {
+          if (secErr && typeof secErr === 'object' && 'code' in secErr && (secErr as { code?: string }).code === 'P2002') {
+            sectionInDB = await prisma.pollingSection.findFirst({
+              where: {
+                pollingZoneId: zoneInDB.id,
+                sectionNumber: canonicalSec
+              }
+            });
+          } else {
+            throw secErr;
           }
-        });
+        }
       }
 
       if (sectionInDB) {
@@ -352,13 +372,21 @@ export async function POST(req: Request) {
         });
 
         if (!existingCoverage) {
-          await prisma.roundCoverage.create({
-            data: {
-              electionRoundId: activeRound.id,
-              pollingSectionId: sectionInDB.id,
-              expectedBUs: 1
+          try {
+            await prisma.roundCoverage.create({
+              data: {
+                electionRoundId: activeRound.id,
+                pollingSectionId: sectionInDB.id,
+                expectedBUs: 1
+              }
+            });
+          } catch (covErr: unknown) {
+            if (covErr && typeof covErr === 'object' && 'code' in covErr && (covErr as { code?: string }).code === 'P2002') {
+              // Já criado concorrentemente por outra requisição simultânea
+            } else {
+              throw covErr;
             }
-          });
+          }
         }
       }
     }
@@ -399,6 +427,14 @@ export async function POST(req: Request) {
     });
 
     if (conflictingSectionReport) {
+      if (conflictingSectionReport.deterministicId === deterministicId) {
+        return NextResponse.json({
+          status: 'DUPLICADO',
+          reportId: conflictingSectionReport.id,
+          error: 'Este Boletim de Urna já foi processado ou está na fila.'
+        }, { status: 409 });
+      }
+
       await prisma.auditLog.create({
         data: {
           action: 'BALLOT_REPORT_CONFLICT',
@@ -470,6 +506,7 @@ export async function POST(req: Request) {
             zoneCode,
             sectionCode,
             urnCode,
+            vrqrVersion: reportData.vrqrVersion || null,
             hash: reportData.hash || '',
             signature: reportData.signature || '',
             status: 'PENDENTE_CONFIRMACAO',
@@ -489,21 +526,106 @@ export async function POST(req: Request) {
           }
         });
 
+        const votesToInsert: Array<{
+          officeId: string;
+          candidateId?: string | null;
+          candidateNumber?: string | null;
+          partyId?: string | null;
+          partyNumber?: string | null;
+          voteType: string;
+          quantity: number;
+        }> = [];
+
         for (const vote of reportData.votes) {
-           let office = await tx.office.findFirst({ where: { name: vote.officeName }});
-           if (!office) {
-              office = await tx.office.create({ data: { name: vote.officeName, orderNumber: 1 } });
-           }
-           await tx.ballotVote.create({
-             data: {
-               reportId: newReport.id,
-               officeId: office.id,
-               candidateNumber: vote.candidateNumber,
-               partyNumber: vote.partyNumber,
-               voteType: vote.type,
-               quantity: vote.quantity
-             }
-           });
+          const officeCode = OFFICE_NAME_TO_CODE[vote.officeName] || vote.officeName;
+          let office = await tx.office.findFirst({
+            where: {
+              electionId: activeElection.id,
+              OR: [
+                { code: officeCode },
+                { name: vote.officeName }
+              ]
+            }
+          });
+          if (!office) {
+            office = await tx.office.create({
+              data: {
+                electionId: activeElection.id,
+                code: officeCode,
+                name: vote.officeName,
+                orderNumber: 1
+              }
+            });
+          }
+
+          let resolvedCandidateId: string | null = null;
+          let resolvedPartyId: string | null = null;
+
+          const normType = (vote.type || 'NOMINAL').trim().toUpperCase();
+
+          // 1. Resolução estrita de candidato nominal por (officeId, candidateNumber) no contexto desta eleição
+          if (vote.candidateNumber && normType !== 'BRANCO' && normType !== 'NULO' && normType !== 'LEGENDA') {
+            const candidate = await tx.candidate.findUnique({
+              where: {
+                officeId_candidateNumber: {
+                  officeId: office.id,
+                  candidateNumber: vote.candidateNumber
+                }
+              }
+            });
+
+            if (candidate) {
+              resolvedCandidateId = candidate.id;
+              resolvedPartyId = candidate.partyId || null;
+            } else {
+              // Candidato ainda não cadastrado no catálogo:
+              // O voto oficial e o BU legítimo são aceitos com candidateId=null e candidateNumber preservado,
+              // sem atribuir votos a candidatos de outros cargos ou eleições por aproximação ambígua.
+              resolvedCandidateId = null;
+            }
+          }
+
+          // 2. Resolução de partido para votos de legenda ou votos sem candidato identificado
+          if (!resolvedPartyId && vote.partyNumber) {
+            const party = await tx.party.findFirst({
+              where: { officialIdentifier: vote.partyNumber }
+            });
+            if (party) {
+              resolvedPartyId = party.id;
+            }
+          }
+
+          votesToInsert.push({
+            officeId: office.id,
+            candidateId: resolvedCandidateId,
+            candidateNumber: (normType === 'BRANCO' || normType === 'NULO') ? null : (vote.candidateNumber || null),
+            partyId: resolvedPartyId,
+            partyNumber: vote.partyNumber || null,
+            voteType: vote.type,
+            quantity: vote.quantity
+          });
+        }
+
+        // Validação estrita de invariantes contextuais multi-eleição
+        await validateBallotIngestionInvariants(tx, {
+          electionId: activeElection.id,
+          roundId: activeRound.id,
+          votes: votesToInsert
+        });
+
+        for (const vote of votesToInsert) {
+          await tx.ballotVote.create({
+            data: {
+              reportId: newReport.id,
+              officeId: vote.officeId,
+              candidateId: vote.candidateId || null,
+              candidateNumber: vote.candidateNumber,
+              partyId: vote.partyId || null,
+              partyNumber: vote.partyNumber,
+              voteType: vote.voteType,
+              quantity: vote.quantity
+            }
+          });
         }
 
         await tx.scanSession.update({
@@ -515,6 +637,19 @@ export async function POST(req: Request) {
       });
       reportId = result;
     } catch (dbError: unknown) {
+      if (dbError instanceof ElectionInvariantError) {
+        const correlationId = crypto.randomUUID();
+        console.error(`[SCAN_INVARIANT_ERROR][${correlationId}] Code: ${dbError.code}`, {
+          message: dbError.message
+        });
+        return NextResponse.json({
+          status: 'ERRO_INVARIANTE',
+          error: dbError.code,
+          message: getSafeOperatorErrorMessage(dbError.code),
+          correlationId
+        }, { status: 422 });
+      }
+
       if (dbError && typeof dbError === 'object' && 'code' in dbError && dbError.code === 'P2002') {
          // Caiu na malha fina da concorrência exata (mesmo milissegundo)
          const dup = await prisma.ballotReport.findUnique({ where: { deterministicId } });
@@ -530,7 +665,24 @@ export async function POST(req: Request) {
     return NextResponse.json({ status: 'COMPLETO', reportId });
 
   } catch (error) {
-    console.error(error);
-    return NextResponse.json({ error: 'Erro interno ao processar QR' }, { status: 500 });
+    if (error instanceof ElectionInvariantError) {
+      const correlationId = crypto.randomUUID();
+      console.error(`[SCAN_INVARIANT_ERROR][${correlationId}] Code: ${error.code}`, {
+        message: error.message
+      });
+      return NextResponse.json({
+        status: 'ERRO_INVARIANTE',
+        error: error.code,
+        message: getSafeOperatorErrorMessage(error.code),
+        correlationId
+      }, { status: 422 });
+    }
+    const correlationId = crypto.randomUUID();
+    console.error(`[SCAN_INTERNAL_ERROR][${correlationId}]`, error);
+    return NextResponse.json({
+      error: 'INTERNAL_ERROR',
+      message: 'Erro interno ao processar o Boletim de Urna.',
+      correlationId
+    }, { status: 500 });
   }
 }
