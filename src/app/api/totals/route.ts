@@ -169,7 +169,9 @@ export async function GET(req: Request) {
       }
     }
 
-    const offices = await prisma.office.findMany();
+    const offices = await prisma.office.findMany({
+      where: { electionId: election.id }
+    });
     const officeMap = Object.fromEntries(offices.map(o => [o.id, o.name]));
     
     // Configura o resolver

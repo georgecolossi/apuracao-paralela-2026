@@ -4,6 +4,7 @@ import { Tse2026BallotReportParser } from '@/lib/parser/Tse2026BallotReportParse
 import { Tse2026SimulationParser } from '@/lib/parser/Tse2026SimulationParser';
 
 import { requireAuthenticatedUser } from '@/lib/auth';
+import { OFFICE_NAME_TO_CODE } from '@/lib/metadata/voteEnricher';
 
 export async function POST(req: Request) {
   try {
@@ -399,6 +400,14 @@ export async function POST(req: Request) {
     });
 
     if (conflictingSectionReport) {
+      if (conflictingSectionReport.deterministicId === deterministicId) {
+        return NextResponse.json({
+          status: 'DUPLICADO',
+          reportId: conflictingSectionReport.id,
+          error: 'Este Boletim de Urna já foi processado ou está na fila.'
+        }, { status: 409 });
+      }
+
       await prisma.auditLog.create({
         data: {
           action: 'BALLOT_REPORT_CONFLICT',
@@ -490,9 +499,25 @@ export async function POST(req: Request) {
         });
 
         for (const vote of reportData.votes) {
-           let office = await tx.office.findFirst({ where: { name: vote.officeName }});
+           const officeCode = OFFICE_NAME_TO_CODE[vote.officeName] || vote.officeName;
+           let office = await tx.office.findFirst({
+             where: {
+               electionId: activeElection.id,
+               OR: [
+                 { code: officeCode },
+                 { name: vote.officeName }
+               ]
+             }
+           });
            if (!office) {
-              office = await tx.office.create({ data: { name: vote.officeName, orderNumber: 1 } });
+              office = await tx.office.create({
+                data: {
+                  electionId: activeElection.id,
+                  code: officeCode,
+                  name: vote.officeName,
+                  orderNumber: 1
+                }
+              });
            }
            await tx.ballotVote.create({
              data: {

@@ -1,4 +1,4 @@
-﻿import { executeApplyTransaction } from "../scripts/bu-dat/run_dry_run";
+import { executeApplyTransaction } from "../scripts/bu-dat/run_dry_run";
 import { prisma } from "../src/lib/db";
 import { describe, it, expect, beforeEach } from "vitest";
 
@@ -18,7 +18,7 @@ describe("Apply Transaction Behavior", () => {
 
         mockElection = await prisma.election.create({ data: { plei: "3220", name: "Test Ele", year: 2026, description: "", status: "ACTIVE" } });
         mockRound = await prisma.electionRound.create({ data: { electionId: mockElection.id, roundNumber: 1, status: "ACTIVE" } });
-        mockOffice = await prisma.office.create({ data: { name: "Presidente", orderNumber: 1, configuration: "{}" } });
+        mockOffice = await prisma.office.create({ data: { electionId: mockElection.id, code: "1", name: "Presidente", orderNumber: 1, configuration: "{}" } });
     });
 
     it("somente NEW é inserido com sucesso", async () => {

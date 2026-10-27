@@ -29,7 +29,7 @@ describe('Totalization and Aggregation Service', () => {
     roundId = round.id;
 
     const office = await prisma.office.create({
-      data: { name: 'Presidente', orderNumber: 1 }
+      data: { electionId, code: '1', name: 'Presidente', orderNumber: 1 }
     });
     officeId = office.id;
   });
