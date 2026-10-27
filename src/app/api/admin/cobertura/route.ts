@@ -29,7 +29,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
     }
 
-    const csrf = validateCsrfProtection(request);
+    const csrf = validateCsrfProtection(request, { userId: auth.user.userId, sessionVersion: auth.user.sessionVersion });
     if (!csrf.valid) {
       return NextResponse.json({ error: 'Falha na validação de origem (CSRF).', reason: csrf.reason }, { status: 403 });
     }

@@ -21,6 +21,7 @@ export type AuthenticatedUser = {
     role: string;
     name?: string;
     email?: string;
+    sessionVersion?: number;
   };
 };
 
@@ -78,7 +79,8 @@ export async function requireAuthenticatedUser(): Promise<AuthResult> {
         userId: userInDb.id,
         role: userInDb.role,
         name: userInDb.name,
-        email: userInDb.email
+        email: userInDb.email,
+        sessionVersion: userInDb.sessionVersion
       }
     };
   } catch (err) {

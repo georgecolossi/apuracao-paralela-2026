@@ -8,7 +8,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const auth = await requireAuthenticatedUser();
     if (!auth.authenticated) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-    const csrf = validateCsrfProtection(req);
+    const csrf = validateCsrfProtection(req, { userId: auth.user.userId, sessionVersion: auth.user.sessionVersion });
     if (!csrf.valid) {
       return NextResponse.json({ error: 'Falha na validação de origem (CSRF).', reason: csrf.reason }, { status: 403 });
     }

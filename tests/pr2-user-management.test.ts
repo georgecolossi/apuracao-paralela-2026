@@ -4,7 +4,7 @@ import * as bcrypt from 'bcryptjs';
 import * as jwt from 'jsonwebtoken';
 import { getJwtSecret, requireAuthenticatedUser } from '@/lib/auth';
 import { validatePasswordStrength, generateSecureRandomPassword } from '@/lib/validation/password';
-import { validateCsrfProtection } from '@/lib/security/csrf';
+import { validateCsrfProtection, generateCsrfToken, verifyCsrfToken } from '@/lib/security/csrf';
 import { POST as loginRoute } from '@/app/api/login/route';
 import { GET as listUsers, POST as createUser } from '@/app/api/admin/users/route';
 import { GET as getUser, PATCH as updateUser, DELETE as deleteUser } from '@/app/api/admin/users/[id]/route';
@@ -683,7 +683,7 @@ describe('PR 2 — Gestão Administrativa de Usuários, RBAC e Segurança de Ses
 
       const csrf = validateCsrfProtection(req);
       expect(csrf.valid).toBe(false);
-      expect(csrf.reason).toBe('CROSS_SITE_REQUEST_REJECTED');
+      expect(csrf.reason).toBe('CROSS_SITE_REQUEST_REJECTED: Requisição cross-site bloqueada.');
     });
 
     it('8.3 Rejeita X-Forwarded-Host não confiável (ataque de cabeçalho forjado)', () => {
@@ -701,35 +701,175 @@ describe('PR 2 — Gestão Administrativa de Usuários, RBAC e Segurança de Ses
       expect(csrf.reason).toContain('UNTRUSTED_FORWARDED_HOST');
     });
 
-    it('8.4 Rejeita mutações sem Origin e sem Referer quando Host está presente (fail-closed)', () => {
-      const req = new Request('http://localhost:3000/api/admin/users', {
-        method: 'POST',
-        headers: {
-          'Host': 'localhost:3000'
-        }
-      });
-
-      const csrf = validateCsrfProtection(req);
-      expect(csrf.valid).toBe(false);
-      expect(csrf.reason).toContain('MISSING_ORIGIN_AND_REFERER');
-    });
-
-    it('8.5 Aceita mutações sem Origin e sem Referer quando autenticadas com cabeçalho seguro X-CSRF-Token', () => {
+    it('8.4 Rejeita mutações sem Origin e sem Referer (fail-closed)', () => {
       const req = new Request('http://localhost:3000/api/admin/users', {
         method: 'POST',
         headers: {
           'Host': 'localhost:3000',
-          'X-CSRF-Token': 'valid-csrf-token-bound-to-session'
+          'x-omit-origin': 'true'
         }
       });
 
-      const csrf = validateCsrfProtection(req);
+      const csrf = validateCsrfProtection(req, { userId: adminUser.id, sessionVersion: adminUser.sessionVersion });
+      expect(csrf.valid).toBe(false);
+      expect(csrf.reason).toContain('MISSING_ORIGIN_AND_REFERER');
+    });
+
+    it('8.5 Rejeita token CSRF arbitrário, inventado ou malformado', () => {
+      const req = new Request('http://localhost:3000/api/admin/users', {
+        method: 'POST',
+        headers: {
+          'Host': 'localhost:3000',
+          'X-CSRF-Token': 'arbitrary-token-inventado-pelo-atacante-1234567890',
+          'x-omit-origin': 'true'
+        }
+      });
+
+      const csrf = validateCsrfProtection(req, { userId: adminUser.id, sessionVersion: adminUser.sessionVersion });
+      expect(csrf.valid).toBe(false);
+      expect(csrf.reason).toContain('INVALID_CSRF_TOKEN');
+    });
+
+    it('8.6 Rejeita token CSRF válido pertencente a outra sessão ou outro usuário', () => {
+      // Gera token legítimo do OPERADOR
+      const operatorCsrfToken = generateCsrfToken(operatorUser.id, operatorUser.sessionVersion);
+
+      // Tenta enviar o token do operador na requisição do ADMIN
+      const req = new Request('http://localhost:3000/api/admin/users', {
+        method: 'POST',
+        headers: {
+          'Host': 'localhost:3000',
+          'X-CSRF-Token': operatorCsrfToken,
+          'x-omit-origin': 'true'
+        }
+      });
+
+      const csrf = validateCsrfProtection(req, { userId: adminUser.id, sessionVersion: adminUser.sessionVersion });
+      expect(csrf.valid).toBe(false);
+      expect(csrf.reason).toContain('INVALID_CSRF_TOKEN');
+    });
+
+    it('8.7 Aceita mutações sem Origin e sem Referer quando autenticadas com token CSRF real da sessão ativa', () => {
+      const validAdminCsrfToken = generateCsrfToken(adminUser.id, adminUser.sessionVersion);
+
+      const req = new Request('http://localhost:3000/api/admin/users', {
+        method: 'POST',
+        headers: {
+          'Host': 'localhost:3000',
+          'X-CSRF-Token': validAdminCsrfToken,
+          'x-omit-origin': 'true'
+        }
+      });
+
+      const csrf = validateCsrfProtection(req, { userId: adminUser.id, sessionVersion: adminUser.sessionVersion });
       expect(csrf.valid).toBe(true);
     });
 
-    it('8.6 Rejeita esquema HTTP inseguro em ambiente de produção simulado', () => {
-      const originalEnv = process.env.NODE_ENV;
+    it('8.8 Invalida token CSRF após incremento de sessionVersion (ex.: troca de senha)', () => {
+      // Token gerado na sessionVersion 0
+      const tokenBefore = generateCsrfToken(adminUser.id, adminUser.sessionVersion);
+      expect(verifyCsrfToken(tokenBefore, adminUser.id, adminUser.sessionVersion)).toBe(true);
+
+      // Após mudança de senha, sessionVersion é incrementado
+      const newSessionVersion = adminUser.sessionVersion + 1;
+      expect(verifyCsrfToken(tokenBefore, adminUser.id, newSessionVersion)).toBe(false);
+
+      // O token antigo passa a ser sumariamente rejeitado pelo validador
+      const req = new Request('http://localhost:3000/api/admin/users', {
+        method: 'POST',
+        headers: {
+          'Host': 'localhost:3000',
+          'X-CSRF-Token': tokenBefore,
+          'x-omit-origin': 'true'
+        }
+      });
+      const csrf = validateCsrfProtection(req, { userId: adminUser.id, sessionVersion: newSessionVersion });
+      expect(csrf.valid).toBe(false);
+      expect(csrf.reason).toContain('INVALID_CSRF_TOKEN');
+
+      // Novo token emitido na nova versão é aceito
+      const tokenAfter = generateCsrfToken(adminUser.id, newSessionVersion);
+      expect(verifyCsrfToken(tokenAfter, adminUser.id, newSessionVersion)).toBe(true);
+    });
+
+    it('8.9 Não considera Sec-Fetch-Site same-site equivalente a same-origin', () => {
+      const req = new Request('http://localhost:3000/api/admin/users', {
+        method: 'POST',
+        headers: {
+          'Host': 'localhost:3000',
+          'Sec-Fetch-Site': 'same-site', // same-site NÃO é same-origin
+          'x-omit-origin': 'true'
+        }
+      });
+
+      const csrf = validateCsrfProtection(req, { userId: adminUser.id, sessionVersion: adminUser.sessionVersion });
+      expect(csrf.valid).toBe(false);
+      expect(csrf.reason).toContain('MISSING_ORIGIN_AND_REFERER');
+    });
+
+    it('8.10 Rejeita requisição incompleta (sem objeto Headers válido ou req nulo)', () => {
+      // @ts-ignore
+      const resNull = validateCsrfProtection(null);
+      expect(resNull.valid).toBe(false);
+      expect(resNull.reason).toContain('INVALID_REQUEST');
+
+      // Objeto com método mas sem headers funcionais
+      const resNoHeaders = validateCsrfProtection({ method: 'POST' } as any);
+      expect(resNoHeaders.valid).toBe(false);
+      expect(resNoHeaders.reason).toContain('INVALID_HEADERS');
+    });
+
+    it('8.11 Aceita requisição legítima com Origin HTTPS correspondente ao RAILWAY_PUBLIC_DOMAIN configurado', () => {
+      const origRailway = process.env.RAILWAY_PUBLIC_DOMAIN;
+      const origNodeEnv = process.env.NODE_ENV;
       try {
+        process.env.RAILWAY_PUBLIC_DOMAIN = 'apuracao-prod.up.railway.app';
+        (process.env as any).NODE_ENV = 'production';
+
+        const req = new Request('https://apuracao-prod.up.railway.app/api/admin/users', {
+          method: 'POST',
+          headers: {
+            'Host': 'apuracao-prod.up.railway.app',
+            'Origin': 'https://apuracao-prod.up.railway.app'
+          }
+        });
+
+        const csrf = validateCsrfProtection(req);
+        expect(csrf.valid).toBe(true);
+      } finally {
+        process.env.RAILWAY_PUBLIC_DOMAIN = origRailway;
+        (process.env as any).NODE_ENV = origNodeEnv;
+      }
+    });
+
+    it('8.12 Aceita requisição legítima com Origin configurado em APP_URL', () => {
+      const origAppUrl = process.env.APP_URL;
+      const origNodeEnv = process.env.NODE_ENV;
+      try {
+        process.env.APP_URL = 'https://apuracao2026.org.br';
+        (process.env as any).NODE_ENV = 'production';
+
+        const req = new Request('https://apuracao2026.org.br/api/admin/users', {
+          method: 'POST',
+          headers: {
+            'Host': 'apuracao2026.org.br',
+            'Origin': 'https://apuracao2026.org.br'
+          }
+        });
+
+        const csrf = validateCsrfProtection(req);
+        expect(csrf.valid).toBe(true);
+      } finally {
+        process.env.APP_URL = origAppUrl;
+        (process.env as any).NODE_ENV = origNodeEnv;
+      }
+    });
+
+    it('8.13 Rejeita esquema HTTP inseguro em ambiente de produção', () => {
+      const originalEnv = process.env.NODE_ENV;
+      const origRailway = process.env.RAILWAY_PUBLIC_DOMAIN;
+      try {
+        process.env.RAILWAY_PUBLIC_DOMAIN = 'meusite.up.railway.app';
         (process.env as any).NODE_ENV = 'production';
         const req = new Request('https://meusite.up.railway.app/api/admin/users', {
           method: 'POST',
@@ -743,8 +883,23 @@ describe('PR 2 — Gestão Administrativa de Usuários, RBAC e Segurança de Ses
         expect(csrf.valid).toBe(false);
         expect(csrf.reason).toContain('INSECURE_ORIGIN_SCHEME');
       } finally {
+        process.env.RAILWAY_PUBLIC_DOMAIN = origRailway;
         (process.env as any).NODE_ENV = originalEnv;
       }
+    });
+
+    it('8.14 Rejeita mutações sem cabeçalho Host ou X-Forwarded-Host (fail-closed)', () => {
+      const req = new Request('http://localhost:3000/api/admin/users', {
+        method: 'POST',
+        headers: {
+          'x-omit-host': 'true',
+          'x-omit-origin': 'true'
+        }
+      });
+
+      const csrf = validateCsrfProtection(req);
+      expect(csrf.valid).toBe(false);
+      expect(csrf.reason).toContain('MISSING_HOST');
     });
   });
 

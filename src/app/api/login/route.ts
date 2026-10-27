@@ -23,12 +23,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Credenciais inválidas' }, { status: 401 });
   }
 
+  const sessionVersion = typeof user.sessionVersion === 'number' ? user.sessionVersion : 0;
   const { getJwtSecret } = await import('@/lib/auth');
   const token = jwt.sign(
     { 
       userId: user.id, 
       role: user.role,
-      sessionVersion: user.sessionVersion 
+      sessionVersion 
     },
     getJwtSecret(),
     { expiresIn: '8h' }
@@ -50,5 +51,8 @@ export async function POST(req: Request) {
     }
   });
 
-  return NextResponse.json({ success: true, role: user.role });
+  const { generateCsrfToken } = await import('@/lib/security/csrf');
+  const csrfToken = generateCsrfToken(user.id, sessionVersion);
+
+  return NextResponse.json({ success: true, role: user.role, csrfToken });
 }

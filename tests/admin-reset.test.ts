@@ -35,9 +35,15 @@ vi.mock('../src/lib/db', () => ({
 }));
 
 describe('POST /api/admin/reset', () => {
-  const mockReq = (body: any) => ({
-    json: vi.fn().mockResolvedValue(body),
-  } as any as Request);
+  const mockReq = (body: any) => new Request('http://localhost:3000/api/admin/reset', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Host': 'localhost:3000',
+      'Origin': 'http://localhost:3000'
+    },
+    body: JSON.stringify(body)
+  });
 
   const originalEnv = process.env.ALLOW_OPERATIONAL_RESET;
 

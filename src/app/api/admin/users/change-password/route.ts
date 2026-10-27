@@ -20,7 +20,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
     }
 
-    const csrf = validateCsrfProtection(req);
+    const csrf = validateCsrfProtection(req, { userId: auth.user.userId, sessionVersion: auth.user.sessionVersion });
     if (!csrf.valid) {
       return NextResponse.json({ error: 'Falha na validação de origem (CSRF).', reason: csrf.reason }, { status: 403 });
     }
@@ -111,9 +111,13 @@ export async function POST(req: Request) {
       path: '/'
     });
 
+    const { generateCsrfToken } = await import('@/lib/security/csrf');
+    const csrfToken = generateCsrfToken(updatedUser.id, updatedUser.sessionVersion);
+
     return NextResponse.json({
       success: true,
-      message: 'Senha alterada com sucesso.'
+      message: 'Senha alterada com sucesso.',
+      csrfToken
     });
 
   } catch (error) {
