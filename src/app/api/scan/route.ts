@@ -19,6 +19,13 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Não autorizado' }, { status: 401 });
     }
 
+    if (auth.user.role === 'VIEWER') {
+      return NextResponse.json({
+        error: 'FORBIDDEN_ROLE',
+        message: 'Acesso negado: usuários com perfil de visualizador (VIEWER) não possuem permissão de leitura de BUs.'
+      }, { status: 403 });
+    }
+
     const { content, isSimulation = false, sessionId } = await req.json();
     const operatorId = auth.user.userId;
 

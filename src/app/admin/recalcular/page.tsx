@@ -1,13 +1,26 @@
-import { Activity, ShieldCheck, RefreshCcw } from 'lucide-react';
+import { redirect } from 'next/navigation';
+import { requireAuthenticatedUser } from '@/lib/auth';
+import { Activity, ShieldCheck, RefreshCcw, ArrowLeft } from 'lucide-react';
 import Link from 'next/link';
 
-export default function IntegridadePage() {
+export default async function IntegridadePage() {
+  const auth = await requireAuthenticatedUser();
+  if (!auth.authenticated) {
+    redirect('/login');
+  }
+  if (auth.user.role !== 'ADMIN') {
+    redirect('/admin');
+  }
+
   return (
     <div className="min-h-screen bg-slate-100 font-sans flex flex-col items-center py-12 px-4">
       <div className="w-full max-w-2xl">
         
         <div className="mb-6">
-
+          <Link href="/admin" className="inline-flex items-center gap-2 text-sm font-semibold text-slate-500 hover:text-slate-800 transition-colors mb-4">
+            <ArrowLeft className="w-4 h-4" />
+            Voltar ao Dashboard
+          </Link>
           <h1 className="text-2xl font-black uppercase tracking-tight text-slate-900 flex items-center gap-3">
             <RefreshCcw className="w-7 h-7 text-indigo-600" />
             Integridade da Totalização
@@ -26,15 +39,16 @@ export default function IntegridadePage() {
             </p>
           </div>
 
-          <div className="flex items-start gap-4 p-5 rounded-2xl bg-slate-50 border border-slate-200">
-            <ShieldCheck className="w-8 h-8 shrink-0 text-slate-400 mt-0.5" />
-            <p className="text-slate-600 leading-relaxed text-sm">
-              Se o estado de um Boletim de Urna for alterado (por exemplo, de <code className="bg-white border border-slate-200 px-1.5 py-0.5 rounded font-bold text-slate-700">PROCESSADO</code> para <code className="bg-white border border-slate-200 px-1.5 py-0.5 rounded font-bold text-slate-700">CANCELADO</code> devido à auditoria),
-              o recálculo do Painel Público reflete essa mudança na próxima requisição, eliminando a necessidade de processamento em lote (batch recalculation).
+          <div className="flex items-start gap-4 p-5 rounded-2xl bg-emerald-50 border border-emerald-100">
+            <ShieldCheck className="w-8 h-8 shrink-0 text-emerald-600 mt-0.5" />
+            <p className="text-slate-800 leading-relaxed font-medium">
+              A integridade é garantida pela verificação estrita de cada hash SHA-512 e chave canônica 
+              única para cada seção eleitoral, prevenindo votos duplicados de forma idempotente e segura.
             </p>
           </div>
 
         </div>
+
       </div>
     </div>
   );

@@ -1,5 +1,7 @@
 import Link from 'next/link';
+import { redirect } from 'next/navigation';
 import { prisma } from '@/lib/db';
+import { requireAuthenticatedUser } from '@/lib/auth';
 import { LogoutButton } from '@/components/LogoutButton';
 import {
   ScanLine,
@@ -17,12 +19,23 @@ import {
   MapPin,
   Archive,
   Layers,
-  ExternalLink
+  ExternalLink,
+  Eye,
+  Settings
 } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 
 export default async function AdminDashboard() {
+  const auth = await requireAuthenticatedUser();
+  if (!auth.authenticated) {
+    redirect('/login');
+  }
+
+  const role = auth.user.role || 'OPERATOR';
+  const isAdmin = role === 'ADMIN';
+  const isViewer = role === 'VIEWER';
+
   const activeOperators = await prisma.user.count({ where: { isActive: true } });
 
   const activeElections = await prisma.election.findMany({
@@ -77,13 +90,63 @@ export default async function AdminDashboard() {
   return (
     <main className="flex-1 p-4 md:p-6 lg:p-8 max-w-5xl mx-auto w-full flex flex-col gap-6">
         
+        {/* User Identity & Role Banner */}
+        <div className="flex items-center justify-between bg-slate-900 text-white px-5 py-3 rounded-2xl border border-slate-800 shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center font-bold text-indigo-400 text-sm">
+              {(auth.user.name || auth.user.email || 'U').charAt(0).toUpperCase()}
+            </div>
+            <div>
+              <div className="text-sm font-semibold flex items-center gap-2">
+                <span>{auth.user.name || auth.user.email}</span>
+                {isAdmin && (
+                  <span className="text-[10px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-2 py-0.5 rounded font-bold uppercase tracking-wider">
+                    Administrador
+                  </span>
+                )}
+                {role === 'OPERATOR' && (
+                  <span className="text-[10px] bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 px-2 py-0.5 rounded font-bold uppercase tracking-wider">
+                    Operador
+                  </span>
+                )}
+                {isViewer && (
+                  <span className="text-[10px] bg-amber-500/20 text-amber-300 border border-amber-500/30 px-2 py-0.5 rounded font-bold uppercase tracking-wider">
+                    Visualizador (Leitura)
+                  </span>
+                )}
+              </div>
+              <div className="text-xs text-slate-400">{auth.user.email}</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {isAdmin && (
+              <Link
+                href="/admin/usuarios"
+                className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-lg border border-slate-700 transition-colors"
+              >
+                <Users className="w-3.5 h-3.5 text-indigo-400" />
+                Usuários
+              </Link>
+            )}
+            <LogoutButton />
+          </div>
+        </div>
+
         {/* Main Action Call */}
-        <Link href="/admin/scanner" className="bg-indigo-600 text-white p-6 md:p-8 rounded-2xl text-center hover:bg-indigo-700 font-bold block shadow-md shadow-indigo-600/20 transition-all transform hover:-translate-y-1 relative overflow-hidden group">
-          <div className="absolute inset-0 bg-indigo-500 opacity-0 group-hover:opacity-20 transition-opacity" />
-          <ScanLine className="w-12 h-12 mx-auto mb-3 text-indigo-200 group-hover:scale-110 transition-transform" />
-          <h2 className="text-2xl md:text-3xl uppercase tracking-widest mb-1 font-black">Ler Boletim de Urna</h2>
-          <p className="text-indigo-200 font-medium text-sm tracking-wide uppercase">Acessar o scanner e coletar QR Codes</p>
-        </Link>
+        {!isViewer ? (
+          <Link href="/admin/scanner" className="bg-indigo-600 text-white p-6 md:p-8 rounded-2xl text-center hover:bg-indigo-700 font-bold block shadow-md shadow-indigo-600/20 transition-all transform hover:-translate-y-1 relative overflow-hidden group">
+            <div className="absolute inset-0 bg-indigo-500 opacity-0 group-hover:opacity-20 transition-opacity" />
+            <ScanLine className="w-12 h-12 mx-auto mb-3 text-indigo-200 group-hover:scale-110 transition-transform" />
+            <h2 className="text-2xl md:text-3xl uppercase tracking-widest mb-1 font-black">Ler Boletim de Urna</h2>
+            <p className="text-indigo-200 font-medium text-sm tracking-wide uppercase">Acessar o scanner e coletar QR Codes</p>
+          </Link>
+        ) : (
+          <div className="bg-slate-900 border border-slate-800 text-slate-300 p-6 md:p-8 rounded-2xl text-center shadow-sm">
+            <Eye className="w-12 h-12 mx-auto mb-3 text-amber-400 opacity-80" />
+            <h2 className="text-xl md:text-2xl uppercase tracking-wide mb-1 font-bold text-white">Perfil de Visualização Ativo</h2>
+            <p className="text-slate-400 text-sm">Você possui permissão de consulta e auditoria em tempo real, sem acesso de escrita ou leitura de BUs.</p>
+          </div>
+        )}
         
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
           {/* Status do Turno Ativo */}
@@ -101,16 +164,23 @@ export default async function AdminDashboard() {
             ) : (
               <span className="text-3xl font-black text-slate-900">INDISP.</span>
             )}
-            <Link href="/admin/turnos" className="mt-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs uppercase tracking-wider px-3 py-1.5 rounded transition-colors">
-              Gerenciar Turnos
-            </Link>
+            {isAdmin && (
+              <Link href="/admin/turnos" className="mt-4 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs uppercase tracking-wider px-3 py-1.5 rounded transition-colors">
+                Gerenciar Turnos
+              </Link>
+            )}
           </div>
           
-          {/* Operadores */}
+          {/* Usuários Ativos */}
           <div className="bg-white p-6 shadow-sm rounded-2xl border border-slate-200 flex flex-col justify-center items-center">
             <Users className="w-8 h-8 text-slate-400 mb-2" />
-            <h3 className="font-bold text-slate-500 uppercase text-xs tracking-widest mb-1">Operadores Ativos</h3>
+            <h3 className="font-bold text-slate-500 uppercase text-xs tracking-widest mb-1">Usuários Ativos</h3>
             <span className="text-5xl font-black text-slate-900">{activeOperators}</span>
+            {isAdmin && (
+              <Link href="/admin/usuarios" className="mt-3 text-xs font-bold text-indigo-600 hover:text-indigo-800 transition-colors">
+                Gerenciar Usuários &rarr;
+              </Link>
+            )}
           </div>
 
           {/* Estatísticas do Turno Ativo */}
@@ -245,32 +315,51 @@ export default async function AdminDashboard() {
         </div>
 
         {/* Quick Links */}
-        <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
-          <Link href="/admin/cobertura" className="bg-white border border-slate-200 p-4 rounded-xl text-center hover:bg-slate-50 transition-colors flex flex-col items-center gap-2 group">
-            <MapPin className="w-5 h-5 text-slate-400 group-hover:text-indigo-500 transition-colors" />
-            <span className="font-bold text-xs uppercase tracking-wider text-slate-600 group-hover:text-slate-900">Cobertura</span>
-          </Link>
-          <Link href="/admin/conferencia" className="bg-white border border-slate-200 p-4 rounded-xl text-center hover:bg-slate-50 transition-colors flex flex-col items-center gap-2 group">
-            <Search className="w-5 h-5 text-slate-400 group-hover:text-indigo-500 transition-colors" />
-            <span className="font-bold text-xs uppercase tracking-wider text-slate-600 group-hover:text-slate-900">Conferência Global</span>
-          </Link>
-          <Link href="/admin/recalcular" className="bg-white border border-slate-200 p-4 rounded-xl text-center hover:bg-slate-50 transition-colors flex flex-col items-center gap-2 group">
-            <RotateCcw className="w-5 h-5 text-slate-400 group-hover:text-indigo-500 transition-colors" />
-            <span className="font-bold text-xs uppercase tracking-wider text-slate-600 group-hover:text-slate-900">Integridade</span>
-          </Link>
-          <Link href="/admin/audit" className="bg-white border border-slate-200 p-4 rounded-xl text-center hover:bg-slate-50 transition-colors flex flex-col items-center gap-2 group">
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-4">
+          {isAdmin && (
+            <Link href="/admin/usuarios" className="bg-white border border-slate-200 p-4 rounded-xl text-center hover:bg-slate-50 transition-colors flex flex-col items-center gap-2 group shadow-sm">
+              <Users className="w-5 h-5 text-slate-400 group-hover:text-indigo-500 transition-colors" />
+              <span className="font-bold text-xs uppercase tracking-wider text-slate-600 group-hover:text-slate-900">Usuários</span>
+            </Link>
+          )}
+
+          {isAdmin && (
+            <Link href="/admin/cobertura" className="bg-white border border-slate-200 p-4 rounded-xl text-center hover:bg-slate-50 transition-colors flex flex-col items-center gap-2 group shadow-sm">
+              <MapPin className="w-5 h-5 text-slate-400 group-hover:text-indigo-500 transition-colors" />
+              <span className="font-bold text-xs uppercase tracking-wider text-slate-600 group-hover:text-slate-900">Cobertura</span>
+            </Link>
+          )}
+
+          {!isViewer && (
+            <Link href="/admin/conferencia" className="bg-white border border-slate-200 p-4 rounded-xl text-center hover:bg-slate-50 transition-colors flex flex-col items-center gap-2 group shadow-sm">
+              <Search className="w-5 h-5 text-slate-400 group-hover:text-indigo-500 transition-colors" />
+              <span className="font-bold text-xs uppercase tracking-wider text-slate-600 group-hover:text-slate-900">Conferência</span>
+            </Link>
+          )}
+
+          {isAdmin && (
+            <Link href="/admin/recalcular" className="bg-white border border-slate-200 p-4 rounded-xl text-center hover:bg-slate-50 transition-colors flex flex-col items-center gap-2 group shadow-sm">
+              <RotateCcw className="w-5 h-5 text-slate-400 group-hover:text-indigo-500 transition-colors" />
+              <span className="font-bold text-xs uppercase tracking-wider text-slate-600 group-hover:text-slate-900">Integridade</span>
+            </Link>
+          )}
+
+          <Link href="/admin/audit" className="bg-white border border-slate-200 p-4 rounded-xl text-center hover:bg-slate-50 transition-colors flex flex-col items-center gap-2 group shadow-sm">
             <ShieldCheck className="w-5 h-5 text-slate-400 group-hover:text-indigo-500 transition-colors" />
-            <span className="font-bold text-xs uppercase tracking-wider text-slate-600 group-hover:text-slate-900">Logs de Auditoria</span>
+            <span className="font-bold text-xs uppercase tracking-wider text-slate-600 group-hover:text-slate-900">Auditoria</span>
           </Link>
-          <Link href="/api/export?format=csv" target="_blank" className="bg-white border border-slate-200 p-4 rounded-xl text-center hover:bg-slate-50 transition-colors flex flex-col items-center gap-2 group">
+
+          <Link href="/api/export?format=csv" target="_blank" className="bg-white border border-slate-200 p-4 rounded-xl text-center hover:bg-slate-50 transition-colors flex flex-col items-center gap-2 group shadow-sm">
             <Download className="w-5 h-5 text-slate-400 group-hover:text-indigo-500 transition-colors" />
             <span className="font-bold text-xs uppercase tracking-wider text-slate-600 group-hover:text-slate-900">Exportar CSV</span>
           </Link>
 
-          <Link href="/admin/preparar" className="bg-white border border-slate-200 p-4 rounded-xl text-center hover:bg-red-50 transition-colors flex flex-col items-center gap-2 group">
-            <Trash2 className="w-5 h-5 text-red-400 group-hover:text-red-600 transition-colors" />
-            <span className="font-bold text-xs uppercase tracking-wider text-red-600 group-hover:text-red-700">Zerar</span>
-          </Link>
+          {isAdmin && (
+            <Link href="/admin/preparar" className="bg-white border border-slate-200 p-4 rounded-xl text-center hover:bg-red-50 transition-colors flex flex-col items-center gap-2 group shadow-sm">
+              <Trash2 className="w-5 h-5 text-red-400 group-hover:text-red-600 transition-colors" />
+              <span className="font-bold text-xs uppercase tracking-wider text-red-600 group-hover:text-red-700">Zerar</span>
+            </Link>
+          )}
         </div>
 
       </main>

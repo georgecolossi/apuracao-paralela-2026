@@ -8,6 +8,13 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const auth = await requireAuthenticatedUser();
     if (!auth.authenticated) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
+    if (auth.user.role === 'VIEWER') {
+      return NextResponse.json({
+        error: 'FORBIDDEN_ROLE',
+        message: 'Acesso negado: usuários com perfil de visualizador (VIEWER) não possuem permissão de cancelamento de BUs.'
+      }, { status: 403 });
+    }
+
     const { id } = await params;
     const report = await prisma.ballotReport.findUnique({ where: { id } });
     
