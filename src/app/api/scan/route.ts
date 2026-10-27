@@ -5,6 +5,7 @@ import { Tse2026SimulationParser } from '@/lib/parser/Tse2026SimulationParser';
 
 import { requireAuthenticatedUser } from '@/lib/auth';
 import { OFFICE_NAME_TO_CODE } from '@/lib/metadata/voteEnricher';
+import { validateBallotIngestionInvariants } from '@/lib/validation/electionContext';
 
 export async function POST(req: Request) {
   try {
@@ -479,6 +480,7 @@ export async function POST(req: Request) {
             zoneCode,
             sectionCode,
             urnCode,
+            vrqrVersion: reportData.vrqrVersion || null,
             hash: reportData.hash || '',
             signature: reportData.signature || '',
             status: 'PENDENTE_CONFIRMACAO',
@@ -498,6 +500,7 @@ export async function POST(req: Request) {
           }
         });
 
+        const votesToInsert: Array<{ officeId: string; candidateNumber?: string; partyNumber?: string; voteType: string; quantity: number }> = [];
         for (const vote of reportData.votes) {
            const officeCode = OFFICE_NAME_TO_CODE[vote.officeName] || vote.officeName;
            let office = await tx.office.findFirst({
@@ -519,13 +522,30 @@ export async function POST(req: Request) {
                 }
               });
            }
+           votesToInsert.push({
+             officeId: office.id,
+             candidateNumber: vote.candidateNumber,
+             partyNumber: vote.partyNumber,
+             voteType: vote.type,
+             quantity: vote.quantity
+           });
+        }
+
+        // Validação estrita de invariantes contextuais multi-eleição
+        await validateBallotIngestionInvariants(tx, {
+          electionId: activeElection.id,
+          roundId: activeRound.id,
+          votes: votesToInsert
+        });
+
+        for (const vote of votesToInsert) {
            await tx.ballotVote.create({
              data: {
                reportId: newReport.id,
-               officeId: office.id,
+               officeId: vote.officeId,
                candidateNumber: vote.candidateNumber,
                partyNumber: vote.partyNumber,
-               voteType: vote.type,
+               voteType: vote.voteType,
                quantity: vote.quantity
              }
            });

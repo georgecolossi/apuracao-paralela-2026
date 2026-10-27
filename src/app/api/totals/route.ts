@@ -10,23 +10,48 @@ export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
     const roundParam = searchParams.get('round');
+    const electionParam = searchParams.get('election') || searchParams.get('electionId') || searchParams.get('slug');
 
-    const activeElections = await prisma.election.findMany({ 
-      where: { status: 'ACTIVE' },
-      include: { rounds: true }
-    });
-    if (activeElections.length === 0) {
-      return NextResponse.json({ processedReports: 0, expectedReports: 0, totals: [] }, {
-        headers: { 'Cache-Control': CACHE_CONTROL_HEADER }
+    let election;
+    if (electionParam) {
+      const found = await prisma.election.findFirst({
+        where: {
+          OR: [
+            { id: electionParam },
+            { slug: electionParam }
+          ]
+        },
+        include: { rounds: true }
       });
-    }
-    if (activeElections.length > 1) {
-      return NextResponse.json({ error: 'Configuração ambígua: múltiplas eleições ativas.' }, {
-        status: 500,
-        headers: { 'Cache-Control': CACHE_CONTROL_HEADER }
+      if (!found) {
+        return NextResponse.json({ error: 'Eleição informada não encontrada.' }, {
+          status: 404,
+          headers: { 'Cache-Control': CACHE_CONTROL_HEADER }
+        });
+      }
+      election = found;
+    } else {
+      const activeElections = await prisma.election.findMany({ 
+        where: { status: 'ACTIVE' },
+        include: { rounds: true }
       });
+      if (activeElections.length === 0) {
+        return NextResponse.json({ processedReports: 0, expectedReports: 0, totals: [] }, {
+          headers: { 'Cache-Control': CACHE_CONTROL_HEADER }
+        });
+      }
+      if (activeElections.length > 1) {
+        return NextResponse.json({
+          error: 'CONFIGURACAO_AMBIGUA',
+          message: 'Configuração ambígua: múltiplas eleições ativas no banco. Especifique o parâmetro ?election=<id_ou_slug>.',
+          activeElections: activeElections.map(e => ({ id: e.id, slug: e.slug, name: e.name }))
+        }, {
+          status: 400,
+          headers: { 'Cache-Control': CACHE_CONTROL_HEADER }
+        });
+      }
+      election = activeElections[0];
     }
-    const election = activeElections[0];
 
     let targetRound;
     if (roundParam) {

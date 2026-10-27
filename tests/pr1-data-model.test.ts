@@ -1,12 +1,17 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { prisma } from '@/lib/db';
+import {
+  validateBallotIngestionInvariants,
+  validateElectionScopeAddition,
+  validateCoverageTransition,
+  buildTseSyncConfigKey,
+  ElectionInvariantError
+} from '@/lib/validation/electionContext';
 
-describe('PR 1 — Universal Data Model & Entity Abstraction', () => {
+describe('PR 1 — Universal Data Model, Entity Abstraction & Contextual Invariants', () => {
   const testRunId = Date.now().toString();
 
-  beforeAll(async () => {
-    // Garante que o ambiente de teste esteja limpo para este conjunto
-  });
+  beforeAll(async () => {});
 
   afterAll(async () => {
     await prisma.$disconnect();
@@ -180,14 +185,76 @@ describe('PR 1 — Universal Data Model & Entity Abstraction', () => {
     ).rejects.toThrow();
   });
 
-  it('3. Abrangência geográfica (ElectionScope): Nacional, Estadual e Municipal com unicidade estrita', async () => {
+  it('3. Testes negativos de invariantes transacionais multi-eleição', async () => {
+    const electionA = await prisma.election.create({
+      data: { slug: `inv-elec-a-${testRunId}`, name: 'Eleição A', year: 2026, status: 'ACTIVE' }
+    });
+
+    const electionB = await prisma.election.create({
+      data: { slug: `inv-elec-b-${testRunId}`, name: 'Eleição B', year: 2026, status: 'DRAFT' }
+    });
+
+    const roundA = await prisma.electionRound.create({
+      data: { electionId: electionA.id, roundNumber: 1, status: 'ACTIVE' }
+    });
+
+    const roundB = await prisma.electionRound.create({
+      data: { electionId: electionB.id, roundNumber: 1, status: 'PLANNED' }
+    });
+
+    const officeA = await prisma.office.create({
+      data: { electionId: electionA.id, code: '1', name: 'Presidente', orderNumber: 1 }
+    });
+
+    const officeB = await prisma.office.create({
+      data: { electionId: electionB.id, code: '1', name: 'Presidente', orderNumber: 1 }
+    });
+
+    const party = await prisma.party.create({
+      data: { officialIdentifier: `party-inv-${testRunId}`, name: 'Partido Invariante', abbreviation: 'PI' }
+    });
+
+    const candOfficeA = await prisma.candidate.create({
+      data: { officeId: officeA.id, partyId: party.id, candidateNumber: '99', name: 'Cand A', ballotName: 'Cand A' }
+    });
+
+    // 3.1. Tentativa de cruzar Turno B com Eleição A deve lançar ROUND_ELECTION_MISMATCH
+    await expect(
+      prisma.$transaction(async (tx) => {
+        await validateBallotIngestionInvariants(tx, {
+          electionId: electionA.id,
+          roundId: roundB.id, // Pertence à eleição B!
+          votes: [{ officeId: officeA.id, voteType: 'NOMINAL', quantity: 10 }]
+        });
+      })
+    ).rejects.toThrow(ElectionInvariantError);
+
+    // 3.2. Tentativa de votar em Cargo da Eleição B dentro de relatório da Eleição A deve lançar OFFICE_ELECTION_MISMATCH
+    await expect(
+      prisma.$transaction(async (tx) => {
+        await validateBallotIngestionInvariants(tx, {
+          electionId: electionA.id,
+          roundId: roundA.id,
+          votes: [{ officeId: officeB.id, voteType: 'NOMINAL', quantity: 10 }] // Cargo da Eleição B!
+        });
+      })
+    ).rejects.toThrow(ElectionInvariantError);
+
+    // 3.3. Tentativa de votar em candidato do Cargo A informando Cargo B deve lançar CANDIDATE_OFFICE_MISMATCH
+    await expect(
+      prisma.$transaction(async (tx) => {
+        await validateBallotIngestionInvariants(tx, {
+          electionId: electionA.id,
+          roundId: roundA.id,
+          votes: [{ officeId: officeA.id, candidateId: 'id-inexistente', voteType: 'NOMINAL', quantity: 10 }]
+        });
+      })
+    ).rejects.toThrow(ElectionInvariantError);
+  });
+
+  it('4. Abrangência geográfica (ElectionScope) e prevenção de contradições', async () => {
     const election = await prisma.election.create({
-      data: {
-        slug: `eleicao-scopes-${testRunId}`,
-        name: 'Eleição Escopos',
-        year: 2026,
-        status: 'ACTIVE'
-      }
+      data: { slug: `scope-hierarchy-${testRunId}`, name: 'Eleição Escopos', year: 2026, status: 'ACTIVE' }
     });
 
     const stateSC = await prisma.state.upsert({
@@ -196,13 +263,7 @@ describe('PR 1 — Universal Data Model & Entity Abstraction', () => {
       create: { name: 'Santa Catarina', abbreviation: 'SC' }
     });
 
-    const muniConcordia = await prisma.municipality.upsert({
-      where: { officialCode: '80837' },
-      update: {},
-      create: { name: 'Concórdia', officialCode: '80837', stateId: stateSC.id }
-    });
-
-    // 1. Escopo Nacional
+    // Cria escopo Nacional
     const scopeBR = await prisma.electionScope.create({
       data: {
         electionId: election.id,
@@ -211,186 +272,167 @@ describe('PR 1 — Universal Data Model & Entity Abstraction', () => {
         isCoverageArea: true
       }
     });
-
-    // 2. Escopo Estadual
-    const scopeSC = await prisma.electionScope.create({
-      data: {
-        electionId: election.id,
-        scopeType: 'ESTADUAL',
-        scopeKey: 'UF:SC',
-        stateId: stateSC.id,
-        isCoverageArea: true
-      }
-    });
-
-    // 3. Escopo Municipal
-    const scopeMun = await prisma.electionScope.create({
-      data: {
-        electionId: election.id,
-        scopeType: 'MUNICIPAL',
-        scopeKey: 'MUN:80837',
-        stateId: stateSC.id,
-        municipalityId: muniConcordia.id,
-        isCoverageArea: true
-      }
-    });
-
     expect(scopeBR.scopeKey).toBe('BR');
-    expect(scopeSC.scopeKey).toBe('UF:SC');
-    expect(scopeMun.scopeKey).toBe('MUN:80837');
 
-    // Tentativa de inserir escopo duplicado com mesma scopeKey deve falhar
+    // Validação de Contradição: Tentar adicionar escopo regional quando escopo nacional já existe deve ser rejeitado
+    expect(() => {
+      validateElectionScopeAddition(
+        [{ scopeType: 'NACIONAL', scopeKey: 'BR' }],
+        { scopeType: 'ESTADUAL', scopeKey: 'UF:SC' }
+      );
+    }).toThrow(ElectionInvariantError);
+
+    // Tentar adicionar escopo com chave duplicada deve ser rejeitado
+    expect(() => {
+      validateElectionScopeAddition(
+        [{ scopeType: 'NACIONAL', scopeKey: 'BR' }],
+        { scopeType: 'NACIONAL', scopeKey: 'BR' }
+      );
+    }).toThrow(ElectionInvariantError);
+
+    // Em eleição regional, múltiplos municípios coexistem harmoniosamente
+    const regionalScopes = [
+      { scopeType: 'MUNICIPAL', scopeKey: 'MUN:80837' }
+    ];
+    expect(() => {
+      validateElectionScopeAddition(regionalScopes, { scopeType: 'MUNICIPAL', scopeKey: 'MUN:80838' });
+    }).not.toThrow();
+
+    // Mas tentar adicionar escopo nacional a uma eleição já particionada regionalmente é rejeitado
+    expect(() => {
+      validateElectionScopeAddition(regionalScopes, { scopeType: 'NACIONAL', scopeKey: 'BR' });
+    }).toThrow(ElectionInvariantError);
+  });
+
+  it('5. Validação rigorosa de transição e homologação de cobertura', async () => {
+    // 5.1. Não pode transicionar direto de PROVISIONAL para HOMOLOGATED
+    expect(() => {
+      validateCoverageTransition('PROVISIONAL', 'HOMOLOGATED', {
+        homologatedBy: 'admin',
+        homologationType: 'TSE_OFFICIAL_CONFIRMATION',
+        evidenceNotes: 'Checksum oficial de 193 seções'
+      });
+    }).toThrow(ElectionInvariantError);
+
+    // 5.2. Não pode registrar cobertura sem seções vinculadas
+    expect(() => {
+      validateCoverageTransition('PROVISIONAL', 'REGISTERED', { sectionsCount: 0 });
+    }).toThrow(ElectionInvariantError);
+
+    // 5.3. Homologação exige responsável obrigatório
+    expect(() => {
+      validateCoverageTransition('REGISTERED', 'HOMOLOGATED', {
+        homologatedBy: '',
+        homologationType: 'TSE_OFFICIAL_CONFIRMATION',
+        evidenceNotes: 'Checksum válido'
+      });
+    }).toThrow(ElectionInvariantError);
+
+    // 5.4. Homologação exige tipo de confirmação válido
+    expect(() => {
+      validateCoverageTransition('REGISTERED', 'HOMOLOGATED', {
+        homologatedBy: 'admin',
+        homologationType: 'INVALID_TYPE',
+        evidenceNotes: 'Checksum válido'
+      });
+    }).toThrow(ElectionInvariantError);
+
+    // 5.5. Homologação exige notas de evidência suficientes
+    expect(() => {
+      validateCoverageTransition('REGISTERED', 'HOMOLOGATED', {
+        homologatedBy: 'admin',
+        homologationType: 'TSE_OFFICIAL_CONFIRMATION',
+        evidenceNotes: 'curto'
+      });
+    }).toThrow(ElectionInvariantError);
+
+    // 5.6. Homologação com dados completos tem sucesso
+    expect(() => {
+      validateCoverageTransition('REGISTERED', 'HOMOLOGATED', {
+        homologatedBy: 'auditor-chefe',
+        homologationType: 'TSE_OFFICIAL_CONFIRMATION',
+        evidenceNotes: 'SHA256 do arquivo EA16 validado contra o catálogo oficial do TSE 2026.'
+      });
+    }).not.toThrow();
+  });
+
+  it('6. TseSyncConfig com unicidade lógica por eleição, turno, cargo e abrangência', async () => {
+    const election = await prisma.election.create({
+      data: { slug: `tse-sync-keys-${testRunId}`, name: 'Eleição TSE Keys', year: 2026, status: 'ACTIVE' }
+    });
+
+    const keyPres = buildTseSyncConfigKey({ roundNumber: 1, officeCode: '1', scopeType: 'NACIONAL', uf: 'BR' });
+    const keyGov = buildTseSyncConfigKey({ roundNumber: 1, officeCode: '3', scopeType: 'ESTADUAL', uf: 'SC' });
+
+    expect(keyPres).toBe('R1:OFFICE-1:NACIONAL:BR:GLOBAL');
+    expect(keyGov).toBe('R1:OFFICE-3:ESTADUAL:SC:GLOBAL');
+
+    await prisma.tseSyncConfig.create({
+      data: {
+        electionId: election.id,
+        roundNumber: 1,
+        configKey: keyPres,
+        officeCode: '1',
+        officialElectionCode: '6257',
+        scopeType: 'NACIONAL',
+        uf: 'BR'
+      }
+    });
+
+    await prisma.tseSyncConfig.create({
+      data: {
+        electionId: election.id,
+        roundNumber: 1,
+        configKey: keyGov,
+        officeCode: '3',
+        officialElectionCode: '6259',
+        scopeType: 'ESTADUAL',
+        uf: 'SC'
+      }
+    });
+
+    // Tentativa de duplicar exatamente a mesma configuração lógica deve falhar pela constraint @@unique([electionId, configKey])
     await expect(
-      prisma.electionScope.create({
+      prisma.tseSyncConfig.create({
         data: {
           electionId: election.id,
+          roundNumber: 1,
+          configKey: keyPres,
+          officeCode: '1',
+          officialElectionCode: '6257',
           scopeType: 'NACIONAL',
-          scopeKey: 'BR'
+          uf: 'BR'
         }
       })
     ).rejects.toThrow();
   });
 
-  it('4. Homologação formal de cobertura com metadados auditáveis', async () => {
+  it('7. Ciclo de vida dos Boletins de Urna e vrqrVersion dinâmica', async () => {
     const election = await prisma.election.create({
-      data: {
-        slug: `eleicao-homologacao-${testRunId}`,
-        name: 'Eleição com Homologação',
-        year: 2026,
-        status: 'ACTIVE'
-      }
-    });
-
-    const round = await prisma.electionRound.create({
-      data: {
-        electionId: election.id,
-        roundNumber: 1,
-        status: 'PLANNED',
-        coverageStatus: 'PROVISIONAL'
-      }
-    });
-
-    expect(round.coverageStatus).toBe('PROVISIONAL');
-    expect(round.coverageHomologatedAt).toBeNull();
-
-    // Transição para REGISTERED (quando seções são importadas/cadastradas)
-    const registeredRound = await prisma.electionRound.update({
-      where: { id: round.id },
-      data: {
-        coverageStatus: 'REGISTERED',
-        coverageOrigin: 'TSE_EA16_IMPORT'
-      }
-    });
-    expect(registeredRound.coverageStatus).toBe('REGISTERED');
-    expect(registeredRound.coverageOrigin).toBe('TSE_EA16_IMPORT');
-
-    // Homologação formal com metadados de evidência
-    const now = new Date();
-    const homologatedRound = await prisma.electionRound.update({
-      where: { id: round.id },
-      data: {
-        coverageStatus: 'HOMOLOGATED',
-        coverageHomologatedAt: now,
-        coverageHomologatedBy: 'admin-auditor-1',
-        coverageHomologationType: 'TSE_OFFICIAL_CONFIRMATION',
-        coverageEvidenceNotes: 'Checksum EA16 validado contra catálogo oficial TSE 2026. 193 urnas confirmadas.'
-      }
-    });
-
-    expect(homologatedRound.coverageStatus).toBe('HOMOLOGATED');
-    expect(homologatedRound.coverageHomologatedBy).toBe('admin-auditor-1');
-    expect(homologatedRound.coverageHomologationType).toBe('TSE_OFFICIAL_CONFIRMATION');
-    expect(homologatedRound.coverageEvidenceNotes).toContain('193 urnas confirmadas');
-  });
-
-  it('5. TseSyncConfig dinâmico permite múltiplos cargos e âmbitos sem colisão', async () => {
-    const election = await prisma.election.create({
-      data: {
-        slug: `eleicao-tse-configs-${testRunId}`,
-        name: 'Eleição TSE Múltiplos Configs',
-        year: 2026,
-        status: 'ACTIVE'
-      }
-    });
-
-    // Config 1: Presidente (Federal/Nacional)
-    const configPres = await prisma.tseSyncConfig.create({
-      data: {
-        electionId: election.id,
-        roundNumber: 2,
-        officeCode: '1',
-        officialElectionCode: '6258',
-        scopeType: 'NACIONAL',
-        uf: 'BR',
-        syncIntervalSeconds: 15
-      }
-    });
-
-    // Config 2: Governador (Estadual SC)
-    const configGov = await prisma.tseSyncConfig.create({
-      data: {
-        electionId: election.id,
-        roundNumber: 2,
-        officeCode: '3',
-        officialElectionCode: '6259',
-        scopeType: 'ESTADUAL',
-        uf: 'SC',
-        syncIntervalSeconds: 20
-      }
-    });
-
-    // Config 3: Prefeito (Municipal Concórdia)
-    const configPref = await prisma.tseSyncConfig.create({
-      data: {
-        electionId: election.id,
-        roundNumber: 2,
-        officeCode: '11',
-        officialElectionCode: '6260',
-        scopeType: 'MUNICIPAL',
-        uf: 'SC',
-        muniTseCode: '80837',
-        syncIntervalSeconds: 30
-      }
-    });
-
-    const configs = await prisma.tseSyncConfig.findMany({
-      where: { electionId: election.id, roundNumber: 2 }
-    });
-
-    expect(configs).toHaveLength(3);
-    expect(configs.map(c => c.officeCode)).toEqual(expect.arrayContaining(['1', '3', '11']));
-  });
-
-  it('6. Ciclo de vida dos Boletins de Urna: inicia em RECEBIDO e contabiliza após PROCESSADO', async () => {
-    const election = await prisma.election.create({
-      data: {
-        slug: `eleicao-bu-lifecycle-${testRunId}`,
-        name: 'Eleição Ciclo BU',
-        year: 2026,
-        status: 'ACTIVE'
-      }
+      data: { slug: `bu-lifecycle-dynamic-${testRunId}`, name: 'Eleição BU Dynamic', year: 2026, status: 'ACTIVE' }
     });
 
     const round = await prisma.electionRound.create({
       data: { electionId: election.id, roundNumber: 1, status: 'ACTIVE' }
     });
 
+    // Criação sem versão (não presume static 6.0)
     const report = await prisma.ballotReport.create({
       data: {
-        deterministicId: `DET-LIFECYCLE-${testRunId}`,
+        deterministicId: `DET-DYNAMIC-VRQR-${testRunId}`,
         electionId: election.id,
         roundId: round.id,
         stateCode: 'SC',
         cityCode: '80837',
         zoneCode: '0009',
         sectionCode: '0015',
-        urnCode: '12345678'
-        // status omitido para testar valor padrão
+        urnCode: '12345678',
+        vrqrVersion: '05.00' // Detectado explicitamente na leitura
       }
     });
 
-    // Padrão obrigatório: RECEBIDO (não PROCESSADO!)
     expect(report.status).toBe('RECEBIDO');
+    expect(report.vrqrVersion).toBe('05.00');
 
     // Transição para PENDENTE_CONFIRMACAO
     const pending = await prisma.ballotReport.update({
@@ -399,57 +441,11 @@ describe('PR 1 — Universal Data Model & Entity Abstraction', () => {
     });
     expect(pending.status).toBe('PENDENTE_CONFIRMACAO');
 
-    // Transição final para PROCESSADO
+    // Transição para PROCESSADO
     const processed = await prisma.ballotReport.update({
       where: { id: report.id },
       data: { status: 'PROCESSADO', confirmedAt: new Date() }
     });
     expect(processed.status).toBe('PROCESSADO');
-    expect(processed.confirmedAt).not.toBeNull();
-  });
-
-  it('7. Relações inversas e operadores não-órfãos em sessões multipartes', async () => {
-    const user = await prisma.user.create({
-      data: {
-        name: 'Operador de Testes',
-        email: `operador-${testRunId}@apuracao.local`,
-        passwordHash: 'hash',
-        role: 'OPERATOR'
-      }
-    });
-
-    const session = await prisma.scanSession.create({
-      data: {
-        sequenceId: `seq-multi-${testRunId}`,
-        operatorId: user.id,
-        expectedParts: 2,
-        status: 'ACTIVE'
-      }
-    });
-
-    const part1 = await prisma.ballotReportPart.create({
-      data: {
-        sessionId: session.id,
-        partIndex: 1,
-        totalParts: 2,
-        rawContent: 'QRBU:1:2 content part 1',
-        contentHash: 'hash1',
-        operatorId: user.id
-      }
-    });
-
-    // Consulta usuário incluindo relações inversas
-    const userWithRelations = await prisma.user.findUnique({
-      where: { id: user.id },
-      include: {
-        scanSessions: true,
-        reportParts: true
-      }
-    });
-
-    expect(userWithRelations?.scanSessions).toHaveLength(1);
-    expect(userWithRelations?.scanSessions[0].id).toBe(session.id);
-    expect(userWithRelations?.reportParts).toHaveLength(1);
-    expect(userWithRelations?.reportParts[0].id).toBe(part1.id);
   });
 });

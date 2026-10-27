@@ -1,8 +1,17 @@
--- Migration: 20261027_universal_data_model
--- PR 1: Modelo de Dados Universal, Abstração de Entidades e Blindagem Contextual
+-- ==============================================================================
+-- BASELINE INITIALIZATION: Apuração Paralela 2.0 (Instalação Limpa)
+-- ==============================================================================
+-- Esta migration estabelece o modelo relacional universal da plataforma v2.0
+-- para instalações limpas a partir de um banco de dados novo e vazio.
+-- 
+-- NOTA ARQUITETURAL:
+-- A versão 2.0 desacopla cargos de municípios, elimina a colisão global de
+-- candidatos e introduz escopos configuráveis. Ambientes legados de 2026
+-- requerem inicialização limpa (Clean First-Run) ou procedimento homologado.
+-- ==============================================================================
 
 -- CreateTable: Election
-CREATE TABLE IF NOT EXISTS "Election" (
+CREATE TABLE "Election" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "slug" TEXT NOT NULL,
     "plei" TEXT,
@@ -16,7 +25,7 @@ CREATE TABLE IF NOT EXISTS "Election" (
 );
 
 -- CreateTable: ElectionRound
-CREATE TABLE IF NOT EXISTS "ElectionRound" (
+CREATE TABLE "ElectionRound" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "electionId" TEXT NOT NULL,
     "roundNumber" INTEGER NOT NULL,
@@ -35,7 +44,7 @@ CREATE TABLE IF NOT EXISTS "ElectionRound" (
 );
 
 -- CreateTable: ElectionScope
-CREATE TABLE IF NOT EXISTS "ElectionScope" (
+CREATE TABLE "ElectionScope" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "electionId" TEXT NOT NULL,
     "scopeType" TEXT NOT NULL DEFAULT 'MUNICIPAL',
@@ -51,14 +60,14 @@ CREATE TABLE IF NOT EXISTS "ElectionScope" (
 );
 
 -- CreateTable: State
-CREATE TABLE IF NOT EXISTS "State" (
+CREATE TABLE "State" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "name" TEXT NOT NULL,
     "abbreviation" TEXT NOT NULL
 );
 
 -- CreateTable: Municipality
-CREATE TABLE IF NOT EXISTS "Municipality" (
+CREATE TABLE "Municipality" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "stateId" TEXT NOT NULL,
     "name" TEXT NOT NULL,
@@ -71,7 +80,7 @@ CREATE TABLE IF NOT EXISTS "Municipality" (
 );
 
 -- CreateTable: PollingZone
-CREATE TABLE IF NOT EXISTS "PollingZone" (
+CREATE TABLE "PollingZone" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "municipalityId" TEXT NOT NULL,
     "zoneNumber" TEXT NOT NULL,
@@ -82,7 +91,7 @@ CREATE TABLE IF NOT EXISTS "PollingZone" (
 );
 
 -- CreateTable: PollingSection
-CREATE TABLE IF NOT EXISTS "PollingSection" (
+CREATE TABLE "PollingSection" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "pollingZoneId" TEXT NOT NULL,
     "sectionNumber" TEXT NOT NULL,
@@ -96,7 +105,7 @@ CREATE TABLE IF NOT EXISTS "PollingSection" (
 );
 
 -- CreateTable: PollingStation
-CREATE TABLE IF NOT EXISTS "PollingStation" (
+CREATE TABLE "PollingStation" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "sectionId" TEXT NOT NULL,
     "urnCode" TEXT NOT NULL,
@@ -105,7 +114,7 @@ CREATE TABLE IF NOT EXISTS "PollingStation" (
 );
 
 -- CreateTable: RoundCoverage
-CREATE TABLE IF NOT EXISTS "RoundCoverage" (
+CREATE TABLE "RoundCoverage" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "electionRoundId" TEXT NOT NULL,
     "pollingSectionId" TEXT NOT NULL,
@@ -119,7 +128,7 @@ CREATE TABLE IF NOT EXISTS "RoundCoverage" (
 );
 
 -- CreateTable: Office
-CREATE TABLE IF NOT EXISTS "Office" (
+CREATE TABLE "Office" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "electionId" TEXT NOT NULL,
     "code" TEXT NOT NULL,
@@ -134,7 +143,7 @@ CREATE TABLE IF NOT EXISTS "Office" (
 );
 
 -- CreateTable: Party
-CREATE TABLE IF NOT EXISTS "Party" (
+CREATE TABLE "Party" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "officialIdentifier" TEXT NOT NULL,
     "name" TEXT NOT NULL,
@@ -144,7 +153,7 @@ CREATE TABLE IF NOT EXISTS "Party" (
 );
 
 -- CreateTable: Candidate
-CREATE TABLE IF NOT EXISTS "Candidate" (
+CREATE TABLE "Candidate" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "officeId" TEXT NOT NULL,
     "partyId" TEXT NOT NULL,
@@ -160,7 +169,7 @@ CREATE TABLE IF NOT EXISTS "Candidate" (
 );
 
 -- CreateTable: CandidateMetadata
-CREATE TABLE IF NOT EXISTS "CandidateMetadata" (
+CREATE TABLE "CandidateMetadata" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "candidateSequence" TEXT NOT NULL,
     "electionYear" INTEGER NOT NULL,
@@ -180,7 +189,7 @@ CREATE TABLE IF NOT EXISTS "CandidateMetadata" (
 );
 
 -- CreateTable: ScanSession
-CREATE TABLE IF NOT EXISTS "ScanSession" (
+CREATE TABLE "ScanSession" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "sequenceId" TEXT NOT NULL,
     "operatorId" TEXT,
@@ -193,7 +202,7 @@ CREATE TABLE IF NOT EXISTS "ScanSession" (
 );
 
 -- CreateTable: BallotReport
-CREATE TABLE IF NOT EXISTS "BallotReport" (
+CREATE TABLE "BallotReport" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "deterministicId" TEXT NOT NULL,
     "electionId" TEXT NOT NULL,
@@ -203,7 +212,7 @@ CREATE TABLE IF NOT EXISTS "BallotReport" (
     "zoneCode" TEXT NOT NULL,
     "sectionCode" TEXT NOT NULL,
     "urnCode" TEXT NOT NULL,
-    "vrqrVersion" TEXT NOT NULL DEFAULT '6.0',
+    "vrqrVersion" TEXT,
     "hash" TEXT,
     "signature" TEXT,
     "hashStatus" TEXT NOT NULL DEFAULT 'UNCHECKED',
@@ -222,7 +231,7 @@ CREATE TABLE IF NOT EXISTS "BallotReport" (
 );
 
 -- CreateTable: BallotReportPart
-CREATE TABLE IF NOT EXISTS "BallotReportPart" (
+CREATE TABLE "BallotReportPart" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "reportId" TEXT,
     "sessionId" TEXT NOT NULL,
@@ -239,7 +248,7 @@ CREATE TABLE IF NOT EXISTS "BallotReportPart" (
 );
 
 -- CreateTable: BallotVote
-CREATE TABLE IF NOT EXISTS "BallotVote" (
+CREATE TABLE "BallotVote" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "reportId" TEXT NOT NULL,
     "officeId" TEXT NOT NULL,
@@ -257,7 +266,7 @@ CREATE TABLE IF NOT EXISTS "BallotVote" (
 );
 
 -- CreateTable: User
-CREATE TABLE IF NOT EXISTS "User" (
+CREATE TABLE "User" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "name" TEXT NOT NULL,
     "email" TEXT NOT NULL,
@@ -269,7 +278,7 @@ CREATE TABLE IF NOT EXISTS "User" (
 );
 
 -- CreateTable: AuditLog
-CREATE TABLE IF NOT EXISTS "AuditLog" (
+CREATE TABLE "AuditLog" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "userId" TEXT,
     "electionId" TEXT,
@@ -291,10 +300,11 @@ CREATE TABLE IF NOT EXISTS "AuditLog" (
 );
 
 -- CreateTable: TseSyncConfig
-CREATE TABLE IF NOT EXISTS "TseSyncConfig" (
+CREATE TABLE "TseSyncConfig" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "electionId" TEXT NOT NULL,
     "roundNumber" INTEGER NOT NULL,
+    "configKey" TEXT NOT NULL,
     "officeCode" TEXT,
     "officialElectionCode" TEXT NOT NULL,
     "scopeType" TEXT NOT NULL DEFAULT 'MUNICIPAL',
@@ -313,7 +323,7 @@ CREATE TABLE IF NOT EXISTS "TseSyncConfig" (
 );
 
 -- CreateTable: ProcessingError
-CREATE TABLE IF NOT EXISTS "ProcessingError" (
+CREATE TABLE "ProcessingError" (
     "id" TEXT NOT NULL PRIMARY KEY,
     "errorCode" TEXT NOT NULL,
     "message" TEXT NOT NULL,
@@ -322,22 +332,22 @@ CREATE TABLE IF NOT EXISTS "ProcessingError" (
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- CreateIndexes
-CREATE UNIQUE INDEX IF NOT EXISTS "Election_slug_key" ON "Election"("slug");
-CREATE UNIQUE INDEX IF NOT EXISTS "ElectionRound_electionId_roundNumber_key" ON "ElectionRound"("electionId", "roundNumber");
-CREATE UNIQUE INDEX IF NOT EXISTS "ElectionScope_electionId_scopeKey_key" ON "ElectionScope"("electionId", "scopeKey");
-CREATE UNIQUE INDEX IF NOT EXISTS "State_abbreviation_key" ON "State"("abbreviation");
-CREATE UNIQUE INDEX IF NOT EXISTS "Municipality_officialCode_key" ON "Municipality"("officialCode");
-CREATE UNIQUE INDEX IF NOT EXISTS "PollingZone_municipalityId_zoneNumber_key" ON "PollingZone"("municipalityId", "zoneNumber");
-CREATE UNIQUE INDEX IF NOT EXISTS "PollingSection_pollingZoneId_sectionNumber_key" ON "PollingSection"("pollingZoneId", "sectionNumber");
-CREATE UNIQUE INDEX IF NOT EXISTS "RoundCoverage_electionRoundId_pollingSectionId_key" ON "RoundCoverage"("electionRoundId", "pollingSectionId");
-CREATE UNIQUE INDEX IF NOT EXISTS "Office_electionId_code_key" ON "Office"("electionId", "code");
-CREATE UNIQUE INDEX IF NOT EXISTS "Party_officialIdentifier_key" ON "Party"("officialIdentifier");
-CREATE UNIQUE INDEX IF NOT EXISTS "Candidate_officeId_candidateNumber_key" ON "Candidate"("officeId", "candidateNumber");
-CREATE UNIQUE INDEX IF NOT EXISTS "CandidateMetadata_candidateSequence_key" ON "CandidateMetadata"("candidateSequence");
-CREATE UNIQUE INDEX IF NOT EXISTS "ScanSession_sequenceId_key" ON "ScanSession"("sequenceId");
-CREATE UNIQUE INDEX IF NOT EXISTS "BallotReport_deterministicId_key" ON "BallotReport"("deterministicId");
-CREATE UNIQUE INDEX IF NOT EXISTS "BallotReportPart_sessionId_partIndex_key" ON "BallotReportPart"("sessionId", "partIndex");
-CREATE UNIQUE INDEX IF NOT EXISTS "User_email_key" ON "User"("email");
-CREATE INDEX IF NOT EXISTS "TseSyncConfig_electionId_roundNumber_idx" ON "TseSyncConfig"("electionId", "roundNumber");
-CREATE INDEX IF NOT EXISTS "TseSyncConfig_electionId_roundNumber_officeCode_uf_muniTseCode_idx" ON "TseSyncConfig"("electionId", "roundNumber", "officeCode", "uf", "muniTseCode");
+-- CreateIndexes: Constraints e Chaves Únicas
+CREATE UNIQUE INDEX "Election_slug_key" ON "Election"("slug");
+CREATE UNIQUE INDEX "ElectionRound_electionId_roundNumber_key" ON "ElectionRound"("electionId", "roundNumber");
+CREATE UNIQUE INDEX "ElectionScope_electionId_scopeKey_key" ON "ElectionScope"("electionId", "scopeKey");
+CREATE UNIQUE INDEX "State_abbreviation_key" ON "State"("abbreviation");
+CREATE UNIQUE INDEX "Municipality_officialCode_key" ON "Municipality"("officialCode");
+CREATE UNIQUE INDEX "PollingZone_municipalityId_zoneNumber_key" ON "PollingZone"("municipalityId", "zoneNumber");
+CREATE UNIQUE INDEX "PollingSection_pollingZoneId_sectionNumber_key" ON "PollingSection"("pollingZoneId", "sectionNumber");
+CREATE UNIQUE INDEX "RoundCoverage_electionRoundId_pollingSectionId_key" ON "RoundCoverage"("electionRoundId", "pollingSectionId");
+CREATE UNIQUE INDEX "Office_electionId_code_key" ON "Office"("electionId", "code");
+CREATE UNIQUE INDEX "Party_officialIdentifier_key" ON "Party"("officialIdentifier");
+CREATE UNIQUE INDEX "Candidate_officeId_candidateNumber_key" ON "Candidate"("officeId", "candidateNumber");
+CREATE UNIQUE INDEX "CandidateMetadata_candidateSequence_key" ON "CandidateMetadata"("candidateSequence");
+CREATE UNIQUE INDEX "ScanSession_sequenceId_key" ON "ScanSession"("sequenceId");
+CREATE UNIQUE INDEX "BallotReport_deterministicId_key" ON "BallotReport"("deterministicId");
+CREATE UNIQUE INDEX "BallotReportPart_sessionId_partIndex_key" ON "BallotReportPart"("sessionId", "partIndex");
+CREATE UNIQUE INDEX "User_email_key" ON "User"("email");
+CREATE UNIQUE INDEX "TseSyncConfig_electionId_configKey_key" ON "TseSyncConfig"("electionId", "configKey");
+CREATE INDEX "TseSyncConfig_electionId_roundNumber_idx" ON "TseSyncConfig"("electionId", "roundNumber");

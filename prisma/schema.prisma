@@ -152,7 +152,7 @@ model RoundCoverage {
 model Office {
   id               String       @id @default(uuid())
   electionId       String
-  code             String       @default(uuid()) // Código oficial TSE (ex: 1=Pres, 11=Pref, etc.)
+  code             String       // Código oficial TSE (ex: 1=Pres, 11=Pref, etc.)
   name             String       // Presidente, Prefeito, etc.
   type             String       @default("MAJORITARIO") // MAJORITARIO, PROPORCIONAL
   orderNumber      Int          @default(1)
@@ -242,7 +242,7 @@ model BallotReport {
   zoneCode        String
   sectionCode     String
   urnCode         String
-  vrqrVersion     String             @default("6.0")
+  vrqrVersion     String?            // Versão detectada do layout QRBU (ex: 4.0, 5.0, 6.0)
   hash            String?
   signature       String?
   hashStatus      String             @default("UNCHECKED")
@@ -343,6 +343,7 @@ model TseSyncConfig {
   id                   String    @id @default(uuid())
   electionId           String
   roundNumber          Int
+  configKey            String    // Chave canônica única por escopo: R1:OFFICE-1:NACIONAL:BR:GLOBAL
   officeCode           String?   // Código do cargo no TSE (ex: 1, 11)
   officialElectionCode String    // Código oficial da eleição no TSE (ex: 6257, 6258)
   scopeType            String    @default("MUNICIPAL") // NACIONAL, ESTADUAL, MUNICIPAL
@@ -360,8 +361,8 @@ model TseSyncConfig {
 
   election             Election  @relation(fields: [electionId], references: [id], onDelete: Cascade)
 
+  @@unique([electionId, configKey])
   @@index([electionId, roundNumber])
-  @@index([electionId, roundNumber, officeCode, uf, muniTseCode])
 }
 
 model ProcessingError {
