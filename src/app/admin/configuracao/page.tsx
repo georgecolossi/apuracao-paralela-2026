@@ -53,17 +53,17 @@ export default async function ConfigPage() {
       });
 
       const confirmedExpected = roundCoverageAgg._sum.expectedBUs || 0;
-      const confirmedSectionsCount = roundCoverageAgg._count.id || 0;
-      const hasConfirmedCoverage = confirmedExpected > 0;
+      const configuredSectionsCount = roundCoverageAgg._count.id || 0;
+      const hasConfiguredCoverage = confirmedExpected > 0;
 
-      const expectedBUs = hasConfirmedCoverage ? confirmedExpected : municipalExpectedBUs;
+      const expectedBUs = hasConfiguredCoverage ? confirmedExpected : municipalExpectedBUs;
 
       return {
         ...r,
         processedBUs,
         expectedBUs,
-        confirmedSectionsCount,
-        hasConfirmedCoverage,
+        configuredSectionsCount,
+        hasConfiguredCoverage,
       };
     })
   );
@@ -193,20 +193,20 @@ export default async function ConfigPage() {
                   <div className="flex justify-between items-center">
                     <span className="font-semibold text-slate-500">Total Previsto:</span>
                     <span className="font-bold text-slate-900">
-                      {!r.hasConfirmedCoverage && '~'}{r.expectedBUs.toLocaleString('pt-BR')} BUs
+                      {!r.hasConfiguredCoverage && '~'}{r.expectedBUs.toLocaleString('pt-BR')} BUs
                     </span>
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="font-semibold text-slate-500">Regime de Cobertura:</span>
                     <span
                       className={`font-semibold px-2 py-0.5 rounded text-[11px] ${
-                        r.hasConfirmedCoverage
-                          ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                        r.hasConfiguredCoverage
+                          ? 'bg-sky-100 text-sky-800 border border-sky-200'
                           : 'bg-amber-100 text-amber-800 border border-amber-200'
                       }`}
                     >
-                      {r.hasConfirmedCoverage
-                        ? `Confirmada (${r.confirmedSectionsCount} ${r.confirmedSectionsCount === 1 ? 'seção' : 'seções'})`
+                      {r.hasConfiguredCoverage
+                        ? `Cadastrada — validação pendente (${r.configuredSectionsCount} ${r.configuredSectionsCount === 1 ? 'seção' : 'seções'})`
                         : 'Estimada (Provisória)'}
                     </span>
                   </div>
