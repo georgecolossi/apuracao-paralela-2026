@@ -282,4 +282,35 @@ describe('PR 1 — Secure Admin Setup API (/api/setup) Fail-Closed Security Poli
       }
     }
   });
+
+  it('DISABLE_HTTP_SETUP=true desativa imediatamente o setup HTTP tanto no GET quanto no POST', async () => {
+    process.env.ADMIN_SETUP_TOKEN = VALID_SETUP_TOKEN;
+    process.env.DISABLE_HTTP_SETUP = 'true';
+
+    try {
+      // GET deve indicar httpSetupEnabled: false
+      const getRes = await GET();
+      const getJson = await getRes.json();
+      expect(getJson.httpSetupEnabled).toBe(false);
+
+      // POST deve rejeitar com 403 HTTP_SETUP_DISABLED mesmo com token correto
+      const req = new Request('http://localhost/api/setup', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: 'Admin Tentativa Desativada',
+          email: 'setup-disabled@example.com',
+          password: 'Password12345!',
+          setupToken: VALID_SETUP_TOKEN
+        })
+      });
+
+      const postRes = await POST(req);
+      expect(postRes.status).toBe(403);
+      const postJson = await postRes.json();
+      expect(postJson.error).toBe('HTTP_SETUP_DISABLED');
+      expect(postJson.message).toMatch(/DISABLE_HTTP_SETUP=true/);
+    } finally {
+      delete process.env.DISABLE_HTTP_SETUP;
+    }
+  });
 });

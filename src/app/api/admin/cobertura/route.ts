@@ -33,8 +33,7 @@ export async function POST(request: Request) {
       }
     }
 
-
-    // Guard: Impedir alteração se a ElectionRound estiver FINISHED ou tiver BallotReport
+    // Guard: Impedir alteração se a ElectionRound estiver FINISHED, HOMOLOGATED ou tiver BallotReport
     const activeRounds = await prisma.electionRound.findMany({
       where: { status: 'ACTIVE' }
     });
@@ -42,6 +41,12 @@ export async function POST(request: Request) {
     for (const round of activeRounds) {
       if (round.status === 'FINISHED') {
         return NextResponse.json({ error: 'Operação não permitida: Turno já está finalizado.' }, { status: 403 });
+      }
+
+      if (round.coverageStatus === 'HOMOLOGATED') {
+        return NextResponse.json({
+          error: 'Operação não permitida: A cobertura deste turno já foi oficialmente homologada e está bloqueada contra alterações.'
+        }, { status: 403 });
       }
 
       const reportsCount = await prisma.ballotReport.count({

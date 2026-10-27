@@ -5,7 +5,7 @@ import { Tse2026SimulationParser } from '@/lib/parser/Tse2026SimulationParser';
 
 import { requireAuthenticatedUser } from '@/lib/auth';
 import { OFFICE_NAME_TO_CODE } from '@/lib/metadata/voteEnricher';
-import { validateBallotIngestionInvariants } from '@/lib/validation/electionContext';
+import { validateBallotIngestionInvariants, ElectionInvariantError } from '@/lib/validation/electionContext';
 
 export async function POST(req: Request) {
   try {
@@ -500,35 +500,84 @@ export async function POST(req: Request) {
           }
         });
 
-        const votesToInsert: Array<{ officeId: string; candidateNumber?: string; partyNumber?: string; voteType: string; quantity: number }> = [];
+        const votesToInsert: Array<{
+          officeId: string;
+          candidateId?: string | null;
+          candidateNumber?: string | null;
+          partyId?: string | null;
+          partyNumber?: string | null;
+          voteType: string;
+          quantity: number;
+        }> = [];
+
         for (const vote of reportData.votes) {
-           const officeCode = OFFICE_NAME_TO_CODE[vote.officeName] || vote.officeName;
-           let office = await tx.office.findFirst({
-             where: {
-               electionId: activeElection.id,
-               OR: [
-                 { code: officeCode },
-                 { name: vote.officeName }
-               ]
-             }
-           });
-           if (!office) {
-              office = await tx.office.create({
-                data: {
-                  electionId: activeElection.id,
-                  code: officeCode,
-                  name: vote.officeName,
-                  orderNumber: 1
+          const officeCode = OFFICE_NAME_TO_CODE[vote.officeName] || vote.officeName;
+          let office = await tx.office.findFirst({
+            where: {
+              electionId: activeElection.id,
+              OR: [
+                { code: officeCode },
+                { name: vote.officeName }
+              ]
+            }
+          });
+          if (!office) {
+            office = await tx.office.create({
+              data: {
+                electionId: activeElection.id,
+                code: officeCode,
+                name: vote.officeName,
+                orderNumber: 1
+              }
+            });
+          }
+
+          let resolvedCandidateId: string | null = null;
+          let resolvedPartyId: string | null = null;
+
+          const normType = (vote.type || 'NOMINAL').trim().toUpperCase();
+
+          // 1. Resolução estrita de candidato nominal por (officeId, candidateNumber) no contexto desta eleição
+          if (vote.candidateNumber && normType !== 'BRANCO' && normType !== 'NULO' && normType !== 'LEGENDA') {
+            const candidate = await tx.candidate.findUnique({
+              where: {
+                officeId_candidateNumber: {
+                  officeId: office.id,
+                  candidateNumber: vote.candidateNumber
                 }
-              });
-           }
-           votesToInsert.push({
-             officeId: office.id,
-             candidateNumber: vote.candidateNumber,
-             partyNumber: vote.partyNumber,
-             voteType: vote.type,
-             quantity: vote.quantity
-           });
+              }
+            });
+
+            if (candidate) {
+              resolvedCandidateId = candidate.id;
+              resolvedPartyId = candidate.partyId || null;
+            } else {
+              // Candidato ainda não cadastrado no catálogo:
+              // O voto oficial e o BU legítimo são aceitos com candidateId=null e candidateNumber preservado,
+              // sem atribuir votos a candidatos de outros cargos ou eleições por aproximação ambígua.
+              resolvedCandidateId = null;
+            }
+          }
+
+          // 2. Resolução de partido para votos de legenda ou votos sem candidato identificado
+          if (!resolvedPartyId && vote.partyNumber) {
+            const party = await tx.party.findFirst({
+              where: { officialIdentifier: vote.partyNumber }
+            });
+            if (party) {
+              resolvedPartyId = party.id;
+            }
+          }
+
+          votesToInsert.push({
+            officeId: office.id,
+            candidateId: resolvedCandidateId,
+            candidateNumber: (normType === 'BRANCO' || normType === 'NULO') ? null : (vote.candidateNumber || null),
+            partyId: resolvedPartyId,
+            partyNumber: vote.partyNumber || null,
+            voteType: vote.type,
+            quantity: vote.quantity
+          });
         }
 
         // Validação estrita de invariantes contextuais multi-eleição
@@ -539,16 +588,18 @@ export async function POST(req: Request) {
         });
 
         for (const vote of votesToInsert) {
-           await tx.ballotVote.create({
-             data: {
-               reportId: newReport.id,
-               officeId: vote.officeId,
-               candidateNumber: vote.candidateNumber,
-               partyNumber: vote.partyNumber,
-               voteType: vote.voteType,
-               quantity: vote.quantity
-             }
-           });
+          await tx.ballotVote.create({
+            data: {
+              reportId: newReport.id,
+              officeId: vote.officeId,
+              candidateId: vote.candidateId || null,
+              candidateNumber: vote.candidateNumber,
+              partyId: vote.partyId || null,
+              partyNumber: vote.partyNumber,
+              voteType: vote.voteType,
+              quantity: vote.quantity
+            }
+          });
         }
 
         await tx.scanSession.update({
@@ -560,6 +611,15 @@ export async function POST(req: Request) {
       });
       reportId = result;
     } catch (dbError: unknown) {
+      if (dbError instanceof ElectionInvariantError) {
+        return NextResponse.json({
+          status: 'ERRO_INVARIANTE',
+          error: dbError.code,
+          message: dbError.message,
+          details: dbError.details
+        }, { status: 422 });
+      }
+
       if (dbError && typeof dbError === 'object' && 'code' in dbError && dbError.code === 'P2002') {
          // Caiu na malha fina da concorrência exata (mesmo milissegundo)
          const dup = await prisma.ballotReport.findUnique({ where: { deterministicId } });
@@ -575,6 +635,14 @@ export async function POST(req: Request) {
     return NextResponse.json({ status: 'COMPLETO', reportId });
 
   } catch (error) {
+    if (error instanceof ElectionInvariantError) {
+      return NextResponse.json({
+        status: 'ERRO_INVARIANTE',
+        error: error.code,
+        message: error.message,
+        details: error.details
+      }, { status: 422 });
+    }
     console.error(error);
     return NextResponse.json({ error: 'Erro interno ao processar QR' }, { status: 500 });
   }

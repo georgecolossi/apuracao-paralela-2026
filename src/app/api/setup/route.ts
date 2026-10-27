@@ -5,6 +5,20 @@ import crypto from 'crypto';
 
 export const dynamic = 'force-dynamic';
 
+/**
+ * SEGURANÇA DO TOKEN DE SETUP (ADMIN_SETUP_TOKEN):
+ * - Requisito de Entropia: O token deve ser gerado por um gerador criptograficamente
+ *   seguro (CSPRNG), com pelo menos 128 bits de entropia (ex.: `openssl rand -hex 16`
+ *   ou `crypto.randomBytes(16).toString('hex')`).
+ * - Nota de Segurança: O comprimento mínimo de 16 caracteres atua estritamente como um
+ *   guardrail preliminar e NÃO substitui nem comprova entropia adequada por si só.
+ * - Confidencialidade: O token NUNCA deve ser versionado no repositório, gravado em logs
+ *   ou retornado em endpoints públicos.
+ * - Desativação Pós-Instalação: Após a criação do primeiro administrador, o endpoint é
+ *   permanentemente bloqueado pela existência de usuários ADMIN no banco. Para reforçar
+ *   a segurança em produção, a variável `ADMIN_SETUP_TOKEN` deve ser removida do ambiente
+ *   ou a flag `DISABLE_HTTP_SETUP=true` deve ser configurada.
+ */
 const MIN_TOKEN_LENGTH = 16;
 
 function timingSafeEqual(a: string, b: string): boolean {
@@ -21,12 +35,13 @@ export async function GET() {
       where: { role: 'ADMIN' }
     });
 
+    const isExplicitlyDisabled = process.env.DISABLE_HTTP_SETUP === 'true';
     const envToken = process.env.ADMIN_SETUP_TOKEN;
     const isTokenConfigured = typeof envToken === 'string' && envToken.trim().length >= MIN_TOKEN_LENGTH;
 
     return NextResponse.json({
       isInitialized: adminCount > 0,
-      httpSetupEnabled: isTokenConfigured && adminCount === 0
+      httpSetupEnabled: !isExplicitlyDisabled && isTokenConfigured && adminCount === 0
     });
   } catch {
     return NextResponse.json({ error: 'INTERNAL_ERROR', message: 'Erro ao verificar estado do setup.' }, { status: 500 });
@@ -35,12 +50,20 @@ export async function GET() {
 
 export async function POST(req: Request) {
   try {
-    // 1. Política Fail-Closed: Setup HTTP desativado se o token não estiver configurado com entropia mínima
+    // 1. Verificação de Desativação Explícita
+    if (process.env.DISABLE_HTTP_SETUP === 'true') {
+      return NextResponse.json({
+        error: 'HTTP_SETUP_DISABLED',
+        message: 'O setup via HTTP foi desativado explicitamente no ambiente (DISABLE_HTTP_SETUP=true). Utilize o script CLI seguro: scripts/create-initial-admin.mjs'
+      }, { status: 403 });
+    }
+
+    // 2. Política Fail-Closed: Setup HTTP desativado se o token não estiver configurado com comprimento mínimo
     const configuredToken = process.env.ADMIN_SETUP_TOKEN;
     if (!configuredToken || typeof configuredToken !== 'string' || configuredToken.trim().length < MIN_TOKEN_LENGTH) {
       return NextResponse.json({
         error: 'HTTP_SETUP_DISABLED',
-        message: 'O setup via HTTP está desativado por política de segurança fail-closed. Para habilitar o setup web, configure a variável de ambiente ADMIN_SETUP_TOKEN com no mínimo 16 caracteres, ou inicialize o primeiro administrador diretamente pelo console seguro com o script CLI: scripts/create-initial-admin.mjs'
+        message: 'O setup via HTTP está desativado por política de segurança fail-closed. Para habilitar o setup web, configure a variável de ambiente ADMIN_SETUP_TOKEN com no mínimo 128 bits de entropia gerados por CSPRNG (mínimo de 16 caracteres), ou inicialize o primeiro administrador diretamente pelo console seguro com o script CLI: scripts/create-initial-admin.mjs'
       }, { status: 403 });
     }
 
@@ -53,7 +76,7 @@ export async function POST(req: Request) {
 
     const { name, email, password, setupToken } = payload || {};
 
-    // 2. Validação estrita do token de setup via timingSafeEqual
+    // 3. Validação estrita do token de setup via timingSafeEqual
     if (!setupToken || typeof setupToken !== 'string' || !timingSafeEqual(setupToken.trim(), configuredToken.trim())) {
       return NextResponse.json({
         error: 'INVALID_SETUP_TOKEN',
@@ -61,7 +84,7 @@ export async function POST(req: Request) {
       }, { status: 403 });
     }
 
-    // 3. Validação de dados do administrador
+    // 4. Validação de dados do administrador
     if (!name || typeof name !== 'string' || name.trim().length < 2) {
       return NextResponse.json({
         error: 'INVALID_NAME',
@@ -86,7 +109,7 @@ export async function POST(req: Request) {
 
     const normalizedEmail = email.trim().toLowerCase();
 
-    // 4. Criação atômica em transação serializada contra condições de corrida
+    // 5. Criação atômica em transação serializada contra condições de corrida
     try {
       const newUser = await prisma.$transaction(async (tx) => {
         const existingAdmin = await tx.user.findFirst({
