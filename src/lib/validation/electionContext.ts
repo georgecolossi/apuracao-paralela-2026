@@ -2,6 +2,12 @@
  * Validação de Invariantes Contextuais Multi-Eleição e Regras de Negócio (PR 1)
  */
 
+export const VALID_BRAZILIAN_UFS = new Set([
+  'AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO',
+  'MA', 'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI',
+  'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO'
+]);
+
 export interface BallotIngestionContext {
   electionId: string;
   roundId: string;
@@ -27,6 +33,147 @@ export class ElectionInvariantError extends Error {
     this.code = code;
     this.details = details;
   }
+}
+
+/**
+ * Retorna uma mensagem de erro segura, padronizada e amigável ao operador,
+ * sem vazar UUIDs ou estruturas de banco de dados no retorno HTTP.
+ */
+export function getSafeOperatorErrorMessage(code: string): string {
+  switch (code) {
+    case 'ROUND_ELECTION_MISMATCH':
+      return 'O Boletim de Urna lido não corresponde à eleição ativa no sistema.';
+    case 'OFFICE_ELECTION_MISMATCH':
+      return 'O cargo eleitoral votado não pertence à eleição selecionada.';
+    case 'CANDIDATE_OFFICE_MISMATCH':
+      return 'Incompatibilidade: o candidato não concorre ao cargo informado no voto.';
+    case 'CANDIDATE_ELECTION_MISMATCH':
+      return 'Incompatibilidade: o candidato votado pertence a outra eleição.';
+    case 'CANDIDATE_NUMBER_MISMATCH':
+      return 'Divergência detectada no número do candidato votado.';
+    case 'INVALID_CANDIDATE_FOR_TECHNICAL_VOTE':
+      return 'Voto técnico (branco ou nulo) contém candidato associado indevidamente.';
+    case 'TECHNICAL_VOTE_WITH_CANDIDATE_NUMBER':
+      return 'Voto técnico (branco ou nulo) contém número de candidato indevido.';
+    case 'INVALID_CANDIDATE_FOR_LEGENDA_VOTE':
+      return 'Voto de legenda partidária contém candidato nominal associado indevidamente.';
+    case 'PARTY_NUMBER_MISMATCH':
+      return 'Divergência detectada na numeração da legenda partidária.';
+    case 'ROUND_NOT_FOUND':
+      return 'Turno eleitoral não encontrado.';
+    case 'OFFICE_NOT_FOUND':
+      return 'Cargo eleitoral não encontrado na eleição ativa.';
+    case 'CANDIDATE_NOT_FOUND':
+      return 'Candidato informado não foi localizado.';
+    case 'PARTY_NOT_FOUND':
+      return 'Legenda partidária informada não foi localizada.';
+    default:
+      return 'Inconsistência de validação eleitoral ao processar o Boletim de Urna.';
+  }
+}
+
+/**
+ * Constrói a chave canônica padronizada única para ElectionScope:
+ * - Nacional: "NACIONAL:BR"
+ * - Estadual: "ESTADUAL:<UF>" (ex: "ESTADUAL:SC")
+ * - Municipal: "MUNICIPAL:<UF>:<CODIGO_TSE>" (ex: "MUNICIPAL:SC:80837")
+ */
+export function buildCanonicalScopeKey(scope: {
+  scopeType: string;
+  stateCode?: string | null;
+  muniCode?: string | null;
+}): string {
+  const normType = scope.scopeType.trim().toUpperCase();
+  if (normType === 'NACIONAL') {
+    return 'NACIONAL:BR';
+  }
+  if (normType === 'ESTADUAL') {
+    const uf = (scope.stateCode || '').trim().toUpperCase();
+    if (!VALID_BRAZILIAN_UFS.has(uf)) {
+      throw new ElectionInvariantError('INVALID_UF_CODE', `UF '${uf}' inválida para escopo estadual.`);
+    }
+    return `ESTADUAL:${uf}`;
+  }
+  if (normType === 'MUNICIPAL') {
+    const uf = (scope.stateCode || '').trim().toUpperCase();
+    if (!VALID_BRAZILIAN_UFS.has(uf)) {
+      throw new ElectionInvariantError('INVALID_UF_CODE', `UF '${uf}' inválida para escopo municipal.`);
+    }
+    const muni = (scope.muniCode || '').trim();
+    if (!muni || !/^\d+$/.test(muni)) {
+      throw new ElectionInvariantError('INVALID_MUNICIPALITY_CODE', `Código TSE municipal '${muni}' inválido. Deve ser numérico.`);
+    }
+    return `MUNICIPAL:${uf}:${muni}`;
+  }
+  throw new ElectionInvariantError('INVALID_SCOPE_TYPE', `Tipo de escopo '${scope.scopeType}' inválido.`);
+}
+
+/**
+ * Normaliza qualquer chave (inclusive legadas como "BR", "UF:SC", "MUNI:SC:80837", "MUN:SC:80837")
+ * para a forma canônica única padrão:
+ * - "NACIONAL:BR"
+ * - "ESTADUAL:<UF>"
+ * - "MUNICIPAL:<UF>:<CODIGO_TSE>"
+ */
+export function canonicalizeScopeKey(rawKey: string, fallbackType?: string): string {
+  if (!rawKey || typeof rawKey !== 'string') {
+    throw new ElectionInvariantError('INVALID_SCOPE_KEY', 'Chave de escopo não pode ser vazia.');
+  }
+  const clean = rawKey.trim().toUpperCase();
+  if (clean === 'BR' || clean === 'NACIONAL' || clean === 'NACIONAL:BR') {
+    return 'NACIONAL:BR';
+  }
+
+  const parts = clean.split(':');
+  if (parts.length === 2 && (parts[0] === 'ESTADUAL' || parts[0] === 'UF')) {
+    const uf = parts[1];
+    if (!VALID_BRAZILIAN_UFS.has(uf)) {
+      throw new ElectionInvariantError('INVALID_UF_CODE', `UF '${uf}' inválida na chave de escopo.`);
+    }
+    return `ESTADUAL:${uf}`;
+  }
+
+  if (parts.length === 3 && (parts[0] === 'MUNICIPAL' || parts[0] === 'MUNI' || parts[0] === 'MUN')) {
+    const uf = parts[1];
+    const muni = parts[2];
+    if (!VALID_BRAZILIAN_UFS.has(uf)) {
+      throw new ElectionInvariantError('INVALID_UF_CODE', `UF '${uf}' inválida na chave de escopo municipal.`);
+    }
+    if (!muni || !/^\d+$/.test(muni)) {
+      throw new ElectionInvariantError('INVALID_MUNICIPALITY_CODE', `Código municipal '${muni}' inválido.`);
+    }
+    return `MUNICIPAL:${uf}:${muni}`;
+  }
+
+  if (fallbackType) {
+    const normFallback = fallbackType.trim().toUpperCase();
+    if (normFallback === 'NACIONAL') return 'NACIONAL:BR';
+    if (normFallback === 'ESTADUAL' && VALID_BRAZILIAN_UFS.has(clean)) return `ESTADUAL:${clean}`;
+  }
+
+  throw new ElectionInvariantError(
+    'MALFORMED_SCOPE_KEY',
+    `Chave de escopo '${rawKey}' não atende ao padrão canônico ('NACIONAL:BR', 'ESTADUAL:<UF>', 'MUNICIPAL:<UF>:<CODIGO>').`
+  );
+}
+
+/**
+ * Decompõe uma chave canônica em seus componentes estruturados
+ */
+export function parseCanonicalScopeKey(canonicalKey: string): {
+  scopeType: 'NACIONAL' | 'ESTADUAL' | 'MUNICIPAL';
+  stateCode?: string;
+  muniCode?: string;
+} {
+  const norm = canonicalizeScopeKey(canonicalKey);
+  const parts = norm.split(':');
+  if (parts[0] === 'NACIONAL') {
+    return { scopeType: 'NACIONAL' };
+  }
+  if (parts[0] === 'ESTADUAL') {
+    return { scopeType: 'ESTADUAL', stateCode: parts[1] };
+  }
+  return { scopeType: 'MUNICIPAL', stateCode: parts[1], muniCode: parts[2] };
 }
 
 /**
@@ -173,83 +320,93 @@ export async function validateBallotIngestionInvariants(
  * - Impede contradição macro entre NACIONAL e âmbitos regionais.
  * - Impede sobreposição entre abrangência ESTADUAL integral e municípios isolados do mesmo estado.
  * - Impede duplicidade de chave canônica de escopo.
+ * - Permite múltiplos municípios do mesmo estado ou de estados distintos.
  */
 export function validateElectionScopeAddition(
   existingScopes: Array<{ scopeType: string; scopeKey: string }>,
-  newScope: { scopeType: string; scopeKey: string; stateCode?: string; municipalityCode?: string }
-): void {
-  const normNewType = newScope.scopeType.trim().toUpperCase();
-  const normNewKey = newScope.scopeKey.trim().toUpperCase();
+  newScope: {
+    scopeType: string;
+    scopeKey?: string;
+    stateCode?: string | null;
+    muniCode?: string | null;
+  }
+): { canonicalKey: string; scopeType: string; stateCode?: string; muniCode?: string } {
+  let canonicalKey: string;
+  if (newScope.scopeKey) {
+    canonicalKey = canonicalizeScopeKey(newScope.scopeKey, newScope.scopeType);
+  } else {
+    canonicalKey = buildCanonicalScopeKey({
+      scopeType: newScope.scopeType,
+      stateCode: newScope.stateCode,
+      muniCode: newScope.muniCode
+    });
+  }
 
-  const hasNational = existingScopes.some(s => s.scopeType.trim().toUpperCase() === 'NACIONAL');
+  const parsed = parseCanonicalScopeKey(canonicalKey);
+  const normNewType = parsed.scopeType;
+
+  // Normaliza as chaves existentes para a forma canônica
+  const normalizedExisting = existingScopes.map(s => {
+    try {
+      const cKey = canonicalizeScopeKey(s.scopeKey, s.scopeType);
+      const p = parseCanonicalScopeKey(cKey);
+      return { scopeType: p.scopeType, canonicalKey: cKey, stateCode: p.stateCode, muniCode: p.muniCode };
+    } catch {
+      return { scopeType: s.scopeType.trim().toUpperCase(), canonicalKey: s.scopeKey.trim().toUpperCase(), stateCode: undefined, muniCode: undefined };
+    }
+  });
+
+  const hasNational = normalizedExisting.some(s => s.scopeType === 'NACIONAL');
 
   // 1. Contradição Nacional
   if (hasNational && normNewType !== 'NACIONAL') {
     throw new ElectionInvariantError(
       'CONTRADICTORY_SCOPE_NATIONAL_EXISTS',
-      `A eleição já possui abrangência NACIONAL ('${existingScopes.find(s => s.scopeType === 'NACIONAL')?.scopeKey}'). Não é permitido adicionar escopo regional (${normNewType}: ${normNewKey}) sem redefinir o escopo macro.`
+      `A eleição já possui abrangência NACIONAL ('${normalizedExisting.find(s => s.scopeType === 'NACIONAL')?.canonicalKey}'). Não é permitido adicionar escopo regional (${normNewType}: ${canonicalKey}) sem redefinir o escopo macro.`
     );
   }
 
-  if (normNewType === 'NACIONAL' && existingScopes.length > 0 && !hasNational) {
+  if (normNewType === 'NACIONAL' && normalizedExisting.length > 0 && !hasNational) {
     throw new ElectionInvariantError(
       'CONTRADICTORY_SCOPE_REGIONAL_EXISTS',
-      `A eleição já possui escopos regionais configurados (${existingScopes.map(s => s.scopeKey).join(', ')}). A expansão para NACIONAL exige remoção prévia das sub-abrangências para evitar ambiguidade.`
+      `A eleição já possui escopos regionais configurados (${normalizedExisting.map(s => s.canonicalKey).join(', ')}). A expansão para NACIONAL exige remoção prévia das sub-abrangências para evitar ambiguidade.`
     );
   }
 
   // 2. Duplicidade exata de chave
-  const isDuplicate = existingScopes.some(s => s.scopeKey.trim().toUpperCase() === normNewKey);
+  const isDuplicate = normalizedExisting.some(s => s.canonicalKey === canonicalKey);
   if (isDuplicate) {
     throw new ElectionInvariantError(
       'DUPLICATE_SCOPE_KEY',
-      `O escopo com identificador canônico '${newScope.scopeKey}' já está cadastrado nesta eleição.`
+      `O escopo com identificador canônico '${canonicalKey}' já está cadastrado nesta eleição.`
     );
   }
 
-  // Extrai UF de chaves canônicas (ex: UF:SC ou MUNI:SC:80837)
-  const extractUf = (key: string): string | null => {
-    const parts = key.split(':');
-    if (parts.length >= 2 && (parts[0] === 'UF' || parts[0] === 'MUNI')) {
-      return parts[1];
-    }
-    return null;
-  };
-
-  const newUf = newScope.stateCode ? newScope.stateCode.trim().toUpperCase() : extractUf(normNewKey);
-
-  // 3. Sobreposição Estadual vs Municipal
+  // 3. Sobreposição Proibida: Estadual vs Municipal no mesmo Estado
+  const newUf = parsed.stateCode;
   if (newUf) {
-    // Se o novo escopo é MUNICIPAL, verificar se o estado já possui cobertura ESTADUAL integral
     if (normNewType === 'MUNICIPAL') {
-      const stateScope = existingScopes.find(s => {
-        const t = s.scopeType.trim().toUpperCase();
-        const k = s.scopeKey.trim().toUpperCase();
-        return t === 'ESTADUAL' && (extractUf(k) === newUf || k === `UF:${newUf}`);
-      });
+      const stateScope = normalizedExisting.find(s => s.scopeType === 'ESTADUAL' && s.stateCode === newUf);
       if (stateScope) {
         throw new ElectionInvariantError(
           'OVERLAPPING_SCOPE_STATE_CONTAINS_MUNICIPALITY',
-          `A eleição já possui abrangência ESTADUAL integral no estado '${newUf}' ('${stateScope.scopeKey}'). Municípios isolados deste estado já estão integralmente contidos nessa abrangência.`
+          `A eleição já possui abrangência ESTADUAL integral no estado '${newUf}' ('${stateScope.canonicalKey}'). Municípios isolados deste estado já estão integralmente contidos nessa abrangência.`
         );
       }
     }
 
-    // Se o novo escopo é ESTADUAL, verificar se já existem municípios isolados do mesmo estado
     if (normNewType === 'ESTADUAL') {
-      const existingMunicipalities = existingScopes.filter(s => {
-        const t = s.scopeType.trim().toUpperCase();
-        const k = s.scopeKey.trim().toUpperCase();
-        return t === 'MUNICIPAL' && (extractUf(k) === newUf || k.startsWith(`MUNI:${newUf}:`));
-      });
+      const existingMunicipalities = normalizedExisting.filter(s => s.scopeType === 'MUNICIPAL' && s.stateCode === newUf);
       if (existingMunicipalities.length > 0) {
         throw new ElectionInvariantError(
           'OVERLAPPING_SCOPE_MUNICIPALITY_EXISTS',
-          `A eleição já possui ${existingMunicipalities.length} município(s) isolado(s) no estado '${newUf}' (${existingMunicipalities.map(m => m.scopeKey).join(', ')}). A expansão para abrangência ESTADUAL integral exige a remoção ou conversão prévia dos escopos municipais existentes.`
+          `A eleição já possui ${existingMunicipalities.length} município(s) isolado(s) no estado '${newUf}' (${existingMunicipalities.map(m => m.canonicalKey).join(', ')}). A expansão para abrangência ESTADUAL integral exige a remoção ou conversão prévia dos escopos municipais existentes.`
         );
       }
     }
   }
+
+  return { canonicalKey, scopeType: normNewType, stateCode: parsed.stateCode, muniCode: parsed.muniCode };
 }
 
 /**
@@ -344,10 +501,11 @@ export async function addElectionScopeTransaction(
   electionId: string,
   scopeData: {
     scopeType: string;
-    scopeKey: string;
+    scopeKey?: string;
     stateId?: string;
     municipalityId?: string;
     stateCode?: string;
+    muniCode?: string;
     isCoverageArea?: boolean;
     userId?: string;
   }
@@ -357,19 +515,62 @@ export async function addElectionScopeTransaction(
     select: { scopeType: true, scopeKey: true }
   });
 
-  validateElectionScopeAddition(existingScopes, {
+  const { canonicalKey, scopeType, stateCode, muniCode } = validateElectionScopeAddition(existingScopes, {
     scopeType: scopeData.scopeType,
     scopeKey: scopeData.scopeKey,
-    stateCode: scopeData.stateCode
+    stateCode: scopeData.stateCode,
+    muniCode: scopeData.muniCode
   });
+
+  // Validação relacional no banco de dados
+  let finalStateId = scopeData.stateId || null;
+  let finalMuniId = scopeData.municipalityId || null;
+
+  if (finalStateId) {
+    const st = await tx.state.findUnique({ where: { id: finalStateId } });
+    if (!st) {
+      throw new ElectionInvariantError('STATE_NOT_FOUND', `Estado ID '${finalStateId}' não encontrado.`);
+    }
+    if (stateCode && st.abbreviation.toUpperCase() !== stateCode.toUpperCase()) {
+      throw new ElectionInvariantError(
+        'MISMATCHED_STATE_UF',
+        `A sigla do estado cadastrado '${st.abbreviation}' diverge da UF informada no escopo '${stateCode}'.`
+      );
+    }
+  }
+
+  if (finalMuniId) {
+    const mun = await tx.municipality.findUnique({
+      where: { id: finalMuniId },
+      include: { state: true }
+    });
+    if (!mun) {
+      throw new ElectionInvariantError('MUNICIPALITY_NOT_FOUND', `Município ID '${finalMuniId}' não encontrado.`);
+    }
+    if (muniCode && mun.officialCode !== muniCode) {
+      throw new ElectionInvariantError(
+        'MISMATCHED_MUNICIPALITY_CODE',
+        `Código oficial do município cadastrado '${mun.officialCode}' diverge do informado '${muniCode}'.`
+      );
+    }
+    if (stateCode && mun.state.abbreviation.toUpperCase() !== stateCode.toUpperCase()) {
+      throw new ElectionInvariantError(
+        'MISMATCHED_MUNICIPALITY_UF',
+        `O município '${mun.name}' pertence ao estado '${mun.state.abbreviation}', mas o escopo foi registrado para '${stateCode}'.`
+      );
+    }
+    if (!finalStateId) {
+      finalStateId = mun.stateId;
+    }
+  }
 
   const createdScope = await tx.electionScope.create({
     data: {
       electionId,
-      scopeType: scopeData.scopeType,
-      scopeKey: scopeData.scopeKey,
-      stateId: scopeData.stateId || null,
-      municipalityId: scopeData.municipalityId || null,
+      scopeType,
+      scopeKey: canonicalKey,
+      stateId: finalStateId,
+      municipalityId: finalMuniId,
       isCoverageArea: scopeData.isCoverageArea ?? true
     }
   });
@@ -380,10 +581,10 @@ export async function addElectionScopeTransaction(
         userId: scopeData.userId,
         electionId,
         action: 'ADD_ELECTION_SCOPE',
-        identifiers: `Scope: ${scopeData.scopeType}:${scopeData.scopeKey}`,
+        identifiers: `Scope: ${canonicalKey}`,
         result: 'SUCCESS',
         newStatus: 'ACTIVE',
-        metadata: JSON.stringify(scopeData)
+        metadata: JSON.stringify({ ...scopeData, canonicalKey })
       }
     });
   }

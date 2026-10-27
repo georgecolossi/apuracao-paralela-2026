@@ -270,39 +270,39 @@ describe('PR 1 — Universal Data Model, Entity Abstraction & Contextual Invaria
       data: {
         electionId: election.id,
         scopeType: 'NACIONAL',
-        scopeKey: 'BR',
+        scopeKey: 'NACIONAL:BR',
         isCoverageArea: true
       }
     });
-    expect(scopeBR.scopeKey).toBe('BR');
+    expect(scopeBR.scopeKey).toBe('NACIONAL:BR');
 
     // Validação de Contradição: Tentar adicionar escopo regional quando escopo nacional já existe deve ser rejeitado
     expect(() => {
       validateElectionScopeAddition(
-        [{ scopeType: 'NACIONAL', scopeKey: 'BR' }],
-        { scopeType: 'ESTADUAL', scopeKey: 'UF:SC' }
+        [{ scopeType: 'NACIONAL', scopeKey: 'NACIONAL:BR' }],
+        { scopeType: 'ESTADUAL', scopeKey: 'ESTADUAL:SC' }
       );
     }).toThrow(ElectionInvariantError);
 
     // Tentar adicionar escopo com chave duplicada deve ser rejeitado
     expect(() => {
       validateElectionScopeAddition(
-        [{ scopeType: 'NACIONAL', scopeKey: 'BR' }],
-        { scopeType: 'NACIONAL', scopeKey: 'BR' }
+        [{ scopeType: 'NACIONAL', scopeKey: 'NACIONAL:BR' }],
+        { scopeType: 'NACIONAL', scopeKey: 'NACIONAL:BR' }
       );
     }).toThrow(ElectionInvariantError);
 
     // Em eleição regional, múltiplos municípios coexistem harmoniosamente
     const regionalScopes = [
-      { scopeType: 'MUNICIPAL', scopeKey: 'MUN:80837' }
+      { scopeType: 'MUNICIPAL', scopeKey: 'MUNICIPAL:SC:80837' }
     ];
     expect(() => {
-      validateElectionScopeAddition(regionalScopes, { scopeType: 'MUNICIPAL', scopeKey: 'MUN:80838' });
+      validateElectionScopeAddition(regionalScopes, { scopeType: 'MUNICIPAL', scopeKey: 'MUNICIPAL:SC:80838' });
     }).not.toThrow();
 
     // Mas tentar adicionar escopo nacional a uma eleição já particionada regionalmente é rejeitado
     expect(() => {
-      validateElectionScopeAddition(regionalScopes, { scopeType: 'NACIONAL', scopeKey: 'BR' });
+      validateElectionScopeAddition(regionalScopes, { scopeType: 'NACIONAL', scopeKey: 'NACIONAL:BR' });
     }).toThrow(ElectionInvariantError);
   });
 
@@ -852,20 +852,20 @@ describe('PR 1 — Universal Data Model, Entity Abstraction & Contextual Invaria
     const stateScope = await prisma.$transaction(async (tx) => {
       return addElectionScopeTransaction(tx, election.id, {
         scopeType: 'ESTADUAL',
-        scopeKey: 'UF:SC',
+        scopeKey: 'ESTADUAL:SC',
         stateCode: 'SC',
         isCoverageArea: true
       });
     });
     expect(stateScope.scopeType).toBe('ESTADUAL');
-    expect(stateScope.scopeKey).toBe('UF:SC');
+    expect(stateScope.scopeKey).toBe('ESTADUAL:SC');
 
     // 9.2 Tentativa de adicionar MUNICIPAL de SC quando já existe ESTADUAL integral em SC
     await expect(
       prisma.$transaction(async (tx) => {
         return addElectionScopeTransaction(tx, election.id, {
           scopeType: 'MUNICIPAL',
-          scopeKey: 'MUNI:SC:80837',
+          scopeKey: 'MUNICIPAL:SC:80837',
           stateCode: 'SC',
           isCoverageArea: true
         });
@@ -880,7 +880,7 @@ describe('PR 1 — Universal Data Model, Entity Abstraction & Contextual Invaria
     await prisma.$transaction(async (tx) => {
       return addElectionScopeTransaction(tx, election2.id, {
         scopeType: 'MUNICIPAL',
-        scopeKey: 'MUNI:PR:75043',
+        scopeKey: 'MUNICIPAL:PR:75043',
         stateCode: 'PR',
         isCoverageArea: true
       });
@@ -891,7 +891,7 @@ describe('PR 1 — Universal Data Model, Entity Abstraction & Contextual Invaria
       prisma.$transaction(async (tx) => {
         return addElectionScopeTransaction(tx, election2.id, {
           scopeType: 'ESTADUAL',
-          scopeKey: 'UF:PR',
+          scopeKey: 'ESTADUAL:PR',
           stateCode: 'PR',
           isCoverageArea: true
         });

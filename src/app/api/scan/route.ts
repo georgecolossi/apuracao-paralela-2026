@@ -5,7 +5,12 @@ import { Tse2026SimulationParser } from '@/lib/parser/Tse2026SimulationParser';
 
 import { requireAuthenticatedUser } from '@/lib/auth';
 import { OFFICE_NAME_TO_CODE } from '@/lib/metadata/voteEnricher';
-import { validateBallotIngestionInvariants, ElectionInvariantError } from '@/lib/validation/electionContext';
+import {
+  validateBallotIngestionInvariants,
+  ElectionInvariantError,
+  getSafeOperatorErrorMessage
+} from '@/lib/validation/electionContext';
+import crypto from 'crypto';
 
 export async function POST(req: Request) {
   try {
@@ -612,11 +617,15 @@ export async function POST(req: Request) {
       reportId = result;
     } catch (dbError: unknown) {
       if (dbError instanceof ElectionInvariantError) {
+        const correlationId = crypto.randomUUID();
+        console.error(`[SCAN_INVARIANT_ERROR][${correlationId}] Code: ${dbError.code}`, {
+          message: dbError.message
+        });
         return NextResponse.json({
           status: 'ERRO_INVARIANTE',
           error: dbError.code,
-          message: dbError.message,
-          details: dbError.details
+          message: getSafeOperatorErrorMessage(dbError.code),
+          correlationId
         }, { status: 422 });
       }
 
@@ -636,14 +645,23 @@ export async function POST(req: Request) {
 
   } catch (error) {
     if (error instanceof ElectionInvariantError) {
+      const correlationId = crypto.randomUUID();
+      console.error(`[SCAN_INVARIANT_ERROR][${correlationId}] Code: ${error.code}`, {
+        message: error.message
+      });
       return NextResponse.json({
         status: 'ERRO_INVARIANTE',
         error: error.code,
-        message: error.message,
-        details: error.details
+        message: getSafeOperatorErrorMessage(error.code),
+        correlationId
       }, { status: 422 });
     }
-    console.error(error);
-    return NextResponse.json({ error: 'Erro interno ao processar QR' }, { status: 500 });
+    const correlationId = crypto.randomUUID();
+    console.error(`[SCAN_INTERNAL_ERROR][${correlationId}]`, error);
+    return NextResponse.json({
+      error: 'INTERNAL_ERROR',
+      message: 'Erro interno ao processar o Boletim de Urna.',
+      correlationId
+    }, { status: 500 });
   }
 }
