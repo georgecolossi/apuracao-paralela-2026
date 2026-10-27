@@ -410,6 +410,75 @@ export function validateElectionScopeAddition(
 }
 
 /**
+ * Validação Canônica de um Conjunto Completo de Escopos Geográficos (PR 1 / v2.0):
+ * - Valida chaves canônicas e decomposição estrutural.
+ * - Valida integridade de UF e código numérico do TSE.
+ * - Impede chaves canônicas duplicadas no conjunto.
+ * - Impede contradição entre abrangência NACIONAL e escopos regionais.
+ * - Impede sobreposição entre abrangência ESTADUAL e escopo MUNICIPAL no mesmo estado.
+ */
+export function validateElectionScopesSet(
+  scopes: Array<{ scopeType: string; scopeKey?: string; stateCode?: string; muniCode?: string }>
+): Array<{ canonicalKey: string; scopeType: 'NACIONAL' | 'ESTADUAL' | 'MUNICIPAL'; stateCode?: string; muniCode?: string }> {
+  const normalized = scopes.map(s => {
+    let canonicalKey: string;
+    if (s.scopeKey) {
+      canonicalKey = canonicalizeScopeKey(s.scopeKey, s.scopeType);
+    } else {
+      canonicalKey = buildCanonicalScopeKey({
+        scopeType: s.scopeType,
+        stateCode: s.stateCode,
+        muniCode: s.muniCode
+      });
+    }
+    const parsed = parseCanonicalScopeKey(canonicalKey);
+    return {
+      canonicalKey,
+      scopeType: parsed.scopeType,
+      stateCode: parsed.stateCode,
+      muniCode: parsed.muniCode
+    };
+  });
+
+  // 1. Duplicidade exata de chaves
+  const seenKeys = new Set<string>();
+  for (const s of normalized) {
+    if (seenKeys.has(s.canonicalKey)) {
+      throw new ElectionInvariantError(
+        'DUPLICATE_SCOPE_KEY',
+        `Chave de escopo canônica duplicada no conjunto: '${s.canonicalKey}'.`
+      );
+    }
+    seenKeys.add(s.canonicalKey);
+  }
+
+  // 2. Contradição Nacional vs Regional
+  const hasNational = normalized.some(s => s.scopeType === 'NACIONAL');
+  const hasRegional = normalized.some(s => s.scopeType === 'ESTADUAL' || s.scopeType === 'MUNICIPAL');
+  if (hasNational && hasRegional) {
+    throw new ElectionInvariantError(
+      'CONTRADICTORY_SCOPE_NATIONAL_EXISTS',
+      `O conjunto de escopos contém abrangência NACIONAL simultaneamente com escopos regionais (ESTADUAL/MUNICIPAL).`
+    );
+  }
+
+  // 3. Sobreposição Estadual vs Municipal no mesmo Estado
+  const stateScopesByUf = new Set(
+    normalized.filter(s => s.scopeType === 'ESTADUAL' && s.stateCode).map(s => s.stateCode!)
+  );
+  for (const s of normalized) {
+    if (s.scopeType === 'MUNICIPAL' && s.stateCode && stateScopesByUf.has(s.stateCode)) {
+      throw new ElectionInvariantError(
+        'OVERLAPPING_SCOPE_STATE_CONTAINS_MUNICIPALITY',
+        `Sobreposição proibida: abrangência ESTADUAL no estado '${s.stateCode}' coexiste com escopo MUNICIPAL no mesmo estado ('${s.canonicalKey}').`
+      );
+    }
+  }
+
+  return normalized;
+}
+
+/**
  * Validação de Transição de Estado de Cobertura (CoverageStatus):
  * PROVISIONAL -> REGISTERED -> HOMOLOGATED
  */

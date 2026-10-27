@@ -330,22 +330,35 @@ export async function POST(req: Request) {
       // 2º Turno: Cobertura dinâmica — aceita e cadastra seções elegíveis sem lista prévia
       if (!sectionInDB && zoneInDB) {
         const canonicalSec = sectionCode.padStart(4, '0');
-        sectionInDB = await prisma.pollingSection.create({
-          data: {
-            pollingZoneId: zoneInDB.id,
-            sectionNumber: canonicalSec,
-            expectedBUs: 1
-          }
-        });
+        try {
+          sectionInDB = await prisma.pollingSection.create({
+            data: {
+              pollingZoneId: zoneInDB.id,
+              sectionNumber: canonicalSec,
+              expectedBUs: 1
+            }
+          });
 
-        await prisma.auditLog.create({
-          data: {
-            action: 'DYNAMIC_SECTION_REGISTERED',
-            result: 'SUCCESS',
-            identifiers: `Round: 2, Zone: ${zoneInDB.zoneNumber}, Sec: ${canonicalSec}`,
-            userId: operatorId
+          await prisma.auditLog.create({
+            data: {
+              action: 'DYNAMIC_SECTION_REGISTERED',
+              result: 'SUCCESS',
+              identifiers: `Round: 2, Zone: ${zoneInDB.zoneNumber}, Sec: ${canonicalSec}`,
+              userId: operatorId
+            }
+          });
+        } catch (secErr: unknown) {
+          if (secErr && typeof secErr === 'object' && 'code' in secErr && (secErr as { code?: string }).code === 'P2002') {
+            sectionInDB = await prisma.pollingSection.findFirst({
+              where: {
+                pollingZoneId: zoneInDB.id,
+                sectionNumber: canonicalSec
+              }
+            });
+          } else {
+            throw secErr;
           }
-        });
+        }
       }
 
       if (sectionInDB) {
@@ -359,13 +372,21 @@ export async function POST(req: Request) {
         });
 
         if (!existingCoverage) {
-          await prisma.roundCoverage.create({
-            data: {
-              electionRoundId: activeRound.id,
-              pollingSectionId: sectionInDB.id,
-              expectedBUs: 1
+          try {
+            await prisma.roundCoverage.create({
+              data: {
+                electionRoundId: activeRound.id,
+                pollingSectionId: sectionInDB.id,
+                expectedBUs: 1
+              }
+            });
+          } catch (covErr: unknown) {
+            if (covErr && typeof covErr === 'object' && 'code' in covErr && (covErr as { code?: string }).code === 'P2002') {
+              // Já criado concorrentemente por outra requisição simultânea
+            } else {
+              throw covErr;
             }
-          });
+          }
         }
       }
     }

@@ -21,10 +21,25 @@ export default async function ConfigPage() {
     ? `${election?.name || 'Eleição'} — ${activeRound.roundNumber}º Turno`
     : election?.name || 'Eleição Principal';
   
-  const coverage = await prisma.municipality.findFirst({ where: { isCoverage: true }, include: { state: true } });
+  // Cobertura contextual da eleição ativa via ElectionScope
+  const electionMunicipalScopes = election
+    ? await prisma.electionScope.findMany({
+        where: { electionId: election.id, scopeType: 'MUNICIPAL', isCoverageArea: true },
+        include: { municipality: { include: { state: true } } }
+      })
+    : [];
+
+  const coveredMuniIds = electionMunicipalScopes
+    .map(s => s.municipalityId)
+    .filter((id): id is string => Boolean(id));
+
+  const coverage = electionMunicipalScopes[0]?.municipality
+    || await prisma.municipality.findFirst({ where: { isCoverage: true }, include: { state: true } });
   
   const municipalExpectedAgg = await prisma.pollingSection.aggregate({
-    where: { zone: { municipality: { isCoverage: true } } },
+    where: coveredMuniIds.length > 0
+      ? { zone: { municipalityId: { in: coveredMuniIds } } }
+      : { zone: { municipality: { isCoverage: true } } },
     _sum: { expectedBUs: true },
     _count: { id: true }
   });
