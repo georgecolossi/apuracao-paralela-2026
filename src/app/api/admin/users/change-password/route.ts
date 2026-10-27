@@ -63,20 +63,42 @@ export async function POST(req: Request) {
       }, { status: 400 });
     }
 
-    const passwordHash = await bcrypt.hash(newPassword.trim(), 12);
+    // Hash da nova senha sem remoção de espaços em branco (sem trim)
+    const passwordHash = await bcrypt.hash(newPassword, 12);
 
-    // Atualiza a senha e o timestamp updatedAt (revoga sessões em outros dispositivos)
-    const updatedUser = await prisma.user.update({
-      where: { id: user.id },
-      data: {
-        passwordHash,
-        updatedAt: new Date()
-      }
+    // Atualização atômica da senha, incremento de versão de sessão e auditoria transacional
+    const updatedUser = await prisma.$transaction(async (tx) => {
+      const u = await tx.user.update({
+        where: { id: user.id },
+        data: {
+          passwordHash,
+          sessionVersion: { increment: 1 }
+        }
+      });
+
+      await tx.auditLog.create({
+        data: {
+          userId: user.id,
+          action: 'PASSWORD_CHANGED',
+          result: 'SUCCESS',
+          identifiers: `User: ${user.email} (${user.id})`,
+          metadata: JSON.stringify({
+            selfService: true,
+            otherSessionsRevoked: true
+          })
+        }
+      });
+
+      return u;
     });
 
-    // Emite um novo token JWT fresco com o novo timestamp iat para manter a sessão atual ativa
+    // Emite um novo token JWT com a nova sessionVersion para manter unicamente esta sessão ativa
     const newToken = jwt.sign(
-      { userId: updatedUser.id, role: updatedUser.role },
+      { 
+        userId: updatedUser.id, 
+        role: updatedUser.role,
+        sessionVersion: updatedUser.sessionVersion 
+      },
       getJwtSecret(),
       { expiresIn: '8h' }
     );
@@ -87,19 +109,6 @@ export async function POST(req: Request) {
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'strict',
       path: '/'
-    });
-
-    await prisma.auditLog.create({
-      data: {
-        userId: user.id,
-        action: 'PASSWORD_CHANGED',
-        result: 'SUCCESS',
-        identifiers: `User: ${user.email} (${user.id})`,
-        metadata: JSON.stringify({
-          selfService: true,
-          otherSessionsRevoked: true
-        })
-      }
     });
 
     return NextResponse.json({

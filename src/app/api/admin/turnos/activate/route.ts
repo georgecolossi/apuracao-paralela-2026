@@ -2,12 +2,18 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { requireAuthenticatedUser } from '@/lib/auth';
 import { getConfirmationAliases, validateAdminConfirmation } from '@/lib/normalization';
+import { validateCsrfProtection } from '@/lib/security/csrf';
 
 export async function POST(req: Request) {
   try {
     const auth = await requireAuthenticatedUser();
     if (!auth.authenticated || auth.user?.role !== 'ADMIN') {
       return NextResponse.json({ error: 'Não autorizado.' }, { status: 403 });
+    }
+
+    const csrf = validateCsrfProtection(req);
+    if (!csrf.valid) {
+      return NextResponse.json({ error: 'Falha na validação de origem (CSRF).', reason: csrf.reason }, { status: 403 });
     }
 
     let payload;

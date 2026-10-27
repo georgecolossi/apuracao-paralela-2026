@@ -56,30 +56,33 @@ export async function POST(
       return NextResponse.json({ error: 'Usuário não encontrado.' }, { status: 404 });
     }
 
-    const passwordHash = await bcrypt.hash(newPassword.trim(), 12);
+    // Hash da nova senha sem remoção de espaços em branco (sem trim)
+    const passwordHash = await bcrypt.hash(newPassword, 12);
 
-    // Atualiza a senha e atualiza o timestamp updatedAt para revogar imediatamente todas as sessões ativas
-    await prisma.user.update({
-      where: { id },
-      data: {
-        passwordHash,
-        updatedAt: new Date()
-      }
-    });
+    // Atualização atômica da senha, incremento de versão de sessão e auditoria transacional
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id },
+        data: {
+          passwordHash,
+          sessionVersion: { increment: 1 }
+        }
+      });
 
-    await prisma.auditLog.create({
-      data: {
-        userId: auth.user.userId,
-        action: 'USER_PASSWORD_RESET',
-        result: 'SUCCESS',
-        identifiers: `User: ${targetUser.email} (${targetUser.id})`,
-        metadata: JSON.stringify({
-          resetByAdminId: auth.user.userId,
-          targetUserId: targetUser.id,
-          targetEmail: targetUser.email,
-          sessionsRevoked: true
-        })
-      }
+      await tx.auditLog.create({
+        data: {
+          userId: auth.user.userId,
+          action: 'USER_PASSWORD_RESET',
+          result: 'SUCCESS',
+          identifiers: `User: ${targetUser.email} (${targetUser.id})`,
+          metadata: JSON.stringify({
+            resetByAdminId: auth.user.userId,
+            targetUserId: targetUser.id,
+            targetEmail: targetUser.email,
+            sessionsRevoked: true
+          })
+        }
+      });
     });
 
     return NextResponse.json({

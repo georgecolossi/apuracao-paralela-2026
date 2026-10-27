@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { requireAuthenticatedUser } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { getConfirmationAliases, validateAdminConfirmation } from '@/lib/normalization';
+import { validateCsrfProtection } from '@/lib/security/csrf';
 
 export async function POST(req: Request) {
   try {
@@ -13,6 +14,11 @@ export async function POST(req: Request) {
 
     if (auth.user.role !== 'ADMIN') {
       return NextResponse.json({ error: 'Proibido' }, { status: 403 });
+    }
+
+    const csrf = validateCsrfProtection(req);
+    if (!csrf.valid) {
+      return NextResponse.json({ error: 'Falha na validação de origem (CSRF).', reason: csrf.reason }, { status: 403 });
     }
 
     // This is the global operational reset toggle.

@@ -134,30 +134,32 @@ export async function PATCH(
         }
 
         dataToUpdate.role = targetRole;
+
+        // Se houver alteração de papel, incrementa a versão da sessão para invalidar imediatamente permissões antigas
+        if (targetRole !== targetUser.role) {
+          dataToUpdate.sessionVersion = { increment: 1 };
+        }
       }
 
-      // Se houver alteração de papel, força atualização de timestamp para invalidar sessões prévias
-      if (dataToUpdate.role && dataToUpdate.role !== targetUser.role) {
-        dataToUpdate.updatedAt = new Date();
-      }
-
-      return tx.user.update({
+      const u = await tx.user.update({
         where: { id },
         data: dataToUpdate
       });
-    });
 
-    await prisma.auditLog.create({
-      data: {
-        userId: auth.user.userId,
-        action: 'USER_UPDATED',
-        result: 'SUCCESS',
-        identifiers: `User: ${updatedUser.email} (${updatedUser.id})`,
-        metadata: JSON.stringify({
-          before: { name: targetUser.name, email: targetUser.email, role: targetUser.role },
-          after: { name: updatedUser.name, email: updatedUser.email, role: updatedUser.role }
-        })
-      }
+      await tx.auditLog.create({
+        data: {
+          userId: auth.user.userId,
+          action: 'USER_UPDATED',
+          result: 'SUCCESS',
+          identifiers: `User: ${u.email} (${u.id})`,
+          metadata: JSON.stringify({
+            before: { name: targetUser.name, email: targetUser.email, role: targetUser.role },
+            after: { name: u.name, email: u.email, role: u.role }
+          })
+        }
+      });
+
+      return u;
     });
 
     return NextResponse.json({
@@ -228,7 +230,7 @@ export async function DELETE(
           where: { id },
           data: {
             isActive: false,
-            updatedAt: new Date()
+            sessionVersion: { increment: 1 }
           }
         });
 

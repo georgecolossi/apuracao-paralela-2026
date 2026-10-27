@@ -147,33 +147,37 @@ export async function POST(req: Request) {
       }, { status: 409 });
     }
 
-    // 5. Hash Criptográfico (bcrypt com custo 12)
-    const passwordHash = await bcrypt.hash(password.trim(), 12);
+    // 5. Hash Criptográfico (bcrypt com custo 12) preservando a senha sem trim()
+    const passwordHash = await bcrypt.hash(password, 12);
 
-    const newUser = await prisma.user.create({
-      data: {
-        name: normalizedName,
-        email: normalizedEmail,
-        passwordHash,
-        role: targetRole,
-        isActive: true
-      }
-    });
+    // 6. Criação atômica do usuário e do registro de auditoria na mesma transação
+    const newUser = await prisma.$transaction(async (tx) => {
+      const created = await tx.user.create({
+        data: {
+          name: normalizedName,
+          email: normalizedEmail,
+          passwordHash,
+          role: targetRole,
+          isActive: true
+        }
+      });
 
-    // 6. Auditoria estruturada
-    await prisma.auditLog.create({
-      data: {
-        userId: auth.user.userId,
-        action: 'USER_CREATED',
-        result: 'SUCCESS',
-        identifiers: `User: ${newUser.email} (${newUser.id})`,
-        metadata: JSON.stringify({
-          createdUserId: newUser.id,
-          name: newUser.name,
-          email: newUser.email,
-          role: newUser.role
-        })
-      }
+      await tx.auditLog.create({
+        data: {
+          userId: auth.user.userId,
+          action: 'USER_CREATED',
+          result: 'SUCCESS',
+          identifiers: `User: ${created.email} (${created.id})`,
+          metadata: JSON.stringify({
+            createdUserId: created.id,
+            name: created.name,
+            email: created.email,
+            role: created.role
+          })
+        }
+      });
+
+      return created;
     });
 
     return NextResponse.json({

@@ -11,12 +11,13 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Usuário e senha são obrigatórios' }, { status: 400 });
   }
 
-  const normalizedUsername = username.trim();
+  const normalizedUsername = String(username).trim().toLowerCase();
   const user = await prisma.user.findUnique({ where: { email: normalizedUsername } });
   if (!user || !user.isActive) {
     return NextResponse.json({ error: 'Credenciais inválidas' }, { status: 401 });
   }
 
+  // Preserva integralmente a senha informada, sem trim() ou mutações ocultas
   const isValid = await bcrypt.compare(password, user.passwordHash);
   if (!isValid) {
     return NextResponse.json({ error: 'Credenciais inválidas' }, { status: 401 });
@@ -24,7 +25,11 @@ export async function POST(req: Request) {
 
   const { getJwtSecret } = await import('@/lib/auth');
   const token = jwt.sign(
-    { userId: user.id, role: user.role },
+    { 
+      userId: user.id, 
+      role: user.role,
+      sessionVersion: user.sessionVersion 
+    },
     getJwtSecret(),
     { expiresIn: '8h' }
   );

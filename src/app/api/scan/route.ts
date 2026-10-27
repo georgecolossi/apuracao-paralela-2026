@@ -4,6 +4,7 @@ import { Tse2026BallotReportParser } from '@/lib/parser/Tse2026BallotReportParse
 import { Tse2026SimulationParser } from '@/lib/parser/Tse2026SimulationParser';
 
 import { requireAuthenticatedUser } from '@/lib/auth';
+import { validateCsrfProtection } from '@/lib/security/csrf';
 import { OFFICE_NAME_TO_CODE } from '@/lib/metadata/voteEnricher';
 import {
   validateBallotIngestionInvariants,
@@ -24,6 +25,11 @@ export async function POST(req: Request) {
         error: 'FORBIDDEN_ROLE',
         message: 'Acesso negado: usuários com perfil de visualizador (VIEWER) não possuem permissão de leitura de BUs.'
       }, { status: 403 });
+    }
+
+    const csrf = validateCsrfProtection(req);
+    if (!csrf.valid) {
+      return NextResponse.json({ error: 'Falha na validação de origem (CSRF).', reason: csrf.reason }, { status: 403 });
     }
 
     const { content, isSimulation = false, sessionId } = await req.json();

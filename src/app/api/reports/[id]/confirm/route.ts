@@ -1,13 +1,18 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { realtimeEmitter } from '@/lib/realtime';
-
 import { requireAuthenticatedUser } from '@/lib/auth';
+import { validateCsrfProtection } from '@/lib/security/csrf';
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
     const auth = await requireAuthenticatedUser();
     if (!auth.authenticated) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+    const csrf = validateCsrfProtection(req);
+    if (!csrf.valid) {
+      return NextResponse.json({ error: 'Falha na validação de origem (CSRF).', reason: csrf.reason }, { status: 403 });
+    }
 
     if (auth.user.role === 'VIEWER') {
       return NextResponse.json({

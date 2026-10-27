@@ -36,29 +36,28 @@ export function validatePasswordStrength(password: string): PasswordValidationRe
     return { valid: false, errors: ['A senha não pode ser vazia.'] };
   }
 
-  const trimmed = password.trim();
-
-  if (trimmed.length < 8) {
+  // Preserva integralmente a senha como fornecida, sem trim() ou mutações ocultas
+  if (password.length < 8) {
     errors.push('A senha deve ter no mínimo 8 caracteres.');
   }
 
-  if (trimmed.length > 128) {
+  if (password.length > 128) {
     errors.push('A senha deve ter no máximo 128 caracteres.');
   }
 
-  if (!/[A-Z]/.test(trimmed)) {
+  if (!/[A-Z]/.test(password)) {
     errors.push('A senha deve conter pelo menos uma letra maiúscula.');
   }
 
-  if (!/[a-z]/.test(trimmed)) {
+  if (!/[a-z]/.test(password)) {
     errors.push('A senha deve conter pelo menos uma letra minúscula.');
   }
 
-  if (!/[0-9]/.test(trimmed) && !/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(trimmed)) {
+  if (!/[0-9]/.test(password) && !/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) {
     errors.push('A senha deve conter pelo menos um número ou símbolo especial.');
   }
 
-  if (COMMON_WEAK_PASSWORDS.has(trimmed.toLowerCase())) {
+  if (COMMON_WEAK_PASSWORDS.has(password.toLowerCase()) || COMMON_WEAK_PASSWORDS.has(password.trim().toLowerCase())) {
     errors.push('A senha escolhida é excessivamente comum e insegura.');
   }
 

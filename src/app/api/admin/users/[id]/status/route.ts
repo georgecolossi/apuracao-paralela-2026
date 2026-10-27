@@ -52,27 +52,30 @@ export async function PATCH(
         await assertNotLastActiveAdmin(tx, targetUser.id, 'DEACTIVATE');
       }
 
-      return tx.user.update({
+      const u = await tx.user.update({
         where: { id },
         data: {
           isActive,
-          updatedAt: new Date() // Invalida sessões ativas caso desativado
+          // Caso desativado, incrementa a versão de sessão para invalidar imediatamente qualquer token ativo
+          ...(isActive ? {} : { sessionVersion: { increment: 1 } })
         }
       });
-    });
 
-    const action = isActive ? 'USER_ACTIVATED' : 'USER_DEACTIVATED';
-    await prisma.auditLog.create({
-      data: {
-        userId: auth.user.userId,
-        action,
-        result: 'SUCCESS',
-        identifiers: `User: ${updatedUser.email} (${updatedUser.id})`,
-        metadata: JSON.stringify({
-          previousStatus: targetUser.isActive,
-          newStatus: updatedUser.isActive
-        })
-      }
+      const action = isActive ? 'USER_ACTIVATED' : 'USER_DEACTIVATED';
+      await tx.auditLog.create({
+        data: {
+          userId: auth.user.userId,
+          action,
+          result: 'SUCCESS',
+          identifiers: `User: ${u.email} (${u.id})`,
+          metadata: JSON.stringify({
+            previousStatus: targetUser.isActive,
+            newStatus: u.isActive
+          })
+        }
+      });
+
+      return u;
     });
 
     return NextResponse.json({

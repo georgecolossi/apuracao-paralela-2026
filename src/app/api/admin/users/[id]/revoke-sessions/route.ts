@@ -34,25 +34,27 @@ export async function POST(
       return NextResponse.json({ error: 'Usuário não encontrado.' }, { status: 404 });
     }
 
-    // Atualiza o updatedAt para o instante atual, invalidando tokens JWT emitidos previamente
-    await prisma.user.update({
-      where: { id },
-      data: {
-        updatedAt: new Date()
-      }
-    });
+    // Incrementa atomicamente sessionVersion e grava auditoria na mesma transação
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id },
+        data: {
+          sessionVersion: { increment: 1 }
+        }
+      });
 
-    await prisma.auditLog.create({
-      data: {
-        userId: auth.user.userId,
-        action: 'USER_SESSIONS_REVOKED',
-        result: 'SUCCESS',
-        identifiers: `User: ${targetUser.email} (${targetUser.id})`,
-        metadata: JSON.stringify({
-          revokedBy: auth.user.userId,
-          targetUserId: targetUser.id
-        })
-      }
+      await tx.auditLog.create({
+        data: {
+          userId: auth.user.userId,
+          action: 'USER_SESSIONS_REVOKED',
+          result: 'SUCCESS',
+          identifiers: `User: ${targetUser.email} (${targetUser.id})`,
+          metadata: JSON.stringify({
+            revokedBy: auth.user.userId,
+            targetUserId: targetUser.id
+          })
+        }
+      });
     });
 
     return NextResponse.json({

@@ -65,13 +65,11 @@ export async function requireAuthenticatedUser(): Promise<AuthResult> {
       return { authenticated: false, reason: 'USER_INACTIVE' };
     }
 
-    // Controle e invalidação de sessões revogadas por timestamp
-    const tokenIat = (payload as jwt.JwtPayload).iat;
-    if (typeof tokenIat === 'number' && userInDb.updatedAt) {
-      const userUpdatedSeconds = Math.floor(userInDb.updatedAt.getTime() / 1000);
-      if (tokenIat < userUpdatedSeconds) {
-        return { authenticated: false, reason: 'SESSION_REVOKED' };
-      }
+    // Controle estrito e fail-closed de sessões por versão explícita (sessionVersion)
+    // Tokens legados ou tokens com versão divergente da versão ativa no banco são imediatamente rejeitados
+    const tokenSessionVersion = (payload as jwt.JwtPayload).sessionVersion;
+    if (typeof tokenSessionVersion !== 'number' || tokenSessionVersion !== userInDb.sessionVersion) {
+      return { authenticated: false, reason: 'SESSION_REVOKED' };
     }
 
     return { 

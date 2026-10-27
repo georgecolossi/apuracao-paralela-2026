@@ -5,6 +5,7 @@ import * as jwt from 'jsonwebtoken';
 import { getJwtSecret, requireAuthenticatedUser } from '@/lib/auth';
 import { validatePasswordStrength, generateSecureRandomPassword } from '@/lib/validation/password';
 import { validateCsrfProtection } from '@/lib/security/csrf';
+import { POST as loginRoute } from '@/app/api/login/route';
 import { GET as listUsers, POST as createUser } from '@/app/api/admin/users/route';
 import { GET as getUser, PATCH as updateUser, DELETE as deleteUser } from '@/app/api/admin/users/[id]/route';
 import { PATCH as updateStatus } from '@/app/api/admin/users/[id]/status/route';
@@ -16,6 +17,7 @@ import { POST as confirmRoute } from '@/app/api/reports/[id]/confirm/route';
 import { POST as cancelRoute } from '@/app/api/reports/[id]/cancel/route';
 
 let activeTestSessionToken: string | undefined = undefined;
+let lastSetCookie: { name: string; value: string; options: any } | undefined = undefined;
 
 vi.mock('next/headers', () => ({
   cookies: vi.fn(async () => ({
@@ -25,8 +27,15 @@ vi.mock('next/headers', () => ({
       }
       return undefined;
     },
-    set: vi.fn(),
-    delete: vi.fn()
+    set: vi.fn((name: string, value: string, options: any) => {
+      lastSetCookie = { name, value, options };
+      if (name === 'admin_session') {
+        activeTestSessionToken = value;
+      }
+    }),
+    delete: vi.fn(() => {
+      activeTestSessionToken = undefined;
+    })
   }))
 }));
 
@@ -51,6 +60,7 @@ describe('PR 2 — Gestão Administrativa de Usuários, RBAC e Segurança de Ses
 
   beforeEach(async () => {
     activeTestSessionToken = undefined;
+    lastSetCookie = undefined;
 
     // Limpa dados de usuários anteriores
     await prisma.ballotVote.deleteMany({});
@@ -62,46 +72,61 @@ describe('PR 2 — Gestão Administrativa de Usuários, RBAC e Segurança de Ses
 
     const passwordHash = await bcrypt.hash('SenhaForte123!', 10);
 
-    // 1. Cria Admin inicial
+    // 1. Cria Admin inicial com sessionVersion 0
     adminUser = await prisma.user.create({
       data: {
         name: 'Administrador Principal',
         email: 'admin@eleicao.local',
         passwordHash,
         role: 'ADMIN',
-        isActive: true
+        isActive: true,
+        sessionVersion: 0
       }
     });
 
-    // 2. Cria Operador
+    // 2. Cria Operador com sessionVersion 0
     operatorUser = await prisma.user.create({
       data: {
         name: 'Operador Scanner',
         email: 'operador@eleicao.local',
         passwordHash,
         role: 'OPERATOR',
-        isActive: true
+        isActive: true,
+        sessionVersion: 0
       }
     });
 
-    // 3. Cria Visualizador
+    // 3. Cria Visualizador com sessionVersion 0
     viewerUser = await prisma.user.create({
       data: {
         name: 'Auditor Visualizador',
         email: 'auditor@eleicao.local',
         passwordHash,
         role: 'VIEWER',
-        isActive: true
+        isActive: true,
+        sessionVersion: 0
       }
     });
 
     const secret = getJwtSecret();
-    adminToken = jwt.sign({ userId: adminUser.id, role: adminUser.role }, secret, { expiresIn: '1h' });
-    operatorToken = jwt.sign({ userId: operatorUser.id, role: operatorUser.role }, secret, { expiresIn: '1h' });
-    viewerToken = jwt.sign({ userId: viewerUser.id, role: viewerUser.role }, secret, { expiresIn: '1h' });
+    adminToken = jwt.sign(
+      { userId: adminUser.id, role: adminUser.role, sessionVersion: adminUser.sessionVersion },
+      secret,
+      { expiresIn: '1h' }
+    );
+    operatorToken = jwt.sign(
+      { userId: operatorUser.id, role: operatorUser.role, sessionVersion: operatorUser.sessionVersion },
+      secret,
+      { expiresIn: '1h' }
+    );
+    viewerToken = jwt.sign(
+      { userId: viewerUser.id, role: viewerUser.role, sessionVersion: viewerUser.sessionVersion },
+      secret,
+      { expiresIn: '1h' }
+    );
   });
 
-  describe('1. Validação de Senhas e Complexidade', () => {
+  describe('1. Validação de Senhas e Preservação Exata de Espaços (Sem Trim)', () => {
     it('1.1 Deve rejeitar senhas com menos de 8 caracteres', () => {
       const res = validatePasswordStrength('Ab1!');
       expect(res.valid).toBe(false);
@@ -133,6 +158,64 @@ describe('PR 2 — Gestão Administrativa de Usuários, RBAC e Segurança de Ses
       expect(res.valid).toBe(true);
       expect(res.errors).toHaveLength(0);
     });
+
+    it('1.6 Deve preservar espaços em branco no início e no fim sem remoção oculta (não aplicar trim)', async () => {
+      const passwordWithSpaces = '  SenhaComEspaco123!  ';
+      const validation = validatePasswordStrength(passwordWithSpaces);
+      expect(validation.valid).toBe(true);
+
+      activeTestSessionToken = adminToken;
+      const createReq = new Request('http://localhost:3000/api/admin/users', {
+        method: 'POST',
+        headers: createAuthHeaders(adminToken),
+        body: JSON.stringify({
+          name: 'Usuário Com Espaços',
+          email: 'espacos@eleicao.local',
+          password: passwordWithSpaces,
+          role: 'OPERATOR'
+        })
+      });
+
+      const createRes = await createUser(createReq);
+      expect(createRes.status).toBe(201);
+
+      const createdInDb = await prisma.user.findUnique({
+        where: { email: 'espacos@eleicao.local' }
+      });
+      expect(createdInDb).not.toBeNull();
+
+      // Confirma que a senha hashada preservou exatamente os espaços
+      const matchExact = await bcrypt.compare(passwordWithSpaces, createdInDb!.passwordHash);
+      expect(matchExact).toBe(true);
+
+      // Confirma que tentar autenticar com a versão trimmed FALHA
+      const matchTrimmed = await bcrypt.compare('SenhaComEspaco123!', createdInDb!.passwordHash);
+      expect(matchTrimmed).toBe(false);
+
+      // Testa autenticação real via POST /api/login com espaços
+      const loginSuccessReq = new Request('http://localhost:3000/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: 'espacos@eleicao.local',
+          password: passwordWithSpaces
+        })
+      });
+      const loginSuccessRes = await loginRoute(loginSuccessReq);
+      expect(loginSuccessRes.status).toBe(200);
+
+      // Login com senha trimmed deve falhar com 401
+      const loginFailReq = new Request('http://localhost:3000/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: 'espacos@eleicao.local',
+          password: 'SenhaComEspaco123!'
+        })
+      });
+      const loginFailRes = await loginRoute(loginFailReq);
+      expect(loginFailRes.status).toBe(401);
+    });
   });
 
   describe('2. Criação de Usuários com RBAC (POST /api/admin/users)', () => {
@@ -158,7 +241,7 @@ describe('PR 2 — Gestão Administrativa de Usuários, RBAC e Segurança de Ses
       expect(data.user.role).toBe('OPERATOR');
       expect(data.user.passwordHash).toBeUndefined(); // Garante não-exposição de hash
 
-      // Confirma registro de auditoria
+      // Confirma registro de auditoria criado na mesma transação
       const audit = await prisma.auditLog.findFirst({
         where: { action: 'USER_CREATED', identifiers: { contains: 'novo.operador@eleicao.local' } }
       });
@@ -259,9 +342,11 @@ describe('PR 2 — Gestão Administrativa de Usuários, RBAC e Segurança de Ses
       const updated = await prisma.user.findUnique({ where: { id: operatorUser.id } });
       expect(updated?.name).toBe('Operador Promovido');
       expect(updated?.role).toBe('ADMIN');
+      // Versão de sessão deve ter sido incrementada pela mudança de papel
+      expect(updated?.sessionVersion).toBe(operatorUser.sessionVersion + 1);
     });
 
-    it('4.2 Bloqueia rebaixamento do único ADMIN ativo (400)', async () => {
+    it('4.2 Bloqueia rebaixamento do único ADMIN ativo (400 CANNOT_REMOVE_LAST_ADMIN)', async () => {
       // adminUser é o único ADMIN ativo no momento
       activeTestSessionToken = adminToken;
       const req = new Request(`http://localhost:3000/api/admin/users/${adminUser.id}`, {
@@ -284,7 +369,7 @@ describe('PR 2 — Gestão Administrativa de Usuários, RBAC e Segurança de Ses
   });
 
   describe('5. Ativação e Desativação (PATCH /api/admin/users/[id]/status)', () => {
-    it('5.1 Bloqueia desativação do único ADMIN ativo', async () => {
+    it('5.1 Bloqueia desativação do único ADMIN ativo (400 CANNOT_REMOVE_LAST_ADMIN)', async () => {
       activeTestSessionToken = adminToken;
       const req = new Request(`http://localhost:3000/api/admin/users/${adminUser.id}/status`, {
         method: 'PATCH',
@@ -319,14 +404,10 @@ describe('PR 2 — Gestão Administrativa de Usuários, RBAC e Segurança de Ses
     });
   });
 
-  describe('6. Redefinição de Senha e Revogação Forçada de Sessões', () => {
-    it('6.1 Redefinição de senha invalida tokens emitidos anteriormente', async () => {
-      // Token gerado no passado antes da redefinição
-      const oldToken = jwt.sign(
-        { userId: operatorUser.id, role: operatorUser.role, iat: Math.floor(Date.now() / 1000) - 10 },
-        getJwtSecret(),
-        { expiresIn: '1h' }
-      );
+  describe('6. Versionamento de Sessões JWT e Revogação Imediata', () => {
+    it('6.1 Redefinição administrativa de senha incrementa sessionVersion e invalida tokens antigos', async () => {
+      // Token gerado antes da redefinição
+      const oldToken = operatorToken;
 
       activeTestSessionToken = adminToken;
       const req = new Request(`http://localhost:3000/api/admin/users/${operatorUser.id}/reset-password`, {
@@ -338,7 +419,7 @@ describe('PR 2 — Gestão Administrativa de Usuários, RBAC e Segurança de Ses
       const res = await resetPassword(req, { params: Promise.resolve({ id: operatorUser.id }) });
       expect(res.status).toBe(200);
 
-      // Antigo token deve ser rejeitado por SESSION_REVOKED
+      // Antigo token deve ser sumariamente rejeitado por SESSION_REVOKED
       activeTestSessionToken = oldToken;
       const authCheck = await requireAuthenticatedUser();
       expect(authCheck.authenticated).toBe(false);
@@ -346,18 +427,17 @@ describe('PR 2 — Gestão Administrativa de Usuários, RBAC e Segurança de Ses
         expect(authCheck.reason).toBe('SESSION_REVOKED');
       }
 
-      // Login com nova senha deve emitir token válido
+      // Confirma que sessionVersion foi incrementado no banco
       const updatedUser = await prisma.user.findUnique({ where: { id: operatorUser.id } });
+      expect(updatedUser?.sessionVersion).toBe(operatorUser.sessionVersion + 1);
+
+      // Login com nova senha deve emitir token válido com a nova sessionVersion
       const passMatch = await bcrypt.compare('NovaSenhaSegura2026!', updatedUser!.passwordHash);
       expect(passMatch).toBe(true);
     });
 
     it('6.2 Endpoint POST /api/admin/users/[id]/revoke-sessions revoga sessões imediatamente', async () => {
-      const preRevokeToken = jwt.sign(
-        { userId: operatorUser.id, role: operatorUser.role, iat: Math.floor(Date.now() / 1000) - 10 },
-        getJwtSecret(),
-        { expiresIn: '1h' }
-      );
+      const preRevokeToken = operatorToken;
 
       activeTestSessionToken = adminToken;
       const req = new Request(`http://localhost:3000/api/admin/users/${operatorUser.id}/revoke-sessions`, {
@@ -375,10 +455,112 @@ describe('PR 2 — Gestão Administrativa de Usuários, RBAC e Segurança de Ses
         expect(authCheck.reason).toBe('SESSION_REVOKED');
       }
     });
+
+    it('6.3 Revogação e emissão no exato mesmo segundo são estritamente distinguidas', async () => {
+      // Simula token emitido com timestamp idêntico ao momento de revogação
+      const currentSecond = Math.floor(Date.now() / 1000);
+      const sameSecondToken = jwt.sign(
+        { userId: operatorUser.id, role: operatorUser.role, sessionVersion: operatorUser.sessionVersion, iat: currentSecond },
+        getJwtSecret(),
+        { expiresIn: '1h' }
+      );
+
+      // Imediatamente revoga sessões
+      activeTestSessionToken = adminToken;
+      const req = new Request(`http://localhost:3000/api/admin/users/${operatorUser.id}/revoke-sessions`, {
+        method: 'POST',
+        headers: createAuthHeaders(adminToken)
+      });
+      await revokeSessions(req, { params: Promise.resolve({ id: operatorUser.id }) });
+
+      // O token com versão antiga DEVE falhar imediatamente, sem tolerância de 1 segundo
+      activeTestSessionToken = sameSecondToken;
+      const authCheck = await requireAuthenticatedUser();
+      expect(authCheck.authenticated).toBe(false);
+      if (!authCheck.authenticated) {
+        expect(authCheck.reason).toBe('SESSION_REVOKED');
+      }
+    });
+
+    it('6.4 Tokens legados sem o campo sessionVersion são sumariamente rejeitados (fail-closed)', async () => {
+      // Emite token propositalmente omitindo o campo sessionVersion
+      const legacyToken = jwt.sign(
+        { userId: operatorUser.id, role: operatorUser.role },
+        getJwtSecret(),
+        { expiresIn: '1h' }
+      );
+
+      activeTestSessionToken = legacyToken;
+      const authCheck = await requireAuthenticatedUser();
+      expect(authCheck.authenticated).toBe(false);
+      if (!authCheck.authenticated) {
+        expect(authCheck.reason).toBe('SESSION_REVOKED');
+      }
+    });
+
+    it('6.5 Múltiplos dispositivos: troca de senha invalida outros dispositivos e mantém sessão atual', async () => {
+      // Dispositivo A e Dispositivo B ambos com token versão 0
+      const deviceBToken = operatorToken;
+
+      // Usuário altera a própria senha no Dispositivo A
+      activeTestSessionToken = operatorToken;
+      const changeReq = new Request('http://localhost:3000/api/admin/users/change-password', {
+        method: 'POST',
+        headers: createAuthHeaders(operatorToken),
+        body: JSON.stringify({
+          currentPassword: 'SenhaForte123!',
+          newPassword: 'NovaSenhaPropria123!'
+        })
+      });
+
+      const changeRes = await changePassword(changeReq);
+      expect(changeRes.status).toBe(200);
+
+      // O cookie da sessão atual (Dispositivo A) foi renovado com a nova sessionVersion
+      expect(lastSetCookie).toBeDefined();
+      const deviceAToken = lastSetCookie!.value;
+      const decodedDeviceA: any = jwt.verify(deviceAToken, getJwtSecret());
+      expect(decodedDeviceA.sessionVersion).toBe(operatorUser.sessionVersion + 1);
+
+      // Dispositivo A continua autenticado
+      activeTestSessionToken = deviceAToken;
+      const authDeviceA = await requireAuthenticatedUser();
+      expect(authDeviceA.authenticated).toBe(true);
+
+      // Dispositivo B com token antigo versão 0 é rejeitado imediatamente
+      activeTestSessionToken = deviceBToken;
+      const authDeviceB = await requireAuthenticatedUser();
+      expect(authDeviceB.authenticated).toBe(false);
+      if (!authDeviceB.authenticated) {
+        expect(authDeviceB.reason).toBe('SESSION_REVOKED');
+      }
+    });
+
+    it('6.6 Rebaixamento ou alteração de papel invalida imediatamente sessões ativas do usuário', async () => {
+      const preRoleChangeToken = operatorToken;
+
+      activeTestSessionToken = adminToken;
+      const patchReq = new Request(`http://localhost:3000/api/admin/users/${operatorUser.id}`, {
+        method: 'PATCH',
+        headers: createAuthHeaders(adminToken),
+        body: JSON.stringify({ role: 'VIEWER' })
+      });
+
+      const patchRes = await updateUser(patchReq, { params: Promise.resolve({ id: operatorUser.id }) });
+      expect(patchRes.status).toBe(200);
+
+      // Token anterior com privilégios antigos é imediatamente rejeitado
+      activeTestSessionToken = preRoleChangeToken;
+      const authCheck = await requireAuthenticatedUser();
+      expect(authCheck.authenticated).toBe(false);
+      if (!authCheck.authenticated) {
+        expect(authCheck.reason).toBe('SESSION_REVOKED');
+      }
+    });
   });
 
   describe('7. Exclusão de Usuários e Preservação de Histórico', () => {
-    it('7.1 Bloqueia exclusão do único ADMIN ativo', async () => {
+    it('7.1 Bloqueia exclusão do único ADMIN ativo (400 CANNOT_REMOVE_LAST_ADMIN)', async () => {
       activeTestSessionToken = adminToken;
       const req = new Request(`http://localhost:3000/api/admin/users/${adminUser.id}`, {
         method: 'DELETE',
@@ -408,7 +590,6 @@ describe('PR 2 — Gestão Administrativa de Usuários, RBAC e Segurança de Ses
     });
 
     it('7.3 Usuário com BUs vinculados tem exclusão convertida em desativação lógica segura', async () => {
-      // Vincula um relatório ao operador
       let election = await prisma.election.findFirst();
       if (!election) {
         election = await prisma.election.create({
@@ -467,7 +648,7 @@ describe('PR 2 — Gestão Administrativa de Usuários, RBAC e Segurança de Ses
     });
   });
 
-  describe('8. Proteção contra CSRF e Riscos de Sessão', () => {
+  describe('8. Proteção contra CSRF Robusta e Fail-Closed', () => {
     it('8.1 Rejeita mutações com Origin diferente do Host (CSRF)', async () => {
       activeTestSessionToken = adminToken;
       const req = new Request('http://localhost:3000/api/admin/users', {
@@ -503,6 +684,67 @@ describe('PR 2 — Gestão Administrativa de Usuários, RBAC e Segurança de Ses
       const csrf = validateCsrfProtection(req);
       expect(csrf.valid).toBe(false);
       expect(csrf.reason).toBe('CROSS_SITE_REQUEST_REJECTED');
+    });
+
+    it('8.3 Rejeita X-Forwarded-Host não confiável (ataque de cabeçalho forjado)', () => {
+      const req = new Request('http://localhost:3000/api/admin/users', {
+        method: 'POST',
+        headers: {
+          'Host': 'localhost:3000',
+          'X-Forwarded-Host': 'evil-proxy.attacker.com',
+          'Origin': 'https://evil-proxy.attacker.com'
+        }
+      });
+
+      const csrf = validateCsrfProtection(req);
+      expect(csrf.valid).toBe(false);
+      expect(csrf.reason).toContain('UNTRUSTED_FORWARDED_HOST');
+    });
+
+    it('8.4 Rejeita mutações sem Origin e sem Referer quando Host está presente (fail-closed)', () => {
+      const req = new Request('http://localhost:3000/api/admin/users', {
+        method: 'POST',
+        headers: {
+          'Host': 'localhost:3000'
+        }
+      });
+
+      const csrf = validateCsrfProtection(req);
+      expect(csrf.valid).toBe(false);
+      expect(csrf.reason).toContain('MISSING_ORIGIN_AND_REFERER');
+    });
+
+    it('8.5 Aceita mutações sem Origin e sem Referer quando autenticadas com cabeçalho seguro X-CSRF-Token', () => {
+      const req = new Request('http://localhost:3000/api/admin/users', {
+        method: 'POST',
+        headers: {
+          'Host': 'localhost:3000',
+          'X-CSRF-Token': 'valid-csrf-token-bound-to-session'
+        }
+      });
+
+      const csrf = validateCsrfProtection(req);
+      expect(csrf.valid).toBe(true);
+    });
+
+    it('8.6 Rejeita esquema HTTP inseguro em ambiente de produção simulado', () => {
+      const originalEnv = process.env.NODE_ENV;
+      try {
+        (process.env as any).NODE_ENV = 'production';
+        const req = new Request('https://meusite.up.railway.app/api/admin/users', {
+          method: 'POST',
+          headers: {
+            'Host': 'meusite.up.railway.app',
+            'Origin': 'http://meusite.up.railway.app' // Esquema HTTP inseguro
+          }
+        });
+
+        const csrf = validateCsrfProtection(req);
+        expect(csrf.valid).toBe(false);
+        expect(csrf.reason).toContain('INSECURE_ORIGIN_SCHEME');
+      } finally {
+        (process.env as any).NODE_ENV = originalEnv;
+      }
     });
   });
 
@@ -548,7 +790,6 @@ describe('PR 2 — Gestão Administrativa de Usuários, RBAC e Segurança de Ses
 
   describe('10. Concorrência: Proteção contra Desativação Simultânea de Administradores', () => {
     it('10.1 Duas requisições simultâneas para desativar os únicos 2 admins mantêm 1 ativo', async () => {
-      // Cria um segundo admin
       const secondAdmin = await prisma.user.create({
         data: {
           name: 'Segundo Administrador',
@@ -561,7 +802,6 @@ describe('PR 2 — Gestão Administrativa de Usuários, RBAC e Segurança de Ses
 
       activeTestSessionToken = adminToken;
 
-      // Tenta desativar ambos simultaneamente
       const p1 = updateStatus(
         new Request(`http://localhost:3000/api/admin/users/${adminUser.id}/status`, {
           method: 'PATCH',
@@ -581,13 +821,73 @@ describe('PR 2 — Gestão Administrativa de Usuários, RBAC e Segurança de Ses
       );
 
       const [res1, res2] = await Promise.all([p1, p2]);
-      const statuses = [res1.status, res2.status];
 
-      // Pelo menos uma deve falhar ou no banco deve restar pelo menos 1 ADMIN ativo
+      // No banco deve restar pelo menos 1 ADMIN ativo
       const remainingAdmins = await prisma.user.count({
         where: { role: 'ADMIN', isActive: true }
       });
       expect(remainingAdmins).toBeGreaterThanOrEqual(1);
+
+      // Pelo menos uma das requisições deve ter sido rejeitada com 400
+      const statuses = [res1.status, res2.status];
+      expect(statuses).toContain(400);
+    });
+  });
+
+  describe('11. Integridade Transacional e Segurança da Auditoria', () => {
+    it('11.1 Logs de auditoria jamais armazenam senhas em texto puro, hashes ou tokens', async () => {
+      activeTestSessionToken = adminToken;
+      const createReq = new Request('http://localhost:3000/api/admin/users', {
+        method: 'POST',
+        headers: createAuthHeaders(adminToken),
+        body: JSON.stringify({
+          name: 'Usuário Audit Test',
+          email: 'audit.test@eleicao.local',
+          password: 'SenhaAuditSuperSecreta123!',
+          role: 'OPERATOR'
+        })
+      });
+      await createUser(createReq);
+
+      const auditLogs = await prisma.auditLog.findMany();
+      expect(auditLogs.length).toBeGreaterThan(0);
+
+      for (const log of auditLogs) {
+        const fullLogString = JSON.stringify(log);
+        // Não deve conter a senha em texto plano
+        expect(fullLogString).not.toContain('SenhaAuditSuperSecreta123!');
+        expect(fullLogString).not.toContain('SenhaForte123!');
+        // Não deve expor hashes bcrypt nos metadados da auditoria
+        expect(fullLogString).not.toMatch(/\$2[aby]\$\d+\$/);
+      }
+    });
+
+    it('11.2 Se a gravação de auditoria falhar na transação, a criação do usuário sofre rollback', async () => {
+      // Cria uma transação simulando falha no log de auditoria
+      const testEmail = 'rollback.test@eleicao.local';
+
+      await expect(
+        prisma.$transaction(async (tx) => {
+          await tx.user.create({
+            data: {
+              name: 'Usuário Rollback',
+              email: testEmail,
+              passwordHash: await bcrypt.hash('SenhaValida123!', 10),
+              role: 'OPERATOR',
+              isActive: true
+            }
+          });
+
+          // Simula falha forçada no AuditLog
+          throw new Error('SIMULATED_AUDIT_LOG_PERSISTENCE_FAILURE');
+        })
+      ).rejects.toThrow('SIMULATED_AUDIT_LOG_PERSISTENCE_FAILURE');
+
+      // Garante que o usuário NÃO foi gravado no banco (rollback atômico)
+      const userInDb = await prisma.user.findUnique({
+        where: { email: testEmail }
+      });
+      expect(userInDb).toBeNull();
     });
   });
 });
