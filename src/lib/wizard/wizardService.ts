@@ -934,7 +934,7 @@ export async function saveElectionWizard(userId: string, payload: WizardPayload)
           }
         }
 
-        // 3) Bloquear alterações que comprometam BUs reais vinculados
+        // 3) Bloquear remoção de seções que possuam BUs reais vinculados (erro específico por seção)
         for (const covToRemove of toRemove) {
           const sec = covToRemove.pollingSection;
           const boundBu = await tx.ballotReport.findFirst({
@@ -954,6 +954,25 @@ export async function saveElectionWizard(userId: string, payload: WizardPayload)
               `Não é possível remover a seção ${sec.sectionNumber} (Zona ${sec.zone.zoneNumber}, Município ${sec.zone.municipality.officialCode}) do ${rNum}º Turno, pois ela possui Boletim de Urna real vinculado (status: ${boundBu.status}).`
             );
           }
+        }
+
+        // ITEM 1 DA AUDITORIA: Bloquear alterações de cobertura quando o turno possuir BUs reais vinculados
+        // Permitir apenas reenvio idempotente idêntico (hasCoverageChanges = false)
+        const realBUsCount = await tx.ballotReport.count({
+          where: {
+            electionId: electionId!,
+            roundId,
+            isSimulation: false
+          }
+        });
+
+        const hasCoverageChanges = toRemove.length > 0 || toInsert.length > 0 || toUpdate.length > 0;
+
+        if (realBUsCount > 0 && hasCoverageChanges) {
+          throw new WizardValidationError(
+            'CANNOT_MODIFY_COVERAGE_WITH_REAL_BUS',
+            `O ${rNum}º Turno possui ${realBUsCount} Boletim(ns) de Urna real(is) vinculado(s). Alterações na malha de cobertura (adição, remoção ou alteração de urnas esperadas) estão bloqueadas no assistente para garantir a integridade da apuração.`
+          );
         }
 
         // 4) Remover vínculos obsoletos
@@ -1146,6 +1165,18 @@ export async function activateElectionWizard(
       throw new WizardValidationError('NO_OFFICES_CONFIGURED', 'A eleição precisa de pelo menos 1 cargo em disputa para ser ativada.');
     }
 
+    // ITEM 2 DA AUDITORIA: Se a eleição alvo já estiver ACTIVE com um turno ACTIVE, repetir a ativação é idempotente
+    const alreadyActiveRoundInTarget = target.rounds.find(r => r.status === 'ACTIVE');
+    if (target.status === 'ACTIVE' && alreadyActiveRoundInTarget) {
+      return {
+        success: true,
+        electionId,
+        roundId: alreadyActiveRoundInTarget.id,
+        alreadyActive: true,
+        message: `A eleição '${target.name}' e o ${alreadyActiveRoundInTarget.roundNumber}º Turno já estão ativos. Nenhuma alteração efetuada.`
+      };
+    }
+
     // 3. Verificar Concorrência de Eleição Ativa
     const otherActive = await tx.election.findMany({
       where: {
@@ -1172,6 +1203,10 @@ export async function activateElectionWizard(
       // Nenhuma eleição ARCHIVED permanece com turno operacional ACTIVE
       // Turnos ACTIVE passam para PLANNED, preservando votos, BUs e status FINISHED dos turnos já concluídos
       for (const act of otherActive) {
+        const activeRoundsOfAct = await tx.electionRound.findMany({
+          where: { electionId: act.id, status: 'ACTIVE' }
+        });
+
         await tx.election.update({
           where: { id: act.id },
           data: { status: 'ARCHIVED' }
@@ -1185,32 +1220,77 @@ export async function activateElectionWizard(
           data: { status: 'PLANNED' }
         });
 
-        await tx.auditLog.create({
-          data: {
-            userId,
-            electionId: act.id,
-            action: 'ELECTION_CONTEXT_SWITCH_ARCHIVED',
-            identifiers: `Archived contextually in favor of activating ${electionId}. Active rounds paused to PLANNED.`,
-            result: 'SUCCESS',
-            previousStatus: 'ACTIVE',
-            newStatus: 'ARCHIVED'
-          }
-        });
+        for (const actRound of activeRoundsOfAct) {
+          await tx.auditLog.create({
+            data: {
+              userId,
+              electionId: act.id,
+              roundId: actRound.id,
+              action: 'ELECTION_CONTEXT_SWITCH_ARCHIVED',
+              identifiers: `Archived contextually in favor of activating ${electionId}. Paused Round ${actRound.roundNumber} to PLANNED.`,
+              result: 'SUCCESS',
+              previousStatus: 'ACTIVE',
+              newStatus: 'ARCHIVED',
+              metadata: JSON.stringify({ pausedRoundNumber: actRound.roundNumber, pausedRoundId: actRound.id })
+            }
+          });
+        }
       }
     }
 
-    // 4. Identificar e Ativar o Turno Adequado da Eleição
-    const roundToActivate =
-      target.rounds.find(r => r.status === 'PLANNED') ||
-      target.rounds.find(r => r.roundNumber === 1) ||
-      target.rounds[0];
+    // 4. Identificar e Ativar inequivocamente o Turno Adequado da Eleição
+    let roundToActivate: typeof target.rounds[0] | undefined;
+
+    if (target.status === 'ARCHIVED') {
+      // Retomada de eleição arquivada:
+      // Identificar inequivocamente o turno anteriormente pausado através do log de auditoria
+      const lastPausedLog = await tx.auditLog.findFirst({
+        where: {
+          electionId: target.id,
+          action: 'ELECTION_CONTEXT_SWITCH_ARCHIVED',
+          roundId: { not: null }
+        },
+        orderBy: { createdAt: 'desc' }
+      });
+
+      if (lastPausedLog?.roundId) {
+        roundToActivate = target.rounds.find(
+          r => r.id === lastPausedLog.roundId && r.status !== 'FINISHED'
+        );
+      }
+
+      // Fallback para turno não finalizado se não houver log
+      if (!roundToActivate) {
+        const nonFinishedRounds = target.rounds.filter(r => r.status !== 'FINISHED');
+        roundToActivate = nonFinishedRounds.find(r => r.status === 'PLANNED') || nonFinishedRounds[0];
+      }
+    } else {
+      // Eleição nova (DRAFT): deve iniciar obrigatoriamente pelo 1º Turno (roundNumber 1)
+      // NUNCA ativar automaticamente o 2º turno!
+      const round1 = target.rounds.find(r => r.roundNumber === 1);
+      if (round1 && round1.status === 'PLANNED') {
+        roundToActivate = round1;
+      } else {
+        roundToActivate = target.rounds.find(r => r.status === 'PLANNED');
+      }
+    }
 
     if (!roundToActivate || roundToActivate.status === 'FINISHED') {
       throw new WizardValidationError(
         'ALL_ROUNDS_FINISHED',
-        'Todos os turnos desta eleição já foram finalizados. Não é possível ativá-la.'
+        'Todos os turnos desta eleição já foram finalizados ou não há turno válido disponível para ativação.'
       );
     }
+
+    // Garantir unicidade: nenhum outro turno desta eleição pode estar ACTIVE
+    await tx.electionRound.updateMany({
+      where: {
+        electionId,
+        id: { not: roundToActivate.id },
+        status: 'ACTIVE'
+      },
+      data: { status: 'PLANNED' }
+    });
 
     await tx.election.update({
       where: { id: electionId },
