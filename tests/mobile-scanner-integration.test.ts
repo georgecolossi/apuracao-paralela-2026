@@ -5,6 +5,7 @@ import path from 'path';
 import { POST } from '../src/app/api/scan/route';
 import * as auth from '../src/lib/auth';
 import { generateCsrfToken } from '../src/lib/security/csrf';
+import { MultipartTracker } from '../src/lib/scanner/multipartState';
 
 const prisma = new PrismaClient();
 
@@ -213,6 +214,7 @@ describe('PR 5 — Mobile Scanner: Integração de API, RBAC, CSRF e Multipartes
       const data = await res.json();
       expect(data.status).toBe('PARCIAL');
       expect(data.partsRead).toBe(1);
+      expect(data.envelopeKey).toBe('ENV-2110-AC-1392-9-110-2250280');
     });
   });
 
@@ -251,6 +253,8 @@ describe('PR 5 — Mobile Scanner: Integração de API, RBAC, CSRF e Multipartes
       expect(data2.partIndex).toBe(2);
       expect(data2.totalParts).toBe(2);
       expect(data2.partsRead).toBe(1);
+      // Limitação documentada: Parte 2 isolada de VRQR 6.0 não possui cabeçalho eleitoral completo
+      expect(data2.envelopeKey).toBeNull();
 
       // Etapa 2: Envia Parte 1 (completa o envelope)
       vi.spyOn(auth, 'requireAuthenticatedUser').mockResolvedValueOnce({
@@ -335,6 +339,48 @@ describe('PR 5 — Mobile Scanner: Integração de API, RBAC, CSRF e Multipartes
       const data2 = await res2.json();
       // Não duplica: continua marcando partsRead = 1
       expect(data2.partsRead).toBe(1);
+    });
+
+    it('2.3 Retorno de envelopeKey oficial em resposta PARCIAL e integração com MultipartTracker', async () => {
+      const sessionId = `ENVELOPE-INT-${Date.now()}`;
+      vi.spyOn(auth, 'requireAuthenticatedUser').mockResolvedValueOnce({
+        authenticated: true,
+        user: { userId: operatorUser.id, role: 'OPERATOR', sessionVersion: operatorUser.sessionVersion }
+      } as any);
+
+      const validToken = generateCsrfToken(operatorUser.id, operatorUser.sessionVersion);
+
+      const reqPart1 = new Request('http://localhost/api/scan', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Origin: 'http://localhost',
+          Host: 'localhost',
+          'X-CSRF-Token': validToken
+        },
+        body: JSON.stringify({
+          content: twoPartPayloads[0], // Parte 1 oficial do TSE
+          sessionId
+        })
+      });
+
+      const res = await POST(reqPart1);
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.status).toBe('PARCIAL');
+      expect(data.envelopeKey).toBe('ENV-2110-AC-1392-9-110-2250280');
+
+      // Entrega a resposta real da API ao MultipartTracker
+      const tracker = new MultipartTracker();
+      const reg1 = tracker.registerPart(data.partIndex, data.totalParts, data.envelopeKey);
+      expect(reg1.success).toBe(true);
+      expect(tracker.getEnvelopeKey()).toBe('ENV-2110-AC-1392-9-110-2250280');
+
+      // Tenta registrar fragmento de outro envelope (ex: outra urna/seção)
+      const regMismatch = tracker.registerPart(2, 2, 'ENV-2110-AC-1392-9-999-9999999');
+      expect(regMismatch.success).toBe(false);
+      expect(regMismatch.errorCode).toBe('BALLOT_ENVELOPE_MISMATCH');
+      expect(regMismatch.errorMessage).toContain('outro boletim');
     });
   });
 });

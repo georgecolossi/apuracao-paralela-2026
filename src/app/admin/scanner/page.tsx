@@ -145,10 +145,10 @@ export default function ScannerMobilePage() {
 
   /**
    * Envia o frame/código lido para o backend homologado (/api/scan).
-   * Totalmente protegido contra stale closures e respostas tardias de sessões abandonadas.
+   * Totalmente protegido contra stale closures, race conditions de CSRF e respostas tardias de sessões abandonadas.
    */
   const processQrContent = async (rawDecodedText: string) => {
-    // 1. Concorrência mútua estrita: descarta se já houver processamento ativo
+    // 1. Concorrência mútua estrita síncrona: descarta se já houver processamento ativo
     if (isProcessingRef.current) return;
 
     const trimmed = (rawDecodedText || '').trim();
@@ -156,41 +156,55 @@ export default function ScannerMobilePage() {
       return;
     }
 
-    // 2. Validação de sessão vigente via Ref
-    const currentSession = sessionIdRef.current;
-    if (!currentSession) {
+    // 2. Captura SÍNCRONA de sessão e geração ANTES de qualquer await
+    const reqSessionId = sessionIdRef.current;
+    const reqGeneration = generationIdRef.current;
+    if (!reqSessionId) {
       setStatusMessage('Aguardando inicialização da sessão...');
       return;
     }
 
+    // 3. Deduplicação preliminar
     if (!deduplicatorRef.current.shouldProcess(trimmed)) {
       return;
     }
 
-    // 3. Validação de token CSRF mais recente via Ref
-    const currentCsrf = csrfTokenRef.current || (await ensureCsrfToken());
-    if (!currentCsrf) {
-      setErrorDetails({
-        title: 'Segurança CSRF',
-        message: 'Aguardando validação da credencial de segurança. Tente novamente em instantes.',
-        isRetryable: true
-      });
-      setStatusMessage('Aguardando credencial de segurança...');
-      return;
-    }
-
-    // 4. Trava atômica e captura de geração monotônica
+    // 4. Adquire a trava de processamento de forma SÍNCRONA, antes de ensureCsrfToken()
     isProcessingRef.current = true;
     setIsProcessing(true);
     setErrorDetails(null);
-    setStatusMessage('Validando QR Code recebido...');
 
-    const reqGeneration = generationIdRef.current;
-    const reqSessionId = currentSession;
-    const abortController = new AbortController();
-    activeAbortControllerRef.current = abortController;
+    let abortController: AbortController | null = null;
 
     try {
+      // 5. Validação/obtenção de token CSRF mais recente via Ref ou fetch
+      const currentCsrf = csrfTokenRef.current || (await ensureCsrfToken());
+
+      // 6. Confirmação pós-await do CSRF: geração e sessão DEVEM ser as mesmas capturadas no início
+      if (generationIdRef.current !== reqGeneration || sessionIdRef.current !== reqSessionId) {
+        // Se houve reinício durante a obtenção do CSRF, limpa deduplicador para permitir nova leitura e aborta
+        deduplicatorRef.current.clearIfMatches(trimmed);
+        return;
+      }
+
+      // 7. Política Fail-Closed: se o token CSRF não pôde ser obtido
+      if (!currentCsrf) {
+        // Limpa deduplicador para permitir nova tentativa com o mesmo QR Code
+        deduplicatorRef.current.clearIfMatches(trimmed);
+        setErrorDetails({
+          title: 'Segurança CSRF',
+          message: 'Aguardando validação da credencial de segurança. Tente novamente em instantes.',
+          isRetryable: true
+        });
+        setStatusMessage('Aguardando credencial de segurança...');
+        return;
+      }
+
+      // 8. Trava fixada e despacho da requisição HTTP com AbortController
+      setStatusMessage('Validando QR Code recebido...');
+      abortController = new AbortController();
+      activeAbortControllerRef.current = abortController;
+
       const res = await fetch('/api/scan', {
         method: 'POST',
         headers: {
@@ -278,7 +292,7 @@ export default function ScannerMobilePage() {
       }
     } catch (err: any) {
       // Se a requisição foi abortada pelo reset da sessão, descarta sem exibir erro
-      if (err?.name === 'AbortError' || abortController.signal.aborted) {
+      if (err?.name === 'AbortError' || (abortController && abortController.signal.aborted)) {
         return;
       }
 
@@ -301,10 +315,10 @@ export default function ScannerMobilePage() {
       }, 2500);
     } finally {
       // Limpa abort controller se ainda for este
-      if (activeAbortControllerRef.current === abortController) {
+      if (abortController && activeAbortControllerRef.current === abortController) {
         activeAbortControllerRef.current = null;
       }
-      // Só libera processamento se a geração não tiver sido reiniciada externamente
+      // O finally de uma operação abandonada JAMAIS libera a trava de outra geração
       if (generationIdRef.current === reqGeneration) {
         isProcessingRef.current = false;
         setIsProcessing(false);

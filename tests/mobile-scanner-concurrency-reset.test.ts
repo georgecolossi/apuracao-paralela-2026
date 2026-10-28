@@ -14,8 +14,20 @@ class ScannerPageControllerHarness {
   public isProcessingRef = { current: false };
 
   public deduplicator = {
-    shouldProcess: vi.fn((_content?: string) => true),
-    clear: vi.fn()
+    lastScanned: null as string | null,
+    shouldProcess: vi.fn(function(this: any, content?: string) {
+      if (!content || this.lastScanned === content) return false;
+      this.lastScanned = content;
+      return true;
+    }),
+    clearIfMatches: vi.fn(function(this: any, content: string) {
+      if (this.lastScanned === content) {
+        this.lastScanned = null;
+      }
+    }),
+    clear: vi.fn(function(this: any) {
+      this.lastScanned = null;
+    })
   };
 
   public multipartTracker = new MultipartTracker();
@@ -85,6 +97,7 @@ class ScannerPageControllerHarness {
     }) => Promise<any>,
     csrfResolver?: () => Promise<string>
   ): Promise<boolean> {
+    // 1. Concorrência mútua estrita síncrona
     if (this.isProcessingRef.current) {
       return false;
     }
@@ -94,37 +107,55 @@ class ScannerPageControllerHarness {
       return false;
     }
 
-    const currentSession = this.sessionIdRef.current;
-    if (!currentSession) {
+    // 2. Captura SÍNCRONA de sessão e geração ANTES de qualquer await
+    const reqSessionId = this.sessionIdRef.current;
+    const reqGeneration = this.generationIdRef.current;
+    if (!reqSessionId) {
       this.statusMessages.push('Aguardando inicialização da sessão...');
       return false;
     }
 
+    // 3. Deduplicação preliminar
     if (!this.deduplicator.shouldProcess(trimmed)) {
       return false;
     }
 
-    const currentCsrf = this.csrfTokenRef.current || (await this.ensureCsrfToken(csrfResolver));
-    if (!currentCsrf) {
-      this.errorMessages.push('Segurança CSRF');
-      this.statusMessages.push('Aguardando credencial de segurança...');
-      return false;
-    }
-
+    // 4. Adquire a trava de processamento de forma SÍNCRONA, antes de ensureCsrfToken()
     this.isProcessingRef.current = true;
-    const reqGeneration = this.generationIdRef.current;
-    const reqSessionId = currentSession;
-    const abortController = new AbortController();
-    this.activeAbortControllerRef.current = abortController;
-
-    this.outboundRequests.push({
-      sessionId: reqSessionId,
-      csrfToken: currentCsrf,
-      generation: reqGeneration,
-      content: trimmed
-    });
+    let abortController: AbortController | null = null;
 
     try {
+      // 5. Obtém ou aguarda token CSRF
+      const currentCsrf = this.csrfTokenRef.current || (await this.ensureCsrfToken(csrfResolver));
+
+      // 6. Confirmação pós-await do CSRF: geração e sessão DEVEM ser as mesmas capturadas no início
+      if (
+        this.generationIdRef.current !== reqGeneration ||
+        this.sessionIdRef.current !== reqSessionId
+      ) {
+        this.deduplicator.clearIfMatches(trimmed);
+        return false;
+      }
+
+      // 7. Política Fail-Closed: se o token CSRF não pôde ser obtido
+      if (!currentCsrf) {
+        this.deduplicator.clearIfMatches(trimmed);
+        this.errorMessages.push('Segurança CSRF');
+        this.statusMessages.push('Aguardando credencial de segurança...');
+        return false;
+      }
+
+      // 8. Despacho HTTP com AbortController
+      abortController = new AbortController();
+      this.activeAbortControllerRef.current = abortController;
+
+      this.outboundRequests.push({
+        sessionId: reqSessionId,
+        csrfToken: currentCsrf,
+        generation: reqGeneration,
+        content: trimmed
+      });
+
       const data = await fetchBackend({
         content: trimmed,
         sessionId: reqSessionId,
@@ -156,7 +187,7 @@ class ScannerPageControllerHarness {
       }
       return true;
     } catch (err: any) {
-      if (err?.name === 'AbortError' || abortController.signal.aborted) {
+      if (err?.name === 'AbortError' || (abortController && abortController.signal.aborted)) {
         return false;
       }
       if (
@@ -165,12 +196,14 @@ class ScannerPageControllerHarness {
       ) {
         return false;
       }
+      this.deduplicator.clearIfMatches(trimmed);
       this.errorMessages.push('Falha de Conexão');
       return false;
     } finally {
-      if (this.activeAbortControllerRef.current === abortController) {
+      if (abortController && this.activeAbortControllerRef.current === abortController) {
         this.activeAbortControllerRef.current = null;
       }
+      // O finally de uma operação abandonada JAMAIS libera a trava de outra geração
       if (this.generationIdRef.current === reqGeneration) {
         this.isProcessingRef.current = false;
       }
@@ -251,6 +284,82 @@ describe('PR 5 — Mobile Scanner: Concorrência, Gerações Monotônicas e Elim
       expect(harness.outboundRequests.length).toBe(0);
       expect(harness.errorMessages).toContain('Segurança CSRF');
       expect(harness.executedRedirects.length).toBe(0);
+    });
+
+    it('1.4 Reinício durante Promise de CSRF pendente: descarta requisição da geração antiga sem chamar backend, preserva nova sessão', async () => {
+      let resolveDelayedCsrf!: (val: string) => void;
+      const delayedCsrfPromise = new Promise<string>((resolve) => {
+        resolveDelayedCsrf = resolve;
+      });
+
+      // Leitura na Geração 1 inicia com CSRF pendente
+      const p1 = harness.processQrContent(
+        'QRBU:payload-pending-csrf',
+        async () => ({ status: 'COMPLETO', reportId: 'stale-1' }),
+        () => delayedCsrfPromise
+      );
+
+      // Trava de processamento foi adquirida sincronamente antes do await
+      expect(harness.isProcessingRef.current).toBe(true);
+
+      // Operador clica em Reset: nova sessão e nova geração
+      const newSession = harness.generateNewSession();
+      expect(harness.generationIdRef.current).toBe(2);
+      expect(harness.isProcessingRef.current).toBe(false);
+
+      // Agora a promise de CSRF da Geração 1 finalmente resolve tardiamente
+      resolveDelayedCsrf('resolved-token-late');
+      const res1 = await p1;
+
+      // Operação antiga foi descartada antes do despacho HTTP!
+      expect(res1).toBe(false);
+      expect(harness.outboundRequests.length).toBe(0);
+      expect(harness.executedRedirects.length).toBe(0);
+
+      // Nova leitura na Geração 2 agora ocorre com sucesso utilizando o token resolvido
+      const res2 = await harness.processQrContent(
+        'QRBU:payload-session-2',
+        async () => ({ status: 'COMPLETO', reportId: 'valid-rep-gen2' })
+      );
+
+      expect(res2).toBe(true);
+      expect(harness.outboundRequests.length).toBe(1);
+      expect(harness.outboundRequests[0].sessionId).toBe(newSession);
+      expect(harness.outboundRequests[0].csrfToken).toBe('resolved-token-late');
+      expect(harness.executedRedirects).toEqual(['/admin/conferir/valid-rep-gen2']);
+    });
+
+    it('1.5 Falha inicial de CSRF limpa deduplicador e permite releitura imediata com sucesso do mesmo QR Code', async () => {
+      // 1ª tentativa: endpoint de CSRF falha (ex: rede instável)
+      const failingCsrf = async () => {
+        throw new Error('CSRF fetch failed');
+      };
+
+      const res1 = await harness.processQrContent(
+        'QRBU:same-qr-payload',
+        async () => ({ status: 'COMPLETO', reportId: 'fail' }),
+        failingCsrf
+      );
+
+      expect(res1).toBe(false);
+      expect(harness.outboundRequests.length).toBe(0);
+      expect(harness.errorMessages).toContain('Segurança CSRF');
+      expect(harness.isProcessingRef.current).toBe(false);
+
+      // Token CSRF é restabelecido
+      harness.csrfTokenRef.current = 'token-recovered-ok';
+
+      // 2ª tentativa: operador escaneia o EXATAMENTE MESMO QR Code
+      const res2 = await harness.processQrContent(
+        'QRBU:same-qr-payload',
+        async () => ({ status: 'COMPLETO', reportId: 'recovered-rep-ok' })
+      );
+
+      // O deduplicador NÃO deve bloquear a releitura porque a tentativa anterior falhou antes do despacho HTTP
+      expect(res2).toBe(true);
+      expect(harness.outboundRequests.length).toBe(1);
+      expect(harness.outboundRequests[0].content).toBe('QRBU:same-qr-payload');
+      expect(harness.executedRedirects).toEqual(['/admin/conferir/recovered-rep-ok']);
     });
   });
 
