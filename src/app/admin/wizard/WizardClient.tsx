@@ -91,6 +91,7 @@ interface WizardState {
     partyNumber: string;
   }>;
   coverage: Array<{
+    roundNumber?: number;
     municipalityOfficialCode: string;
     zoneNumber: string;
     sectionNumber: string;
@@ -101,6 +102,7 @@ interface WizardState {
   operators: Array<{
     email: string;
     name: string;
+    initialPassword?: string;
   }>;
 }
 
@@ -153,6 +155,8 @@ export default function WizardClient({ initialElectionId }: { initialElectionId?
   // Modal de ativação
   const [showActivateModal, setShowActivateModal] = useState<boolean>(false);
   const [confirmationInput, setConfirmationInput] = useState<string>('');
+  const [allowDeactivateCurrent, setAllowDeactivateCurrent] = useState<boolean>(false);
+  const [conflictActiveElection, setConflictActiveElection] = useState<{ activeElectionId: string; activeElectionName: string; activeElectionYear: number } | null>(null);
 
   // Importação externa
   const [importJsonText, setImportJsonText] = useState<string>('');
@@ -302,8 +306,8 @@ export default function WizardClient({ initialElectionId }: { initialElectionId?
     }
   };
 
-  // Salvar Rascunho ou Dados do Wizard
-  const handleSave = async (status: 'DRAFT' | 'READY' = 'DRAFT') => {
+  // Salvar Rascunho
+  const handleSave = async (status: string = 'DRAFT') => {
     try {
       setSaving(true);
       setErrorMsg(null);
@@ -361,12 +365,17 @@ export default function WizardClient({ initialElectionId }: { initialElectionId?
         },
         body: JSON.stringify({
           electionId: formData.electionId,
-          confirmationText: confirmationInput
+          confirmationText: confirmationInput,
+          allowDeactivateCurrent
         })
       });
 
       const data = await res.json();
       if (!res.ok) {
+        if (data.error === 'ACTIVE_ELECTION_CONFLICT') {
+          setConflictActiveElection(data.details);
+          throw new Error(data.message);
+        }
         throw new Error(data.message || data.error || 'Erro ao ativar a eleição.');
       }
 
@@ -1223,7 +1232,7 @@ export default function WizardClient({ initialElectionId }: { initialElectionId?
 
               <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
                 {formData.coverage.map((sec, idx) => (
-                  <div key={idx} className="p-3 bg-slate-50 rounded-xl border border-slate-200 grid grid-cols-1 sm:grid-cols-6 gap-2 items-center text-xs">
+                  <div key={idx} className="p-3 bg-slate-50 rounded-xl border border-slate-200 grid grid-cols-1 sm:grid-cols-7 gap-2 items-center text-xs">
                     <div>
                       <label className="block text-[10px] text-slate-500">Muni. TSE</label>
                       <input
@@ -1236,6 +1245,24 @@ export default function WizardClient({ initialElectionId }: { initialElectionId?
                         }}
                         className="w-full px-2 py-1 rounded border bg-white"
                       />
+                    </div>
+
+                    <div>
+                      <label className="block text-[10px] text-slate-500">Turno</label>
+                      <select
+                        value={sec.roundNumber ?? ''}
+                        onChange={(e) => {
+                          const updated = [...formData.coverage];
+                          updated[idx].roundNumber = e.target.value ? Number(e.target.value) : undefined;
+                          setFormData({ ...formData, coverage: updated });
+                        }}
+                        className="w-full px-2 py-1 rounded border bg-white"
+                      >
+                        <option value="">Ambos</option>
+                        {formData.rounds.map(r => (
+                          <option key={r.roundNumber} value={r.roundNumber}>{r.roundNumber}º Turno</option>
+                        ))}
+                      </select>
                     </div>
 
                     <div>
@@ -1267,7 +1294,7 @@ export default function WizardClient({ initialElectionId }: { initialElectionId?
                     </div>
 
                     <div>
-                      <label className="block text-[10px] text-slate-500">Urnas Esperadas</label>
+                      <label className="block text-[10px] text-slate-500">Urnas</label>
                       <input
                         type="number"
                         min="0"
@@ -1376,6 +1403,21 @@ export default function WizardClient({ initialElectionId }: { initialElectionId?
                         onChange={(e) => {
                           const updated = [...formData.operators];
                           updated[idx].name = e.target.value;
+                          setFormData({ ...formData, operators: updated });
+                        }}
+                        className="w-full px-2 py-1.5 rounded border bg-white"
+                      />
+                    </div>
+
+                    <div className="flex-1 w-full">
+                      <label className="block text-[10px] text-slate-500">Senha Inicial (Opcional - Mín. 8 caracteres)</label>
+                      <input
+                        type="password"
+                        placeholder="Deixe vazio para conta inativa"
+                        value={op.initialPassword || ''}
+                        onChange={(e) => {
+                          const updated = [...formData.operators];
+                          updated[idx].initialPassword = e.target.value;
                           setFormData({ ...formData, operators: updated });
                         }}
                         className="w-full px-2 py-1.5 rounded border bg-white"
@@ -1522,6 +1564,30 @@ export default function WizardClient({ initialElectionId }: { initialElectionId?
               </div>
             </div>
 
+            {conflictActiveElection && (
+              <div className="p-3 bg-amber-50 rounded-2xl border border-amber-200 text-xs text-amber-900 space-y-2">
+                <div className="font-bold flex items-center gap-1.5 text-amber-800">
+                  <AlertTriangle className="w-4 h-4 text-amber-600" />
+                  Conflito: Eleição Concorrente Ativa
+                </div>
+                <p>
+                  A eleição <strong>"{conflictActiveElection.activeElectionName}" ({conflictActiveElection.activeElectionYear})</strong> está ativa no momento.
+                </p>
+                <div className="flex items-center gap-2 pt-1">
+                  <input
+                    type="checkbox"
+                    id="allow-deactivate"
+                    checked={allowDeactivateCurrent}
+                    onChange={(e) => setAllowDeactivateCurrent(e.target.checked)}
+                    className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <label htmlFor="allow-deactivate" className="font-semibold text-slate-800 cursor-pointer">
+                    Autorizo pausar/arquivar a eleição anterior para ativar esta
+                  </label>
+                </div>
+              </div>
+            )}
+
             <div className="p-3 bg-slate-50 rounded-2xl border border-slate-200 text-xs text-slate-700 space-y-2">
               <p>Para confirmar, digite exatamente a frase abaixo:</p>
               <div className="p-2 bg-white rounded-lg border border-slate-200 font-mono text-center font-bold text-slate-900">
@@ -1539,7 +1605,11 @@ export default function WizardClient({ initialElectionId }: { initialElectionId?
             <div className="flex items-center justify-end gap-2 pt-2">
               <button
                 type="button"
-                onClick={() => setShowActivateModal(false)}
+                onClick={() => {
+                  setShowActivateModal(false);
+                  setConflictActiveElection(null);
+                  setAllowDeactivateCurrent(false);
+                }}
                 className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100"
               >
                 Cancelar
@@ -1547,7 +1617,7 @@ export default function WizardClient({ initialElectionId }: { initialElectionId?
 
               <button
                 type="button"
-                disabled={!validateAdminConfirmation(confirmationInput, 'ATIVAR ELEIÇÃO') || activating}
+                disabled={!validateAdminConfirmation(confirmationInput, 'ATIVAR ELEIÇÃO') || (conflictActiveElection !== null && !allowDeactivateCurrent) || activating}
                 onClick={handleActivate}
                 className="px-5 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white flex items-center gap-1.5 transition-colors"
               >

@@ -38,8 +38,9 @@ export async function POST(req: Request) {
     const result = validateAndParseTseImport(payload);
     return NextResponse.json(result);
   } catch (error: any) {
+    console.error('[WIZARD_IMPORT_TSE_ERROR]', error);
     return NextResponse.json(
-      { error: 'INTERNAL_ERROR', message: error.message || 'Erro ao processar arquivo do TSE.' },
+      { error: 'INTERNAL_SERVER_ERROR', message: 'Ocorreu um erro interno ao processar o arquivo do TSE.' },
       { status: 500 }
     );
   }

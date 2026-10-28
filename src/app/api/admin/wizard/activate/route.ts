@@ -5,6 +5,7 @@ import {
   activateElectionWizard,
   WizardValidationError
 } from '@/lib/wizard/wizardService';
+import { ElectionInvariantError } from '@/lib/validation/electionContext';
 
 export const dynamic = 'force-dynamic';
 
@@ -38,7 +39,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'INVALID_JSON', message: 'Corpo da requisição deve ser um JSON válido.' }, { status: 400 });
     }
 
-    const { electionId, confirmationText } = payload || {};
+    const { electionId, confirmationText, allowDeactivateCurrent } = payload || {};
     if (!electionId || !confirmationText) {
       return NextResponse.json(
         { error: 'MISSING_FIELDS', message: 'ID da eleição e texto de confirmação são obrigatórios.' },
@@ -46,7 +47,9 @@ export async function POST(req: Request) {
       );
     }
 
-    const result = await activateElectionWizard(auth.user.userId, electionId, confirmationText);
+    const result = await activateElectionWizard(auth.user.userId, electionId, confirmationText, {
+      allowDeactivateCurrent: Boolean(allowDeactivateCurrent)
+    });
     return NextResponse.json(result);
   } catch (error: any) {
     if (error instanceof WizardValidationError) {
@@ -56,8 +59,16 @@ export async function POST(req: Request) {
       );
     }
 
+    if (error instanceof ElectionInvariantError) {
+      return NextResponse.json(
+        { error: error.code, message: error.message, details: error.details },
+        { status: 400 }
+      );
+    }
+
+    console.error('[WIZARD_ACTIVATE_ERROR]', error);
     return NextResponse.json(
-      { error: 'INTERNAL_ERROR', message: error.message || 'Erro ao ativar a eleição.' },
+      { error: 'INTERNAL_SERVER_ERROR', message: 'Ocorreu um erro interno ao ativar a eleição.' },
       { status: 500 }
     );
   }

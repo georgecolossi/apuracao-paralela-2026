@@ -6,6 +6,7 @@ import {
   saveElectionWizard,
   WizardValidationError
 } from '@/lib/wizard/wizardService';
+import { ElectionInvariantError } from '@/lib/validation/electionContext';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,8 +27,9 @@ export async function GET(req: Request) {
     const data = await getWizardMetadata(electionId);
     return NextResponse.json(data);
   } catch (error: any) {
+    console.error('[WIZARD_GET_ERROR]', error);
     return NextResponse.json(
-      { error: 'INTERNAL_ERROR', message: error.message || 'Erro ao carregar dados do assistente.' },
+      { error: 'INTERNAL_SERVER_ERROR', message: 'Ocorreu um erro interno ao carregar os dados do assistente.' },
       { status: 500 }
     );
   }
@@ -73,8 +75,16 @@ export async function POST(req: Request) {
       );
     }
 
+    if (error instanceof ElectionInvariantError) {
+      return NextResponse.json(
+        { error: error.code, message: error.message, details: error.details },
+        { status: 400 }
+      );
+    }
+
+    console.error('[WIZARD_POST_ERROR]', error);
     return NextResponse.json(
-      { error: 'INTERNAL_ERROR', message: error.message || 'Erro ao processar dados do assistente.' },
+      { error: 'INTERNAL_SERVER_ERROR', message: 'Ocorreu um erro interno ao processar os dados do assistente.' },
       { status: 500 }
     );
   }

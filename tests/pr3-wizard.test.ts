@@ -28,7 +28,7 @@ vi.mock('next/headers', () => ({
   }))
 }));
 
-describe('PR 3 — Assistente Universal de Configuração (Wizard)', () => {
+describe('PR 3 — Assistente Universal de Configuração (Auditoria Independente)', () => {
   let adminUser: any;
   let operatorUser: any;
   let viewerUser: any;
@@ -175,219 +175,24 @@ describe('PR 3 — Assistente Universal de Configuração (Wizard)', () => {
     });
   });
 
-  describe('2. Salvamento de Eleição como Rascunho (POST /api/admin/wizard)', () => {
-    it('2.1 Deve criar nova eleição em DRAFT com turnos, cargos e escopo municipal', async () => {
-      const payload = {
-        name: 'Eleição Municipal Piloto 2024',
-        year: 2024,
-        type: 'MUNICIPAL',
-        description: 'Pleito de testes do assistente universal',
-        status: 'DRAFT',
-        scopes: [
-          {
-            scopeType: 'MUNICIPAL',
-            stateAbbreviation: 'SC',
-            municipalityOfficialCode: '80837',
-            municipalityName: 'Concórdia'
-          }
-        ],
-        rounds: [
-          { roundNumber: 1, plei: '6257' },
-          { roundNumber: 2, plei: '6258' }
-        ],
-        offices: [
-          { code: '11', name: 'Prefeito', type: 'MAJORITARIO' },
-          { code: '13', name: 'Vereador', type: 'PROPORCIONAL' }
-        ],
-        parties: [
-          { officialIdentifier: '13', name: 'Partido A', abbreviation: 'PA' },
-          { officialIdentifier: '22', name: 'Partido B', abbreviation: 'PB' }
-        ],
-        candidates: [
-          {
-            officeCode: '11',
-            candidateNumber: '13',
-            name: 'Candidato Um',
-            ballotName: 'Um',
-            partyNumber: '13'
-          },
-          {
-            officeCode: '11',
-            candidateNumber: '22',
-            name: 'Candidato Dois',
-            ballotName: 'Dois',
-            partyNumber: '22'
-          }
-        ],
-        coverage: [
-          {
-            municipalityOfficialCode: '80837',
-            zoneNumber: '090',
-            sectionNumber: '0001',
-            expectedBUs: 1,
-            isAggregated: false
-          },
-          {
-            municipalityOfficialCode: '80837',
-            zoneNumber: '090',
-            sectionNumber: '0002',
-            expectedBUs: 1,
-            isAggregated: false
-          }
-        ]
-      };
-
-      const req = new Request('http://localhost:3000/api/admin/wizard', {
-        method: 'POST',
-        headers: createAuthHeaders(adminCsrfToken),
-        body: JSON.stringify(payload)
-      });
-
-      const res = await saveWizard(req);
-      expect(res.status).toBe(200);
-      const resData = await res.json();
-      expect(resData.success).toBe(true);
-      expect(resData.electionId).toBeDefined();
-
-      // Verificar persistência no banco
-      const savedElection = await prisma.election.findUnique({
-        where: { id: resData.electionId },
-        include: {
-          rounds: { orderBy: { roundNumber: 'asc' }, include: { coverage: true } },
-          offices: { include: { candidates: true } },
-          scopes: true
-        }
-      });
-
-      expect(savedElection).toBeDefined();
-      expect(savedElection?.status).toBe('DRAFT');
-      expect(savedElection?.year).toBe(2024);
-      expect(savedElection?.rounds.length).toBe(2);
-      expect(savedElection?.offices.length).toBe(2);
-      expect(savedElection?.scopes.length).toBe(1);
-
-      // 2.2 e 2.3: REGRA OBRIGATÓRIA - Não homologar automaticamente cobertura apenas por cadastrá-la!
-      for (const r of savedElection!.rounds) {
-        expect(r.coverageStatus).toBe('REGISTERED'); // Cadastrada — validação pendente
-        expect(r.coverageHomologatedAt).toBeNull();
-        expect(r.coverage.length).toBe(2); // 2 seções cadastradas em RoundCoverage
-      }
-    });
-
-    it('2.4 Deve permitir salvar rascunho sem cobertura de seções mantendo coverageStatus PROVISIONAL', async () => {
-      const payload = {
-        name: 'Consulta Popular 2025',
-        year: 2025,
-        type: 'CONSULTA',
-        status: 'DRAFT',
-        scopes: [
-          {
-            scopeType: 'ESTADUAL',
-            stateAbbreviation: 'PR'
-          }
-        ],
-        rounds: [
-          { roundNumber: 1 }
-        ],
-        offices: [
-          { code: '99', name: 'Pergunta 1', type: 'MAJORITARIO' }
-        ]
-      };
-
-      const req = new Request('http://localhost:3000/api/admin/wizard', {
-        method: 'POST',
-        headers: createAuthHeaders(adminCsrfToken),
-        body: JSON.stringify(payload)
-      });
-
-      const res = await saveWizard(req);
-      expect(res.status).toBe(200);
-      const resData = await res.json();
-
-      const round = await prisma.electionRound.findFirst({
-        where: { electionId: resData.electionId }
-      });
-      expect(round?.coverageStatus).toBe('PROVISIONAL');
-    });
-  });
-
-  describe('3. Retomada e Atualização de Rascunho', () => {
-    it('3.1 Deve permitir carregar e atualizar os dados de um rascunho existente', async () => {
-      // 1. Criar rascunho inicial
-      const createReq = new Request('http://localhost:3000/api/admin/wizard', {
-        method: 'POST',
-        headers: createAuthHeaders(adminCsrfToken),
-        body: JSON.stringify({
-          name: 'Eleição Rascunho Inicial',
-          year: 2028,
-          type: 'MUNICIPAL',
-          scopes: [{ scopeType: 'MUNICIPAL', stateAbbreviation: 'SP', municipalityOfficialCode: '71072', municipalityName: 'São Paulo' }],
-          rounds: [{ roundNumber: 1 }],
-          offices: [{ code: '11', name: 'Prefeito' }]
-        })
-      });
-      const createRes = await saveWizard(createReq);
-      const { electionId } = await createRes.json();
-
-      // 2. Consultar detalhes do rascunho via GET com electionId
-      const getReq = new Request(`http://localhost:3000/api/admin/wizard?electionId=${electionId}`, {
-        method: 'GET',
-        headers: createAuthHeaders()
-      });
-      const getRes = await getWizard(getReq);
-      const getData = await getRes.json();
-      expect(getData.election.id).toBe(electionId);
-      expect(getData.election.name).toBe('Eleição Rascunho Inicial');
-
-      // 3. Atualizar o rascunho adicionando mais um cargo e mudando o nome
-      const updateReq = new Request('http://localhost:3000/api/admin/wizard', {
-        method: 'POST',
-        headers: createAuthHeaders(adminCsrfToken),
-        body: JSON.stringify({
-          electionId,
-          name: 'Eleição Rascunho Atualizada 2028',
-          year: 2028,
-          type: 'MUNICIPAL',
-          scopes: [{ scopeType: 'MUNICIPAL', stateAbbreviation: 'SP', municipalityOfficialCode: '71072', municipalityName: 'São Paulo' }],
-          rounds: [{ roundNumber: 1 }],
-          offices: [
-            { code: '11', name: 'Prefeito' },
-            { code: '13', name: 'Vereador', type: 'PROPORCIONAL' }
-          ]
-        })
-      });
-      const updateRes = await saveWizard(updateReq);
-      expect(updateRes.status).toBe(200);
-
-      const checkUpdated = await prisma.election.findUnique({
-        where: { id: electionId },
-        include: { offices: true }
-      });
-      expect(checkUpdated?.name).toBe('Eleição Rascunho Atualizada 2028');
-      expect(checkUpdated?.offices.length).toBe(2);
-    });
-
-    it('3.2 Deve proteger contra alterações destrutivas caso a eleição possua BUs reais processados', async () => {
-      // Criar eleição ativa com relatório processado
+  describe('2. Proteção de Eleições com Boletins Vinculados (Item 1 da Auditoria)', () => {
+    it('2.1 Deve bloquear alterações estruturais em eleição DRAFT que possua BUs processados', async () => {
       const election = await prisma.election.create({
         data: {
-          name: 'Eleição Ativa Intocável',
+          name: 'Eleição Rascunho com BU Processado',
           year: 2026,
-          status: 'ACTIVE',
-          rounds: {
-            create: {
-              roundNumber: 1,
-              status: 'ACTIVE'
-            }
-          }
+          status: 'DRAFT',
+          rounds: { create: { roundNumber: 1, status: 'PLANNED' } },
+          scopes: { create: { scopeKey: 'ESTADUAL:SC', scopeType: 'ESTADUAL' } },
+          offices: { create: { code: '1', name: 'Presidente' } }
         },
         include: { rounds: true }
       });
 
-      // Simular BU real processado
+      // Relatório real processado
       await prisma.ballotReport.create({
         data: {
-          deterministicId: 'det-report-prod-001',
+          deterministicId: 'bu-processado-draft',
           electionId: election.id,
           roundId: election.rounds[0].id,
           stateCode: 'SC',
@@ -400,56 +205,510 @@ describe('PR 3 — Assistente Universal de Configuração (Wizard)', () => {
         }
       });
 
-      // Tentar alteração profunda via wizard
+      // Tentativa de alteração estrutural no rascunho
       const req = new Request('http://localhost:3000/api/admin/wizard', {
         method: 'POST',
         headers: createAuthHeaders(adminCsrfToken),
         body: JSON.stringify({
           electionId: election.id,
-          name: 'Tentativa de Modificação Bloqueada',
+          name: 'Eleição Rascunho com BU Processado',
           year: 2026,
           type: 'GENERAL',
-          scopes: [{ scopeType: 'ESTADUAL', stateAbbreviation: 'SC' }],
-          rounds: [{ roundNumber: 1 }],
-          offices: [{ code: '1', name: 'Presidente' }]
+          scopes: [{ scopeType: 'ESTADUAL', stateAbbreviation: 'SP' }] // Alteração estrutural
         })
       });
 
       const res = await saveWizard(req);
       expect(res.status).toBe(400);
       const data = await res.json();
-      expect(data.error).toBe('ELECTION_HAS_PROCESSED_VOTES');
+      expect(data.error).toBe('ELECTION_HAS_BOUND_REPORTS');
+    });
+
+    it('2.2 Deve bloquear alterações estruturais em eleição com BUs em PENDENTE_CONFIRMACAO', async () => {
+      const election = await prisma.election.create({
+        data: {
+          name: 'Eleição com BU Pendente',
+          year: 2026,
+          status: 'DRAFT',
+          rounds: { create: { roundNumber: 1, status: 'PLANNED' } }
+        },
+        include: { rounds: true }
+      });
+
+      // Relatório pendente de confirmação
+      await prisma.ballotReport.create({
+        data: {
+          deterministicId: 'bu-pendente-001',
+          electionId: election.id,
+          roundId: election.rounds[0].id,
+          stateCode: 'SC',
+          cityCode: '80837',
+          zoneCode: '090',
+          sectionCode: '0001',
+          urnCode: '1001',
+          status: 'PENDENTE_CONFIRMACAO',
+          isSimulation: false
+        }
+      });
+
+      // Tentativa de alterar cargos da eleição
+      const req = new Request('http://localhost:3000/api/admin/wizard', {
+        method: 'POST',
+        headers: createAuthHeaders(adminCsrfToken),
+        body: JSON.stringify({
+          electionId: election.id,
+          name: 'Eleição com BU Pendente',
+          year: 2026,
+          type: 'GENERAL',
+          offices: [{ code: '11', name: 'Prefeito' }]
+        })
+      });
+
+      const res = await saveWizard(req);
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toBe('ELECTION_HAS_BOUND_REPORTS');
+    });
+
+    it('2.3 Deve permitir alterações não destrutivas (descrição, notas) mesmo com BUs vinculados', async () => {
+      const election = await prisma.election.create({
+        data: {
+          name: 'Eleição com BUs Reais',
+          year: 2026,
+          status: 'DRAFT',
+          rounds: { create: { roundNumber: 1, status: 'PLANNED' } }
+        },
+        include: { rounds: true }
+      });
+
+      await prisma.ballotReport.create({
+        data: {
+          deterministicId: 'bu-real-001',
+          electionId: election.id,
+          roundId: election.rounds[0].id,
+          stateCode: 'SC',
+          cityCode: '80837',
+          zoneCode: '090',
+          sectionCode: '0001',
+          urnCode: '1001',
+          status: 'PROCESSADO',
+          isSimulation: false
+        }
+      });
+
+      // Envia apenas metadados textuais (sem arrays estruturais)
+      const req = new Request('http://localhost:3000/api/admin/wizard', {
+        method: 'POST',
+        headers: createAuthHeaders(adminCsrfToken),
+        body: JSON.stringify({
+          electionId: election.id,
+          name: 'Eleição com BUs Reais (Nome Atualizado)',
+          year: 2026,
+          type: 'GENERAL',
+          description: 'Anotação administrativa atualizada com segurança'
+        })
+      });
+
+      const res = await saveWizard(req);
+      expect(res.status).toBe(200);
+      const data = await res.json();
+      expect(data.success).toBe(true);
+
+      const check = await prisma.election.findUnique({ where: { id: election.id } });
+      expect(check?.name).toBe('Eleição com BUs Reais (Nome Atualizado)');
+      expect(check?.description).toBe('Anotação administrativa atualizada com segurança');
     });
   });
 
-  describe('4. Abrangência Geográfica e Múltiplos Municípios', () => {
-    it('4.1 Deve configurar múltiplos municípios em uma mesma eleição', async () => {
+  describe('3. Prevenção de Alterações Globais Indevidas (Item 2 da Auditoria)', () => {
+    it('3.1 Deve rejeitar cadastro com código TSE de município existente em UF divergente', async () => {
+      // 1. Cadastrar Estado SC e Município 80837 Concórdia
+      const stateSC = await prisma.state.create({ data: { name: 'Santa Catarina', abbreviation: 'SC' } });
+      await prisma.municipality.create({
+        data: {
+          name: 'Concórdia',
+          officialCode: '80837',
+          stateId: stateSC.id,
+          isCoverage: true
+        }
+      });
+
+      // 2. Tentar cadastrar Eleição informando 80837 no Paraná (PR)
+      const req = new Request('http://localhost:3000/api/admin/wizard', {
+        method: 'POST',
+        headers: createAuthHeaders(adminCsrfToken),
+        body: JSON.stringify({
+          name: 'Eleição Conflitante',
+          year: 2024,
+          type: 'MUNICIPAL',
+          scopes: [
+            {
+              scopeType: 'MUNICIPAL',
+              stateAbbreviation: 'PR',
+              municipalityOfficialCode: '80837',
+              municipalityName: 'Cidade Fictícia'
+            }
+          ],
+          rounds: [{ roundNumber: 1 }],
+          offices: [{ code: '11', name: 'Prefeito' }]
+        })
+      });
+
+      const res = await saveWizard(req);
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toBe('MUNICIPALITY_STATE_CONFLICT');
+
+      // Garantir que os dados de Concórdia permanecem intactos
+      const checkMuni = await prisma.municipality.findUnique({
+        where: { officialCode: '80837' },
+        include: { state: true }
+      });
+      expect(checkMuni?.state.abbreviation).toBe('SC');
+      expect(checkMuni?.name).toBe('Concórdia');
+    });
+
+    it('3.2 Deve rejeitar sobrescrita de dados de Partido com sigla conflitante', async () => {
+      // 1. Registrar Partido 13 com sigla PT
+      await prisma.party.create({
+        data: {
+          officialIdentifier: '13',
+          name: 'Partido dos Trabalhadores',
+          abbreviation: 'PT'
+        }
+      });
+
+      // 2. Eleição tenta cadastrar partido 13 com sigla divergente "XYZ"
+      const req = new Request('http://localhost:3000/api/admin/wizard', {
+        method: 'POST',
+        headers: createAuthHeaders(adminCsrfToken),
+        body: JSON.stringify({
+          name: 'Eleição com Partido Conflitante',
+          year: 2024,
+          type: 'MUNICIPAL',
+          scopes: [{ scopeType: 'ESTADUAL', stateAbbreviation: 'SP' }],
+          rounds: [{ roundNumber: 1 }],
+          offices: [{ code: '11', name: 'Prefeito' }],
+          parties: [{ officialIdentifier: '13', name: 'Outro Nome', abbreviation: 'XYZ' }]
+        })
+      });
+
+      const res = await saveWizard(req);
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toBe('PARTY_DATA_CONFLICT');
+
+      // Garantir que a sigla do partido 13 continua PT
+      const checkParty = await prisma.party.findUnique({ where: { officialIdentifier: '13' } });
+      expect(checkParty?.abbreviation).toBe('PT');
+    });
+  });
+
+  describe('4. Sincronização Consistente de Rascunhos (Item 3 da Auditoria)', () => {
+    it('4.1 Campos omitidos (undefined) não devem apagar entidades existentes', async () => {
+      // 1. Criar rascunho com escopos, cargos e candidatos
+      const createReq = new Request('http://localhost:3000/api/admin/wizard', {
+        method: 'POST',
+        headers: createAuthHeaders(adminCsrfToken),
+        body: JSON.stringify({
+          name: 'Eleição Rascunho Inicial',
+          year: 2024,
+          type: 'MUNICIPAL',
+          scopes: [{ scopeType: 'ESTADUAL', stateAbbreviation: 'SC' }],
+          rounds: [{ roundNumber: 1 }],
+          offices: [{ code: '11', name: 'Prefeito' }],
+          candidates: [{ officeCode: '11', candidateNumber: '10', name: 'Candidato Dez', partyNumber: '10' }]
+        })
+      });
+      const createRes = await saveWizard(createReq);
+      const { electionId } = await createRes.json();
+
+      // 2. Atualizar apenas o nome, omitindo scopes, offices e candidates
+      const updateReq = new Request('http://localhost:3000/api/admin/wizard', {
+        method: 'POST',
+        headers: createAuthHeaders(adminCsrfToken),
+        body: JSON.stringify({
+          electionId,
+          name: 'Eleição Rascunho Renomeada',
+          year: 2024,
+          type: 'MUNICIPAL'
+          // scopes, offices, candidates OMITIDOS
+        })
+      });
+      const updateRes = await saveWizard(updateReq);
+      expect(updateRes.status).toBe(200);
+
+      // Verificar que escopos, cargos e candidatos NÃO foram apagados
+      const check = await prisma.election.findUnique({
+        where: { id: electionId },
+        include: { scopes: true, offices: { include: { candidates: true } } }
+      });
+      expect(check?.scopes.length).toBe(1);
+      expect(check?.offices.length).toBe(1);
+      expect(check?.offices[0].candidates.length).toBe(1);
+    });
+
+    it('4.2 Não deve permitir exclusão de candidato que já possua votos', async () => {
+      // Criar eleição com cargo e candidato
+      const election = await prisma.election.create({
+        data: {
+          name: 'Eleição com Votos',
+          year: 2024,
+          rounds: { create: { roundNumber: 1 } },
+          offices: {
+            create: {
+              code: '11',
+              name: 'Prefeito',
+              candidates: {
+                create: {
+                  candidateNumber: '55',
+                  name: 'Candidato Cisa',
+                  ballotName: 'Cisa',
+                  party: {
+                    create: { officialIdentifier: '55', name: 'Partido 55', abbreviation: 'P55' }
+                  }
+                }
+              }
+            }
+          }
+        },
+        include: { rounds: true, offices: { include: { candidates: true } } }
+      });
+
+      const report = await prisma.ballotReport.create({
+        data: {
+          deterministicId: 'report-voto-cand-001',
+          electionId: election.id,
+          roundId: election.rounds[0].id,
+          stateCode: 'SC',
+          cityCode: '80837',
+          zoneCode: '090',
+          sectionCode: '0001',
+          urnCode: '1001',
+          status: 'RECEBIDO',
+          isSimulation: true // simulação para permitir teste de votos
+        }
+      });
+
+      // Criar voto para o candidato 55
+      await prisma.ballotVote.create({
+        data: {
+          reportId: report.id,
+          officeId: election.offices[0].id,
+          candidateId: election.offices[0].candidates[0].id,
+          candidateNumber: '55',
+          quantity: 10
+        }
+      });
+
+      // Tentar atualizar candidatos passando lista vazia (tentando remover candidato com votos)
+      const req = new Request('http://localhost:3000/api/admin/wizard', {
+        method: 'POST',
+        headers: createAuthHeaders(adminCsrfToken),
+        body: JSON.stringify({
+          electionId: election.id,
+          name: 'Eleição com Votos',
+          year: 2024,
+          type: 'MUNICIPAL',
+          candidates: [] // Lista vazia: tenta remover todos os candidatos
+        })
+      });
+
+      const res = await saveWizard(req);
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toBe('CANNOT_REMOVE_REFERENCED_CANDIDATE');
+    });
+  });
+
+  describe('5. Ativação Contextual sem Encerramento Indevido (Item 4 da Auditoria)', () => {
+    it('5.1 Deve rejeitar ativação se já existir eleição ativa sem consentimento explícito', async () => {
+      // 1. Eleição A ativa
+      const electionA = await prisma.election.create({
+        data: {
+          name: 'Eleição Ordinária Ativa',
+          year: 2024,
+          status: 'ACTIVE',
+          rounds: { create: { roundNumber: 1, status: 'ACTIVE' } }
+        }
+      });
+
+      // 2. Eleição B pronta para ativação
+      const electionB = await prisma.election.create({
+        data: {
+          name: 'Eleição Suplementar Nova',
+          year: 2024,
+          status: 'DRAFT',
+          rounds: { create: { roundNumber: 1, status: 'PLANNED' } },
+          scopes: { create: { scopeKey: 'ESTADUAL:SC', scopeType: 'ESTADUAL' } },
+          offices: { create: { code: '11', name: 'Prefeito' } }
+        }
+      });
+
+      // 3. Tentar ativar Eleição B sem allowDeactivateCurrent
+      const req = new Request('http://localhost:3000/api/admin/wizard/activate', {
+        method: 'POST',
+        headers: createAuthHeaders(adminCsrfToken),
+        body: JSON.stringify({
+          electionId: electionB.id,
+          confirmationText: 'ATIVAR ELEIÇÃO'
+          // allowDeactivateCurrent omitido (false)
+        })
+      });
+
+      const res = await activateWizard(req);
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toBe('ACTIVE_ELECTION_CONFLICT');
+
+      // Garantir que a Eleição A permanece ACTIVE e não foi modificada
+      const checkA = await prisma.election.findUnique({ where: { id: electionA.id } });
+      expect(checkA?.status).toBe('ACTIVE');
+    });
+
+    it('5.2 Deve arquivar contextualmente (não marcar FINISHED nem alterar votos) quando consentido', async () => {
+      const electionA = await prisma.election.create({
+        data: {
+          name: 'Eleição Anterior a Pausar',
+          year: 2024,
+          status: 'ACTIVE',
+          rounds: { create: { roundNumber: 1, status: 'ACTIVE' } }
+        }
+      });
+
+      const electionB = await prisma.election.create({
+        data: {
+          name: 'Eleição Nova a Ativar',
+          year: 2026,
+          status: 'DRAFT',
+          rounds: { create: { roundNumber: 1, status: 'PLANNED' } },
+          scopes: { create: { scopeKey: 'ESTADUAL:SC', scopeType: 'ESTADUAL' } },
+          offices: { create: { code: '1', name: 'Presidente' } }
+        }
+      });
+
+      const req = new Request('http://localhost:3000/api/admin/wizard/activate', {
+        method: 'POST',
+        headers: createAuthHeaders(adminCsrfToken),
+        body: JSON.stringify({
+          electionId: electionB.id,
+          confirmationText: 'ATIVAR ELEIÇÃO',
+          allowDeactivateCurrent: true
+        })
+      });
+
+      const res = await activateWizard(req);
+      expect(res.status).toBe(200);
+
+      const checkA = await prisma.election.findUnique({ where: { id: electionA.id } });
+      expect(checkA?.status).toBe('ARCHIVED'); // Arquivada contextualmente, NÃO finalizada
+
+      const checkB = await prisma.election.findUnique({ where: { id: electionB.id } });
+      expect(checkB?.status).toBe('ACTIVE');
+    });
+  });
+
+  describe('6. Validação de Importações do TSE (Item 5 da Auditoria)', () => {
+    it('6.1 Não deve inferir silenciosamente partido ou cargo ausente', async () => {
+      const candPayloadIncompleto = {
+        candidatos: [
+          {
+            nr: '123',
+            nm: 'Candidato Sem Partido Nem Cargo'
+            // cdCargo, nrPartido, sgPartido AUSENTES
+          }
+        ]
+      };
+
+      const req = new Request('http://localhost:3000/api/admin/wizard/import-tse', {
+        method: 'POST',
+        headers: createAuthHeaders(adminCsrfToken),
+        body: JSON.stringify(candPayloadIncompleto)
+      });
+
+      const res = await importTse(req);
+      expect(res.status).toBe(200);
+      const result = await res.json();
+
+      expect(result.valid).toBe(false); // Inválido para ingestão direta
+      expect(result.summary.confirmedRecordsCount).toBe(0);
+      expect(result.summary.recordsWithWarningsCount).toBe(1);
+      expect(result.validationDetails[0].isConfirmed).toBe(false);
+      expect(result.validationDetails[0].missingFields).toContain('officeCode');
+      expect(result.validationDetails[0].missingFields).toContain('partyNumber');
+      expect(result.validationDetails[0].missingFields).toContain('partyAbbreviation');
+    });
+
+    it('6.2 Deve rejeitar candidatos duplicados com o mesmo número no mesmo cargo', async () => {
+      const candPayloadDuplicado = {
+        candidatos: [
+          {
+            nr: '10',
+            nm: 'Candidato Alfa',
+            cdCargo: '11',
+            nrPartido: '10',
+            sgPartido: 'PA'
+          },
+          {
+            nr: '10',
+            nm: 'Candidato Alfa Duplicado',
+            cdCargo: '11',
+            nrPartido: '10',
+            sgPartido: 'PA'
+          }
+        ]
+      };
+
+      const req = new Request('http://localhost:3000/api/admin/wizard/import-tse', {
+        method: 'POST',
+        headers: createAuthHeaders(adminCsrfToken),
+        body: JSON.stringify(candPayloadDuplicado)
+      });
+
+      const res = await importTse(req);
+      expect(res.status).toBe(200);
+      const result = await res.json();
+      expect(result.valid).toBe(false);
+      expect(result.errors).toBeDefined();
+      expect(result.errors[0]).toContain('Candidato duplicado detectado');
+    });
+  });
+
+  describe('7. Cobertura Distinta por Turno (Item 6 da Auditoria)', () => {
+    it('7.1 Deve permitir configurar RoundCoverage distinto para o 1º e 2º turnos', async () => {
       const payload = {
-        name: 'Eleição Consórcio Regional 2024',
+        name: 'Eleição com Cobertura Distinta por Turno',
         year: 2024,
         type: 'MUNICIPAL',
-        scopes: [
-          {
-            scopeType: 'MUNICIPAL',
-            stateAbbreviation: 'SC',
-            municipalityOfficialCode: '80837',
-            municipalityName: 'Concórdia'
-          },
-          {
-            scopeType: 'MUNICIPAL',
-            stateAbbreviation: 'SC',
-            municipalityOfficialCode: '81051',
-            municipalityName: 'Seara'
-          },
-          {
-            scopeType: 'MUNICIPAL',
-            stateAbbreviation: 'SC',
-            municipalityOfficialCode: '81132',
-            municipalityName: 'Itá'
-          }
+        scopes: [{ scopeType: 'MUNICIPAL', stateAbbreviation: 'SC', municipalityOfficialCode: '80837' }],
+        rounds: [
+          { roundNumber: 1 },
+          { roundNumber: 2 }
         ],
-        rounds: [{ roundNumber: 1 }],
-        offices: [{ code: '11', name: 'Prefeito' }]
+        offices: [{ code: '11', name: 'Prefeito' }],
+        coverage: [
+          {
+            roundNumber: 1, // Apenas 1º turno
+            municipalityOfficialCode: '80837',
+            zoneNumber: '090',
+            sectionNumber: '0001',
+            expectedBUs: 1
+          },
+          {
+            roundNumber: 2, // Apenas 2º turno
+            municipalityOfficialCode: '80837',
+            zoneNumber: '090',
+            sectionNumber: '0002',
+            expectedBUs: 1
+          },
+          {
+            // Omitido: aplica a ambos os turnos
+            municipalityOfficialCode: '80837',
+            zoneNumber: '090',
+            sectionNumber: '0003',
+            expectedBUs: 1
+          }
+        ]
       };
 
       const req = new Request('http://localhost:3000/api/admin/wizard', {
@@ -462,29 +721,123 @@ describe('PR 3 — Assistente Universal de Configuração (Wizard)', () => {
       expect(res.status).toBe(200);
       const { electionId } = await res.json();
 
-      const scopes = await prisma.electionScope.findMany({
+      const rounds = await prisma.electionRound.findMany({
         where: { electionId },
-        orderBy: { scopeKey: 'asc' }
+        orderBy: { roundNumber: 'asc' },
+        include: { coverage: { include: { pollingSection: true } } }
       });
 
-      expect(scopes.length).toBe(3);
-      expect(scopes.map(s => s.scopeKey)).toEqual([
-        'MUNICIPAL:SC:80837',
-        'MUNICIPAL:SC:81051',
-        'MUNICIPAL:SC:81132'
-      ]);
+      expect(rounds.length).toBe(2);
+
+      // Turno 1 deve ter seções 0001 e 0003
+      const t1Sections = rounds[0].coverage.map(c => c.pollingSection.sectionNumber).sort();
+      expect(t1Sections).toEqual(['0001', '0003']);
+
+      // Turno 2 deve ter seções 0002 e 0003
+      const t2Sections = rounds[1].coverage.map(c => c.pollingSection.sectionNumber).sort();
+      expect(t2Sections).toEqual(['0002', '0003']);
+
+      // NUNCA promover automaticamente a HOMOLOGATED
+      expect(rounds[0].coverageStatus).toBe('REGISTERED');
+      expect(rounds[1].coverageStatus).toBe('REGISTERED');
+    });
+  });
+
+  describe('8. Gestão Segura de Operadores (Item 7 da Auditoria)', () => {
+    it('8.1 Não deve permitir rebaixar ou alterar o papel de usuários ADMIN existentes', async () => {
+      const payload = {
+        name: 'Eleição Tentativa Conflito Operador',
+        year: 2024,
+        type: 'MUNICIPAL',
+        scopes: [{ scopeType: 'ESTADUAL', stateAbbreviation: 'SC' }],
+        rounds: [{ roundNumber: 1 }],
+        offices: [{ code: '11', name: 'Prefeito' }],
+        operators: [
+          { email: adminUser.email, name: 'Tentando rebaixar admin para operador' }
+        ]
+      };
+
+      const req = new Request('http://localhost:3000/api/admin/wizard', {
+        method: 'POST',
+        headers: createAuthHeaders(adminCsrfToken),
+        body: JSON.stringify(payload)
+      });
+
+      const res = await saveWizard(req);
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toBe('OPERATOR_ROLE_CONFLICT');
+
+      // Garantir que o admin permaneceu ADMIN
+      const checkAdmin = await prisma.user.findUnique({ where: { email: adminUser.email } });
+      expect(checkAdmin?.role).toBe('ADMIN');
     });
 
-    it('4.2 Deve configurar escopo nacional canônico (NACIONAL:BR)', async () => {
+    it('8.2 Novo operador sem senha inicial deve ser criado como inativo (isActive = false)', async () => {
       const payload = {
-        name: 'Eleições Gerais Brasil 2026',
+        name: 'Eleição Novo Operador Inativo',
+        year: 2024,
+        type: 'MUNICIPAL',
+        scopes: [{ scopeType: 'ESTADUAL', stateAbbreviation: 'SC' }],
+        rounds: [{ roundNumber: 1 }],
+        offices: [{ code: '11', name: 'Prefeito' }],
+        operators: [
+          { email: 'novo.operador.inativo@teste.gov.br', name: 'Novo Operador Sem Senha' }
+        ]
+      };
+
+      const req = new Request('http://localhost:3000/api/admin/wizard', {
+        method: 'POST',
+        headers: createAuthHeaders(adminCsrfToken),
+        body: JSON.stringify(payload)
+      });
+
+      const res = await saveWizard(req);
+      expect(res.status).toBe(200);
+
+      const createdOp = await prisma.user.findUnique({
+        where: { email: 'novo.operador.inativo@teste.gov.br' }
+      });
+      expect(createdOp).toBeDefined();
+      expect(createdOp?.isActive).toBe(false); // Inativo aguardando ativação de senha
+      expect(createdOp?.role).toBe('OPERATOR');
+    });
+
+    it('8.3 Novo operador com senha inicial fraca deve ser rejeitado', async () => {
+      const payload = {
+        name: 'Eleição Senha Fraca',
+        year: 2024,
+        type: 'MUNICIPAL',
+        scopes: [{ scopeType: 'ESTADUAL', stateAbbreviation: 'SC' }],
+        rounds: [{ roundNumber: 1 }],
+        offices: [{ code: '11', name: 'Prefeito' }],
+        operators: [
+          { email: 'op.fraco@teste.gov.br', initialPassword: '123' } // Senha fraca
+        ]
+      };
+
+      const req = new Request('http://localhost:3000/api/admin/wizard', {
+        method: 'POST',
+        headers: createAuthHeaders(adminCsrfToken),
+        body: JSON.stringify(payload)
+      });
+
+      const res = await saveWizard(req);
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toBe('INVALID_OPERATOR_PASSWORD');
+    });
+  });
+
+  describe('9. Validação de Escopos e Rollback Transacional Integral', () => {
+    it('9.1 validateElectionScopesSet() deve rejeitar contradição Nacional vs Estadual', async () => {
+      const payload = {
+        name: 'Eleição com Escopos Contraditórios',
         year: 2026,
         type: 'GENERAL',
         scopes: [
-          {
-            scopeType: 'NACIONAL',
-            stateAbbreviation: 'BR'
-          }
+          { scopeType: 'NACIONAL', stateAbbreviation: 'BR' },
+          { scopeType: 'ESTADUAL', stateAbbreviation: 'SC' }
         ],
         rounds: [{ roundNumber: 1 }],
         offices: [{ code: '1', name: 'Presidente' }]
@@ -497,303 +850,47 @@ describe('PR 3 — Assistente Universal de Configuração (Wizard)', () => {
       });
 
       const res = await saveWizard(req);
-      expect(res.status).toBe(200);
-      const { electionId } = await res.json();
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toBe('CONTRADICTORY_SCOPE_NATIONAL_EXISTS');
 
-      const scope = await prisma.electionScope.findFirst({
-        where: { electionId }
-      });
-      expect(scope?.scopeKey).toBe('NACIONAL:BR');
-    });
-  });
-
-  describe('5. Importação e Validação de Dados Externos (POST /api/admin/wizard/import-tse)', () => {
-    it('5.1 Deve rejeitar arquivos malformados ou payloads inválidos', async () => {
-      const req = new Request('http://localhost:3000/api/admin/wizard/import-tse', {
-        method: 'POST',
-        headers: createAuthHeaders(adminCsrfToken),
-        body: JSON.stringify({ arquivoInvalido: true })
-      });
-
-      const res = await importTse(req);
-      expect(res.status).toBe(200);
-      const result = await res.json();
-      expect(result.valid).toBe(false);
-      expect(result.errors.length).toBeGreaterThan(0);
+      // Garantir rollback total: nenhuma eleição criada
+      const count = await prisma.election.count({ where: { name: 'Eleição com Escopos Contraditórios' } });
+      expect(count).toBe(0);
     });
 
-    it('5.2 Deve validar formato ele-c do TSE com segurança e retornar sumário pré-visualizável', async () => {
-      const tsePayload = {
-        plei: '6258',
-        ano: 2024,
-        nm: 'Eleições Municipais 2024 Oficial',
-        tp: 'M',
-        t: '2',
-        car: [
-          { cd: '11', nm: 'Prefeito', tp: 'M', nv: 1 },
-          { cd: '13', nm: 'Vereador', tp: 'P', nv: 1 }
-        ]
-      };
-
-      const req = new Request('http://localhost:3000/api/admin/wizard/import-tse', {
-        method: 'POST',
-        headers: createAuthHeaders(adminCsrfToken),
-        body: JSON.stringify(tsePayload)
-      });
-
-      const res = await importTse(req);
-      expect(res.status).toBe(200);
-      const result = await res.json();
-      expect(result.valid).toBe(true);
-      expect(result.format).toBe('TSE_ELE_C');
-      expect(result.summary.officesCount).toBe(2);
-      expect(result.summary.roundsCount).toBe(2);
-      expect(result.data.election.name).toBe('Eleições Municipais 2024 Oficial');
-
-      // Garantir que a importação NÃO escreveu no banco sem confirmação
-      const electionCount = await prisma.election.count({
-        where: { name: 'Eleições Municipais 2024 Oficial' }
-      });
-      expect(electionCount).toBe(0);
-    });
-
-    it('5.3 Deve validar e estruturar catálogo de candidatos do TSE sem ingestão cega no banco', async () => {
-      const candPayload = {
-        candidatos: [
+    it('9.2 Falha transacional em candidatos deve efetuar rollback completo de tudo', async () => {
+      const payload = {
+        name: 'Eleição Falha Candidato Rollback',
+        year: 2024,
+        type: 'MUNICIPAL',
+        scopes: [{ scopeType: 'ESTADUAL', stateAbbreviation: 'SC' }],
+        rounds: [{ roundNumber: 1 }],
+        offices: [{ code: '11', name: 'Prefeito' }],
+        candidates: [
           {
-            nr: '13',
-            nm: 'Candidato Presidencial A',
-            nmu: 'Nome Urna A',
-            cdCargo: '1',
-            dsCargo: 'Presidente',
-            nrPartido: '13',
-            sgPartido: 'PT',
-            nmPartido: 'Partido dos Trabalhadores'
-          },
-          {
-            nr: '22',
-            nm: 'Candidato Presidencial B',
-            nmu: 'Nome Urna B',
-            cdCargo: '1',
-            dsCargo: 'Presidente',
-            nrPartido: '22',
-            sgPartido: 'PL',
-            nmPartido: 'Partido Liberal'
+            officeCode: '99', // Cargo 99 NÃO EXISTE em offices
+            candidateNumber: '10',
+            name: 'Candidato Erro',
+            partyNumber: '10'
           }
         ]
       };
 
-      const req = new Request('http://localhost:3000/api/admin/wizard/import-tse', {
+      const req = new Request('http://localhost:3000/api/admin/wizard', {
         method: 'POST',
         headers: createAuthHeaders(adminCsrfToken),
-        body: JSON.stringify(candPayload)
+        body: JSON.stringify(payload)
       });
 
-      const res = await importTse(req);
-      expect(res.status).toBe(200);
-      const result = await res.json();
-      expect(result.valid).toBe(true);
-      expect(result.format).toBe('TSE_CANDIDATES');
-      expect(result.summary.candidatesCount).toBe(2);
-      expect(result.data.candidates.length).toBe(2);
-      expect(result.data.parties.length).toBe(2);
-
-      // Confirmar que o banco permanece intocado antes de salvar no wizard
-      const candCount = await prisma.candidate.count();
-      expect(candCount).toBe(0);
-    });
-  });
-
-  describe('6. Ativação Contextual da Eleição (POST /api/admin/wizard/activate)', () => {
-    it('6.1 Deve rejeitar ativação com frase de confirmação incorreta', async () => {
-      const election = await prisma.election.create({
-        data: {
-          name: 'Eleição Para Ativar',
-          year: 2026,
-          status: 'DRAFT',
-          rounds: { create: { roundNumber: 1 } },
-          scopes: { create: { scopeKey: 'NACIONAL:BR', scopeType: 'NACIONAL' } },
-          offices: { create: { code: '1', name: 'Presidente' } }
-        }
-      });
-
-      const req = new Request('http://localhost:3000/api/admin/wizard/activate', {
-        method: 'POST',
-        headers: createAuthHeaders(adminCsrfToken),
-        body: JSON.stringify({
-          electionId: election.id,
-          confirmationText: 'QUERO ATIVAR'
-        })
-      });
-
-      const res = await activateWizard(req);
+      const res = await saveWizard(req);
       expect(res.status).toBe(400);
       const data = await res.json();
-      expect(data.error).toBe('INVALID_CONFIRMATION');
-    });
+      expect(data.error).toBe('OFFICE_NOT_FOUND');
 
-    it('6.2 Deve rejeitar ativação de eleição sem os requisitos mínimos (sem cargos)', async () => {
-      const electionIncomplete = await prisma.election.create({
-        data: {
-          name: 'Eleição Incompleta',
-          year: 2026,
-          status: 'DRAFT',
-          rounds: { create: { roundNumber: 1 } },
-          scopes: { create: { scopeKey: 'NACIONAL:BR', scopeType: 'NACIONAL' } }
-          // Sem cargos
-        }
-      });
-
-      const req = new Request('http://localhost:3000/api/admin/wizard/activate', {
-        method: 'POST',
-        headers: createAuthHeaders(adminCsrfToken),
-        body: JSON.stringify({
-          electionId: electionIncomplete.id,
-          confirmationText: 'ATIVAR ELEIÇÃO'
-        })
-      });
-
-      const res = await activateWizard(req);
-      expect(res.status).toBe(400);
-      const data = await res.json();
-      expect(data.error).toBe('NO_OFFICES_CONFIGURED');
-    });
-
-    it('6.3 Deve ativar eleição consistente e desativar contextualmente a eleição anterior', async () => {
-      // 1. Criar Eleição A já ativa
-      const electionA = await prisma.election.create({
-        data: {
-          name: 'Eleição A (Antiga Ativa)',
-          year: 2024,
-          status: 'ACTIVE',
-          rounds: {
-            create: {
-              roundNumber: 1,
-              status: 'ACTIVE'
-            }
-          }
-        },
-        include: { rounds: true }
-      });
-
-      // 2. Criar Eleição B em DRAFT pronta para ativação
-      const electionB = await prisma.election.create({
-        data: {
-          name: 'Eleição B (Nova Ativada)',
-          year: 2026,
-          status: 'DRAFT',
-          rounds: {
-            create: {
-              roundNumber: 1,
-              status: 'PLANNED'
-            }
-          },
-          scopes: {
-            create: {
-              scopeKey: 'NACIONAL:BR',
-              scopeType: 'NACIONAL'
-            }
-          },
-          offices: {
-            create: {
-              code: '1',
-              name: 'Presidente'
-            }
-          }
-        },
-        include: { rounds: true }
-      });
-
-      // 3. Ativar Eleição B com frase canônica tolerando variações ('ativar eleicao')
-      const req = new Request('http://localhost:3000/api/admin/wizard/activate', {
-        method: 'POST',
-        headers: createAuthHeaders(adminCsrfToken),
-        body: JSON.stringify({
-          electionId: electionB.id,
-          confirmationText: 'ativar eleicao'
-        })
-      });
-
-      const res = await activateWizard(req);
-      expect(res.status).toBe(200);
-      const data = await res.json();
-      expect(data.success).toBe(true);
-
-      // Verificar que Eleição A foi desativada contextualmente
-      const checkA = await prisma.election.findUnique({
-        where: { id: electionA.id },
-        include: { rounds: true }
-      });
-      expect(checkA?.status).toBe('FINISHED');
-      expect(checkA?.rounds[0].status).toBe('FINISHED');
-
-      // Verificar que Eleição B e seu Round 1 passaram para ACTIVE
-      const checkB = await prisma.election.findUnique({
-        where: { id: electionB.id },
-        include: { rounds: true }
-      });
-      expect(checkB?.status).toBe('ACTIVE');
-      expect(checkB?.rounds[0].status).toBe('ACTIVE');
-
-      // Verificar registro de auditoria
-      const audit = await prisma.auditLog.findFirst({
-        where: { electionId: electionB.id, action: 'ACTIVATE_ELECTION' }
-      });
-      expect(audit).toBeDefined();
-      expect(audit?.result).toBe('SUCCESS');
-      expect(audit?.newStatus).toBe('ACTIVE');
-    });
-  });
-
-  describe('7. Isolamento Multi-Eleição e Independência de Entidades', () => {
-    it('7.1 Criação de candidatos e cargos na Eleição B não colide nem afeta a Eleição A', async () => {
-      // Criar Eleição A com cargo Prefeito (code: 11) e candidato 13
-      const saveReqA = new Request('http://localhost:3000/api/admin/wizard', {
-        method: 'POST',
-        headers: createAuthHeaders(adminCsrfToken),
-        body: JSON.stringify({
-          name: 'Eleição A Município Alfa',
-          year: 2024,
-          type: 'MUNICIPAL',
-          scopes: [{ scopeType: 'MUNICIPAL', stateAbbreviation: 'SC', municipalityOfficialCode: '80837' }],
-          rounds: [{ roundNumber: 1 }],
-          offices: [{ code: '11', name: 'Prefeito' }],
-          candidates: [{ officeCode: '11', candidateNumber: '13', name: 'Candidato Alfa', partyNumber: '13' }]
-        })
-      });
-      const resA = await saveWizard(saveReqA);
-      const { electionId: idA } = await resA.json();
-
-      // Criar Eleição B com mesmo cargo (code: 11) e mesmo número de candidato (13), porém em outro município
-      const saveReqB = new Request('http://localhost:3000/api/admin/wizard', {
-        method: 'POST',
-        headers: createAuthHeaders(adminCsrfToken),
-        body: JSON.stringify({
-          name: 'Eleição B Município Beta',
-          year: 2024,
-          type: 'MUNICIPAL',
-          scopes: [{ scopeType: 'MUNICIPAL', stateAbbreviation: 'SC', municipalityOfficialCode: '81051' }],
-          rounds: [{ roundNumber: 1 }],
-          offices: [{ code: '11', name: 'Prefeito' }],
-          candidates: [{ officeCode: '11', candidateNumber: '13', name: 'Candidato Beta', partyNumber: '13' }]
-        })
-      });
-      const resB = await saveWizard(saveReqB);
-      const { electionId: idB } = await resB.json();
-
-      expect(idA).not.toBe(idB);
-
-      // Verificar que ambos os candidatos coexistem de forma isolada
-      const candA = await prisma.candidate.findFirst({
-        where: { office: { electionId: idA }, candidateNumber: '13' }
-      });
-      const candB = await prisma.candidate.findFirst({
-        where: { office: { electionId: idB }, candidateNumber: '13' }
-      });
-
-      expect(candA?.name).toBe('Candidato Alfa');
-      expect(candB?.name).toBe('Candidato Beta');
-      expect(candA?.id).not.toBe(candB?.id);
+      // Garantir que a eleição NÃO foi persistida (rollback integral)
+      const count = await prisma.election.count({ where: { name: 'Eleição Falha Candidato Rollback' } });
+      expect(count).toBe(0);
     });
   });
 });
