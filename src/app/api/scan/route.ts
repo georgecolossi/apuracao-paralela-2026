@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { Tse2026BallotReportParser } from '@/lib/parser/Tse2026BallotReportParser';
+import { UniversalQrBuParser } from '@/lib/parser/adapter/UniversalQrBuParser';
 import { Tse2026SimulationParser } from '@/lib/parser/Tse2026SimulationParser';
 
 import { requireAuthenticatedUser } from '@/lib/auth';
@@ -35,7 +35,7 @@ export async function POST(req: Request) {
     const { content, isSimulation = false, sessionId } = await req.json();
     const operatorId = auth.user.userId;
 
-    const parser = isSimulation ? new Tse2026SimulationParser() : new Tse2026BallotReportParser();
+    const parser = isSimulation ? new Tse2026SimulationParser() : new UniversalQrBuParser();
 
     const partInfo = parser.parsePart(content);
     if ('code' in partInfo) {
@@ -209,11 +209,11 @@ export async function POST(req: Request) {
         }, { status: 400 });
       }
 
-      if (activeRound.plei !== electionId) {
+      if (activeRound.plei !== electionId && (!reportData.specificElectionId || activeRound.plei !== reportData.specificElectionId)) {
         return NextResponse.json({
           error: 'ELECTION_CONTEXT_MISMATCH',
           message: 'O BU pertence a outro pleito não configurado ou inativo.',
-          received: { plei: electionId, turn: roundNumber }
+          received: { plei: electionId, specificPlei: reportData.specificElectionId, turn: roundNumber }
         }, { status: 400 });
       }
 
@@ -498,11 +498,11 @@ export async function POST(req: Request) {
         }, { status: 400 });
       }
 
-      if (activeRound.plei !== electionId) {
+      if (activeRound.plei !== electionId && (!reportData.specificElectionId || activeRound.plei !== reportData.specificElectionId)) {
         return NextResponse.json({
           error: 'ELECTION_CONTEXT_MISMATCH',
           message: 'O BU pertence a outro pleito não configurado ou inativo.',
-          received: { plei: electionId, turn: roundNumber }
+          received: { plei: electionId, specificPlei: reportData.specificElectionId, turn: roundNumber }
         }, { status: 400 });
       }
 
@@ -525,8 +525,10 @@ export async function POST(req: Request) {
             status: 'PENDENTE_CONFIRMACAO',
             validationData: JSON.stringify({
               parsed: true,
+              vrqrVersion: reportData.vrqrVersion,
               hashStatus: reportData.hashStatus,
               sigStatus: reportData.sigStatus,
+              sigValidationNote: reportData.sigValidationNote,
               attendance: (reportData.apto !== undefined || reportData.comp !== undefined || reportData.falt !== undefined) ? {
                 apto: reportData.apto,
                 comp: reportData.comp,
@@ -550,7 +552,7 @@ export async function POST(req: Request) {
         }> = [];
 
         for (const vote of reportData.votes) {
-          const officeCode = OFFICE_NAME_TO_CODE[vote.officeName] || vote.officeName;
+          const officeCode = vote.officeCode || OFFICE_NAME_TO_CODE[vote.officeName] || vote.officeName;
           let office = await tx.office.findFirst({
             where: {
               electionId: activeElection.id,
