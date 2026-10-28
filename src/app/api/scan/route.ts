@@ -589,21 +589,16 @@ export async function POST(req: Request) {
           const office = officeMap.get(officeCode) || officeMap.get(vote.officeName.toLowerCase());
 
           if (!office) {
-            await tx.auditLog.create({
-              data: {
-                action: 'SCAN_OFFICE_NOT_CONFIGURED',
-                result: 'REJECTED',
-                identifiers: `Office: ${vote.officeName} (${officeCode}), Plei: ${reportData.electionId}`,
-                errors: `Cargo '${vote.officeName}' (código ${officeCode}) presente no Boletim de Urna não está configurado na eleição ativa '${activeElection.name}'.`,
-                userId: operatorId,
-                roundId: activeRound.id
-              }
-            });
-
             throw new ElectionInvariantError(
               'OFFICE_NOT_CONFIGURED',
               `O cargo '${vote.officeName}' (código ${officeCode}) presente no Boletim de Urna não está configurado para a eleição ativa '${activeElection.name}'.`,
-              { officeCode, officeName: vote.officeName, electionId: activeElection.id }
+              {
+                officeCode,
+                officeName: vote.officeName,
+                electionId: activeElection.id,
+                roundId: activeRound.id,
+                electionName: activeElection.name
+              }
             );
           }
 
@@ -691,6 +686,39 @@ export async function POST(req: Request) {
         console.error(`[SCAN_INVARIANT_ERROR][${correlationId}] Code: ${dbError.code}`, {
           message: dbError.message
         });
+
+        // Gravação durável de auditoria pós-rollback (executada fora da transação abortada)
+        if (dbError.code === 'OFFICE_NOT_CONFIGURED') {
+          const details = dbError.details as {
+            officeCode?: string;
+            officeName?: string;
+            electionId?: string;
+            roundId?: string;
+            electionName?: string;
+          } | undefined;
+
+          try {
+            await prisma.auditLog.create({
+              data: {
+                action: 'SCAN_OFFICE_NOT_CONFIGURED',
+                result: 'REJECTED',
+                identifiers: `Office: ${details?.officeName || 'Desconhecido'} (${details?.officeCode || 'N/A'}), Plei: ${reportData.electionId}, Turn: ${reportData.roundNumber}`,
+                errors: dbError.message,
+                userId: operatorId,
+                roundId: details?.roundId || activeRound.id,
+                electionId: details?.electionId || activeElection.id
+              }
+            });
+          } catch (auditErr) {
+            console.error(`[AUDIT_LOG_FAILURE][${correlationId}] Falha operacional ao persistir registro de auditoria pós-rollback:`, auditErr);
+            return NextResponse.json({
+              error: 'AUDIT_LOG_FAILED',
+              message: 'Falha operacional crítica ao persistir registro de auditoria.',
+              correlationId
+            }, { status: 500 });
+          }
+        }
+
         return NextResponse.json({
           status: 'ERRO_INVARIANTE',
           error: dbError.code,

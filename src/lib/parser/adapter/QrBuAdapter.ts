@@ -16,9 +16,18 @@ export type ParseErrorCode =
   | 'TOO_MANY_PARTS'
   | 'NO_PARTS'
   | 'UNSUPPORTED_VRQR_VERSION'
+  | 'UNHOMOLOGATED_VRQR_VERSION'
   | 'MISSING_FIELDS'
   | 'INVALID_HASH'
   | 'INVALID_VOTE_DATA'
+  | 'INVALID_OFFICE_CODE'
+  | 'INVALID_OFFICE_FOR_LAYOUT'
+  | 'VOTE_TOTAL_MISMATCH'
+  | 'DISPLACED_VOTE_TOKEN'
+  | 'DUPLICATE_OFFICE_FIELD'
+  | 'DUPLICATE_SUMMARY_FIELD'
+  | 'INCOMPLETE_OFFICE_BLOCK'
+  | 'SUMMARY_TOTAL_MISMATCH'
   | 'CORRUPTED_PAYLOAD';
 
 export interface ParseError {
@@ -66,6 +75,7 @@ export interface BallotReportData {
   sigValidationNote?: string;
   fase?: string;
   votes: BallotVote[];
+  metadata?: Record<string, string>;
   apto?: number;
   comp?: number;
   falt?: number;

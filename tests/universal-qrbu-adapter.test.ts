@@ -422,13 +422,13 @@ describe('PR 4 — Adaptador Universal de QRBU (VRQR 4.0, 5.0, 6.0)', () => {
       }
     });
 
-    it('5.4 Rejeita voto sem cargo definido antes (INVALID_OFFICE_CODE)', () => {
+    it('5.4 Rejeita voto sem cargo definido antes (INVALID_OFFICE_CODE ou DISPLACED_VOTE_TOKEN)', () => {
       const body = 'ORIG:VOTA PLEI:2200 TURN:1 FASE:O UNFE:SC MUNI:80837 ZONA:90 SECA:1 IDUE:123 92:1 BRAN:0 NULO:0 TOTC:1';
       const part = createSignedPart(body);
       const parsed = parser.parseReport(part, [part]);
       expect('code' in parsed).toBe(true);
       if ('code' in parsed) {
-        expect(parsed.code).toBe('INVALID_OFFICE_CODE');
+        expect(['INVALID_OFFICE_CODE', 'DISPLACED_VOTE_TOKEN']).toContain(parsed.code);
       }
     });
 
@@ -453,6 +453,120 @@ describe('PR 4 — Adaptador Universal de QRBU (VRQR 4.0, 5.0, 6.0)', () => {
       expect('code' in parsed).toBe(true);
       if ('code' in parsed) {
         expect(parsed.code).toBe('INVALID_VOTE_DATA');
+      }
+    });
+
+    it('5.7 Rejeita BRAN antes do primeiro CARG (DISPLACED_VOTE_TOKEN)', () => {
+      const body = 'ORIG:VOTA PLEI:2200 TURN:1 FASE:O UNFE:SC MUNI:80837 ZONA:90 SECA:1 IDUE:123 BRAN:2 CARG:1 92:2 NULO:0 TOTC:4';
+      const part = createSignedPart(body);
+      const parsed = parser.parseReport(part, [part]);
+      expect('code' in parsed).toBe(true);
+      if ('code' in parsed) {
+        expect(parsed.code).toBe('DISPLACED_VOTE_TOKEN');
+        expect(parsed.message).toContain('BRAN');
+      }
+    });
+
+    it('5.8 Rejeita NULO antes do primeiro CARG (DISPLACED_VOTE_TOKEN)', () => {
+      const body = 'ORIG:VOTA PLEI:2200 TURN:1 FASE:O UNFE:SC MUNI:80837 ZONA:90 SECA:1 IDUE:123 NULO:1 CARG:1 92:2 BRAN:1 TOTC:4';
+      const part = createSignedPart(body);
+      const parsed = parser.parseReport(part, [part]);
+      expect('code' in parsed).toBe(true);
+      if ('code' in parsed) {
+        expect(parsed.code).toBe('DISPLACED_VOTE_TOKEN');
+        expect(parsed.message).toContain('NULO');
+      }
+    });
+
+    it('5.9 Rejeita BRAN/NULO deslocado entre cargos sem bloco de resumo APTA (DISPLACED_VOTE_TOKEN)', () => {
+      // Cargo 1 fecha com TOTC:5, depois surge BRAN:1 solto antes de Cargo 3
+      const body = 'ORIG:VOTA PLEI:2200 TURN:1 FASE:O UNFE:SC MUNI:80837 ZONA:90 SECA:1 IDUE:123 CARG:1 13:5 TOTC:5 BRAN:1 CARG:3 13:2 TOTC:2';
+      const part = createSignedPart(body);
+      const parsed = parser.parseReport(part, [part]);
+      expect('code' in parsed).toBe(true);
+      if ('code' in parsed) {
+        expect(parsed.code).toBe('DISPLACED_VOTE_TOKEN');
+      }
+    });
+
+    it('5.10 Rejeita campo BRAN duplicado no mesmo cargo (DUPLICATE_OFFICE_FIELD)', () => {
+      const body = 'ORIG:VOTA PLEI:2200 TURN:1 FASE:O UNFE:SC MUNI:80837 ZONA:90 SECA:1 IDUE:123 CARG:1 13:5 BRAN:1 BRAN:1 TOTC:7';
+      const part = createSignedPart(body);
+      const parsed = parser.parseReport(part, [part]);
+      expect('code' in parsed).toBe(true);
+      if ('code' in parsed) {
+        expect(parsed.code).toBe('DUPLICATE_OFFICE_FIELD');
+        expect(parsed.message).toContain('BRAN');
+      }
+    });
+
+    it('5.11 Rejeita campo NULO duplicado no mesmo cargo (DUPLICATE_OFFICE_FIELD)', () => {
+      const body = 'ORIG:VOTA PLEI:2200 TURN:1 FASE:O UNFE:SC MUNI:80837 ZONA:90 SECA:1 IDUE:123 CARG:1 13:5 NULO:1 NULO:1 TOTC:7';
+      const part = createSignedPart(body);
+      const parsed = parser.parseReport(part, [part]);
+      expect('code' in parsed).toBe(true);
+      if ('code' in parsed) {
+        expect(parsed.code).toBe('DUPLICATE_OFFICE_FIELD');
+        expect(parsed.message).toContain('NULO');
+      }
+    });
+
+    it('5.12 Rejeita campo TOTC duplicado no mesmo cargo (DUPLICATE_OFFICE_FIELD)', () => {
+      const body = 'ORIG:VOTA PLEI:2200 TURN:1 FASE:O UNFE:SC MUNI:80837 ZONA:90 SECA:1 IDUE:123 CARG:1 13:5 TOTC:5 TOTC:5';
+      const part = createSignedPart(body);
+      const parsed = parser.parseReport(part, [part]);
+      expect('code' in parsed).toBe(true);
+      if ('code' in parsed) {
+        expect(['DUPLICATE_OFFICE_FIELD', 'DISPLACED_VOTE_TOKEN']).toContain(parsed.code);
+      }
+    });
+
+    it('5.13 Rejeita bloco de cargo incompleto sem TOTC antes do próximo CARG (INCOMPLETE_OFFICE_BLOCK)', () => {
+      const body = 'ORIG:VOTA PLEI:2200 TURN:1 FASE:O UNFE:SC MUNI:80837 ZONA:90 SECA:1 IDUE:123 CARG:1 13:5 CARG:3 15:2 TOTC:2';
+      const part = createSignedPart(body);
+      const parsed = parser.parseReport(part, [part]);
+      expect('code' in parsed).toBe(true);
+      if ('code' in parsed) {
+        expect(parsed.code).toBe('INCOMPLETE_OFFICE_BLOCK');
+        expect(parsed.message).toContain('Presidente');
+      }
+    });
+
+    it('5.14 Rejeita voto nominal de candidato em bloco de resumo pós-APTA (DISPLACED_VOTE_TOKEN)', () => {
+      const body = 'ORIG:VOTA PLEI:2200 TURN:1 FASE:O UNFE:SC MUNI:80837 ZONA:90 SECA:1 IDUE:123 CARG:1 13:5 TOTC:5 APTA:25 99:2';
+      const part = createSignedPart(body);
+      const parsed = parser.parseReport(part, [part]);
+      expect('code' in parsed).toBe(true);
+      if ('code' in parsed) {
+        expect(parsed.code).toBe('DISPLACED_VOTE_TOKEN');
+      }
+    });
+
+    it('5.15 Rejeita divergência entre soma do resumo e totalizador geral (SUMMARY_TOTAL_MISMATCH)', () => {
+      // Resumo informa NOMI:5, BRAN:2, NULO:1 (soma = 8), mas informa TOTC:10
+      const body = 'ORIG:VOTA PLEI:2200 TURN:1 FASE:O UNFE:SC MUNI:80837 ZONA:90 SECA:1 IDUE:123 CARG:1 13:5 TOTC:5 APTA:25 NOMI:5 BRAN:2 NULO:1 TOTC:10';
+      const part = createSignedPart(body);
+      const parsed = parser.parseReport(part, [part]);
+      expect('code' in parsed).toBe(true);
+      if ('code' in parsed) {
+        expect(parsed.code).toBe('SUMMARY_TOTAL_MISMATCH');
+        expect(parsed.message).toContain('diverge do totalizador geral oficial');
+      }
+    });
+
+    it('5.16 Processa com sucesso resumo final legítimo com APTA, NOMI, BRAN, NULO e TOTC sem descarte silencioso', () => {
+      // Resumo legítimo com NOMI:5, BRAN:2, NULO:1, TOTC:8 (5+2+1 = 8)
+      const body = 'ORIG:VOTA PLEI:2200 TURN:1 FASE:O UNFE:SC MUNI:80837 ZONA:90 SECA:1 IDUE:123 CARG:1 13:5 TOTC:5 APTA:25 APTS:23 APTT:2 NOMI:5 BRAN:2 NULO:1 TOTC:8';
+      const part = createSignedPart(body);
+      const parsed = parser.parseReport(part, [part]);
+      expect('code' in parsed).toBe(false);
+      if (!('code' in parsed)) {
+        // Os votos do cargo não foram inflados pelos tokens de resumo
+        expect(parsed.votes.length).toBe(1);
+        expect(parsed.votes[0].quantity).toBe(5);
+        expect(parsed.votes[0].candidateNumber).toBe('13');
+        // Totalizadores globais do resumo foram devidamente registrados em metadados
+        expect(parsed.metadata).toBeDefined();
       }
     });
   });
@@ -576,17 +690,76 @@ describe('PR 4 — Adaptador Universal de QRBU (VRQR 4.0, 5.0, 6.0)', () => {
         })
       }));
 
-      // Não pode criar o cargo 11 automaticamente, deve rejeitar com erro controlado!
-      expect([400, 422]).toContain(res.status);
+      // 1. Resposta controlada HTTP 422 com código de erro estruturado
+      expect(res.status).toBe(422);
       const data = await res.json();
       expect(data.error).toBe('OFFICE_NOT_CONFIGURED');
+      expect(data.status).toBe('ERRO_INVARIANTE');
 
-      // Confirma no banco que nenhum cargo "Prefeito" foi criado indevidamente
+      // 2. Ausência absoluta de BallotReport ou BallotVote parcialmente persistidos (Rollback total)
+      const reportCount = await prisma.ballotReport.count();
+      expect(reportCount).toBe(0);
+      const voteCount = await prisma.ballotVote.count();
+      expect(voteCount).toBe(0);
+
+      // Confirma que nenhum cargo "Prefeito" foi criado indevidamente na eleição
       const createdOffices = await prisma.office.findMany({
         where: { electionId: elecSemPref.id }
       });
       expect(createdOffices.length).toBe(1);
       expect(createdOffices[0].name).toBe('Presidente');
+
+      // 3. Existência do registro de auditoria durável pós-rollback
+      const auditLog = await prisma.auditLog.findFirst({
+        where: { action: 'SCAN_OFFICE_NOT_CONFIGURED' }
+      });
+      expect(auditLog).toBeDefined();
+      expect(auditLog?.result).toBe('REJECTED');
+      expect(auditLog?.identifiers).toContain('Prefeito');
+      expect(auditLog?.identifiers).toContain('11');
+      expect(auditLog?.errors).toContain('não está configurado');
+      expect(auditLog?.userId).toBe(operatorUser.id);
+      // Confirma que credenciais, tokens e cookies não são expostos
+      expect(auditLog?.errors).not.toContain('Cookie');
+      expect(auditLog?.errors).not.toContain('Token');
+
+      // 4. Idempotência do tratamento de falhas: reenvio rejeita igualmente sem corromper estado
+      const res2 = await scanRoute(new Request('http://localhost:3000/api/scan', {
+        method: 'POST',
+        headers: createAuthHeaders(operatorCsrfToken),
+        body: JSON.stringify({
+          sessionId: 'session-pr4-office-not-configured-002',
+          content: raw,
+          isSimulation: false
+        })
+      }));
+      expect(res2.status).toBe(422);
+      const data2 = await res2.json();
+      expect(data2.error).toBe('OFFICE_NOT_CONFIGURED');
+      expect(await prisma.ballotReport.count()).toBe(0);
+      expect(await prisma.ballotVote.count()).toBe(0);
+      const allAuditLogs = await prisma.auditLog.findMany({
+        where: { action: 'SCAN_OFFICE_NOT_CONFIGURED' }
+      });
+      expect(allAuditLogs.length).toBe(2);
+
+      // 5. Se a persistência da auditoria falhar, não aceita o BU e retorna erro operacional seguro (HTTP 500)
+      const auditSpy = vi.spyOn(prisma.auditLog, 'create').mockRejectedValueOnce(new Error('Simulated SQLite Disk Failure'));
+      const resFail = await scanRoute(new Request('http://localhost:3000/api/scan', {
+        method: 'POST',
+        headers: createAuthHeaders(operatorCsrfToken),
+        body: JSON.stringify({
+          sessionId: 'session-pr4-office-not-configured-003',
+          content: raw,
+          isSimulation: false
+        })
+      }));
+      expect(resFail.status).toBe(500);
+      const failData = await resFail.json();
+      expect(failData.error).toBe('AUDIT_LOG_FAILED');
+      expect(await prisma.ballotReport.count()).toBe(0);
+      expect(await prisma.ballotVote.count()).toBe(0);
+      auditSpy.mockRestore();
     });
 
     it('7.2 Cobertura Estrita (REGISTERED/HOMOLOGATED): rejeita seção fora do RoundCoverage', async () => {

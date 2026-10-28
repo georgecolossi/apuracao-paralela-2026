@@ -248,8 +248,12 @@ export abstract class BaseVrqrAdapter implements QrBuAdapter {
       'APTO', 'COMP', 'FALT', 'HBBM', 'HBBG', 'HBSB', 'DTAB', 'HRAB',
       'DTFC', 'HRFC', 'IDEL', 'CARG', 'TIPO', 'VERC', 'PART', 'NOMI',
       'LEGP', 'LEGC', 'BRAN', 'NULO', 'TOTC', 'TOTP', 'APTA', 'APTS',
-      'APTT', 'HASH', 'ASSI', 'CERT', 'VRQR', 'HIQT', 'HICA'
+      'APTT', 'HASH', 'ASSI', 'CERT', 'VRQR', 'HIQT', 'HICA',
+      'DTEM', 'HREM', 'JUNT', 'TURM', 'MAJO', 'PROP'
     ]);
+
+    type ParserState = 'HEADER' | 'IN_OFFICE' | 'BETWEEN_OFFICES' | 'IN_SUMMARY';
+    let state: ParserState = 'HEADER';
 
     let currentElectionPlei = '';
     let currentOfficeCode = '';
@@ -258,6 +262,7 @@ export abstract class BaseVrqrAdapter implements QrBuAdapter {
     let currentPartyCode = '';
 
     const votes: BallotVote[] = [];
+    const seenFieldsInOffice = new Set<string>();
 
     // Estrutura para conferência de totalizadores por cargo (TOTC vs soma dos votos)
     interface OfficeBlock {
@@ -269,21 +274,44 @@ export abstract class BaseVrqrAdapter implements QrBuAdapter {
     const officeBlocks: OfficeBlock[] = [];
     let currentBlock: OfficeBlock | null = null;
 
+    // Estrutura para totalizadores globais do resumo do BU
+    interface BuSummaryData {
+      apta?: number;
+      apts?: number;
+      aptt?: number;
+      nomi?: number;
+      bran?: number;
+      nulo?: number;
+      totc?: number;
+    }
+    const summaryData: BuSummaryData = {};
+    const seenSummaryFields = new Set<string>();
+
+    const summaryAllowedKeys = new Set([
+      'APTA', 'APTS', 'APTT', 'NOMI', 'LEGC', 'BRAN', 'NULO', 'TOTC',
+      'HASH', 'ASSI', 'CERT', 'HIQT', 'HICA', 'IDEL', 'PLEI', 'VRQR', 'QRBU'
+    ]);
+
     const closeCurrentOfficeBlock = (): ParseError | null => {
       if (!currentBlock) return null;
-      if (currentBlock.expectedTotc !== undefined) {
-        const sum = currentBlock.votes.reduce((acc, v) => acc + v.quantity, 0);
-        if (sum !== currentBlock.expectedTotc) {
-          return {
-            code: 'VOTE_TOTAL_MISMATCH',
-            message: `Inconsistência no cargo ${currentBlock.officeName} (${currentBlock.officeCode}): a soma dos votos apurados (${sum}) diverge do totalizador oficial (TOTC:${currentBlock.expectedTotc}).`,
-            details: {
-              officeCode: currentBlock.officeCode,
-              calculatedSum: sum,
-              expectedTotc: currentBlock.expectedTotc
-            }
-          };
-        }
+      if (currentBlock.expectedTotc === undefined) {
+        return {
+          code: 'INCOMPLETE_OFFICE_BLOCK',
+          message: `Bloco de cargo incompleto: totalizador oficial (TOTC) ausente para o cargo ${currentBlock.officeName} (${currentBlock.officeCode}).`,
+          details: { officeCode: currentBlock.officeCode, officeName: currentBlock.officeName }
+        };
+      }
+      const sum = currentBlock.votes.reduce((acc, v) => acc + v.quantity, 0);
+      if (sum !== currentBlock.expectedTotc) {
+        return {
+          code: 'VOTE_TOTAL_MISMATCH',
+          message: `Inconsistência no cargo ${currentBlock.officeName} (${currentBlock.officeCode}): a soma dos votos apurados (${sum}) diverge do totalizador oficial (TOTC:${currentBlock.expectedTotc}).`,
+          details: {
+            officeCode: currentBlock.officeCode,
+            calculatedSum: sum,
+            expectedTotc: currentBlock.expectedTotc
+          }
+        };
       }
       return null;
     };
@@ -303,9 +331,11 @@ export abstract class BaseVrqrAdapter implements QrBuAdapter {
       } else if (token.key === 'IDEL') {
         currentElectionPlei = token.value;
       } else if (token.key === 'CARG') {
-        // Fecha e valida o bloco do cargo anterior
-        const err = closeCurrentOfficeBlock();
-        if (err) return err;
+        // Se estiver em um cargo anterior, fecha e valida o bloco
+        if (state === 'IN_OFFICE') {
+          const err = closeCurrentOfficeBlock();
+          if (err) return err;
+        }
 
         if (!/^\d+$/.test(token.value)) {
           return {
@@ -334,6 +364,8 @@ export abstract class BaseVrqrAdapter implements QrBuAdapter {
           votes: []
         };
         officeBlocks.push(currentBlock);
+        seenFieldsInOffice.clear();
+        state = 'IN_OFFICE';
       } else if (token.key === 'TIPO') {
         if (token.value === '1') currentOfficeType = 'PROPORCIONAL';
         else if (token.value === '2') currentOfficeType = 'CONSULTA';
@@ -346,6 +378,36 @@ export abstract class BaseVrqrAdapter implements QrBuAdapter {
             message: `Totalizador de votos (TOTC) inválido: '${token.value}'.`
           };
         }
+
+        if (state === 'HEADER' || state === 'BETWEEN_OFFICES') {
+          return {
+            code: 'DISPLACED_VOTE_TOKEN',
+            message: 'Totalizador de votos (TOTC) encontrado fora de um cargo ativo e fora do bloco de resumo do BU.'
+          };
+        }
+
+        if (state === 'IN_SUMMARY') {
+          if (seenSummaryFields.has('TOTC')) {
+            return {
+              code: 'DUPLICATE_SUMMARY_FIELD',
+              message: 'Totalizador geral de votos (TOTC) duplicado no bloco de resumo do BU.'
+            };
+          }
+          seenSummaryFields.add('TOTC');
+          summaryData.totc = totc;
+          metadata.set('SUMMARY_TOTC', token.value);
+          continue;
+        }
+
+        // state === 'IN_OFFICE'
+        if (seenFieldsInOffice.has('TOTC')) {
+          return {
+            code: 'DUPLICATE_OFFICE_FIELD',
+            message: `Totalizador (TOTC) duplicado no mesmo cargo (${currentOfficeName}).`
+          };
+        }
+        seenFieldsInOffice.add('TOTC');
+
         if (currentBlock) {
           currentBlock.expectedTotc = totc;
           const err = closeCurrentOfficeBlock();
@@ -354,16 +416,42 @@ export abstract class BaseVrqrAdapter implements QrBuAdapter {
           currentBlock = null;
           currentOfficeCode = '';
           currentPartyCode = '';
+          seenFieldsInOffice.clear();
+          state = 'BETWEEN_OFFICES';
         }
       } else if (token.key === 'APTA' || token.key === 'APTS' || token.key === 'APTT') {
-        // Marcador de totalizadores gerais do BU ou fim de votos
-        if (currentBlock && currentBlock.expectedTotc !== undefined) {
-          const err = closeCurrentOfficeBlock();
-          if (err) return err;
-          currentBlock = null;
-          currentOfficeCode = '';
+        // Marcador de totalizadores gerais do BU ou resumo eleitoral
+        if (state === 'IN_OFFICE') {
+          // Dentro do cargo, o TSE registra os aptos intermediários antes do encerramento
+          metadata.set(token.key, token.value);
+        } else if (state === 'HEADER') {
+          // No cabeçalho antes do primeiro cargo, registra os eleitores aptos da seção
+          metadata.set(token.key, token.value);
+        } else {
+          // Fora de cargo ativo (BETWEEN_OFFICES ou IN_SUMMARY), transita formalmente para o bloco de resumo global do BU
+          state = 'IN_SUMMARY';
+          if (seenSummaryFields.has(token.key)) {
+            return {
+              code: 'DUPLICATE_SUMMARY_FIELD',
+              message: `Campo de eleitores aptos (${token.key}) duplicado no resumo do BU.`
+            };
+          }
+          seenSummaryFields.add(token.key);
+          const parsedVal = parseStrictNonNegativeInt(token.value);
+          if (parsedVal !== null) {
+            if (token.key === 'APTA') summaryData.apta = parsedVal;
+            if (token.key === 'APTS') summaryData.apts = parsedVal;
+            if (token.key === 'APTT') summaryData.aptt = parsedVal;
+          }
+          metadata.set(`SUMMARY_${token.key}`, token.value);
         }
       } else if (token.key === 'PART') {
+        if (state !== 'IN_OFFICE') {
+          return {
+            code: 'DISPLACED_VOTE_TOKEN',
+            message: 'Identificador de partido (PART) encontrado fora do bloco de cargo.'
+          };
+        }
         if (token.value.includes(',')) {
           // Suporte legado sintético: PART:<num>,<qty>
           const [pNum, pQtyStr] = token.value.split(',');
@@ -373,9 +461,6 @@ export abstract class BaseVrqrAdapter implements QrBuAdapter {
               code: 'INVALID_VOTE_DATA',
               message: `Dados inválidos de legenda partidária: '${token.value}'.`
             };
-          }
-          if (!currentOfficeCode) {
-            return { code: 'INVALID_OFFICE_CODE', message: 'Voto de legenda encontrado antes do identificador de cargo (CARG).' };
           }
           const v: BallotVote = {
             officeCode: currentOfficeCode,
@@ -395,12 +480,15 @@ export abstract class BaseVrqrAdapter implements QrBuAdapter {
           currentPartyCode = token.value;
         }
       } else if (token.key === 'LEGP') {
+        if (state !== 'IN_OFFICE') {
+          return {
+            code: 'DISPLACED_VOTE_TOKEN',
+            message: 'Voto de legenda (LEGP) encontrado fora do bloco de cargo.'
+          };
+        }
         const qty = parseStrictNonNegativeInt(token.value);
         if (qty === null) {
           return { code: 'INVALID_VOTE_DATA', message: `Quantidade de votos de legenda inválida: '${token.value}'.` };
-        }
-        if (!currentOfficeCode) {
-          return { code: 'INVALID_OFFICE_CODE', message: 'Voto de legenda (LEGP) encontrado antes do identificador de cargo (CARG).' };
         }
         if (qty > 0) {
           const v: BallotVote = {
@@ -415,15 +503,61 @@ export abstract class BaseVrqrAdapter implements QrBuAdapter {
           votes.push(v);
           if (currentBlock) currentBlock.votes.push(v);
         }
+      } else if (token.key === 'LEGC') {
+        const parsedVal = parseStrictNonNegativeInt(token.value);
+        if (parsedVal === null) {
+          return { code: 'INVALID_VOTE_DATA', message: `Quantidade de legenda consolidada (LEGC) inválida: '${token.value}'.` };
+        }
+        if (state === 'IN_OFFICE') {
+          metadata.set(`LEGC_${currentOfficeCode}`, token.value);
+          metadata.set('LEGC', token.value);
+        } else if (state === 'IN_SUMMARY') {
+          metadata.set('SUMMARY_LEGC', token.value);
+        } else {
+          return {
+            code: 'DISPLACED_VOTE_TOKEN',
+            message: 'Totalizador de legenda consolidada (LEGC) encontrado fora do bloco de cargo e fora do resumo do BU.'
+          };
+        }
       } else if (token.key === 'BRAN') {
         const qty = parseStrictNonNegativeInt(token.value);
         if (qty === null) {
           return { code: 'INVALID_VOTE_DATA', message: `Quantidade de votos em branco inválida: '${token.value}'.` };
         }
-        if (!currentOfficeCode) {
-          // Token global de resumo do BU ignorado se o cargo já estiver fechado
+        if (state === 'HEADER') {
+          return {
+            code: 'DISPLACED_VOTE_TOKEN',
+            message: 'Token de votos em branco (BRAN) encontrado antes do identificador de cargo (CARG).'
+          };
+        }
+        if (state === 'BETWEEN_OFFICES') {
+          return {
+            code: 'DISPLACED_VOTE_TOKEN',
+            message: 'Token de votos em branco (BRAN) encontrado fora de um cargo ativo e fora do bloco de resumo global do BU.'
+          };
+        }
+        if (state === 'IN_SUMMARY') {
+          if (seenSummaryFields.has('BRAN')) {
+            return {
+              code: 'DUPLICATE_SUMMARY_FIELD',
+              message: 'Votos em branco (BRAN) informados mais de uma vez no bloco de resumo do BU.'
+            };
+          }
+          seenSummaryFields.add('BRAN');
+          summaryData.bran = qty;
+          metadata.set('SUMMARY_BRAN', token.value);
           continue;
         }
+
+        // state === 'IN_OFFICE'
+        if (seenFieldsInOffice.has('BRAN')) {
+          return {
+            code: 'DUPLICATE_OFFICE_FIELD',
+            message: `Votos em branco (BRAN) duplicados no mesmo cargo (${currentOfficeName}).`
+          };
+        }
+        seenFieldsInOffice.add('BRAN');
+
         const v: BallotVote = {
           officeCode: currentOfficeCode,
           officeName: currentOfficeName,
@@ -439,10 +573,40 @@ export abstract class BaseVrqrAdapter implements QrBuAdapter {
         if (qty === null) {
           return { code: 'INVALID_VOTE_DATA', message: `Quantidade de votos nulos inválida: '${token.value}'.` };
         }
-        if (!currentOfficeCode) {
-          // Token global de resumo do BU ignorado se o cargo já estiver fechado
+        if (state === 'HEADER') {
+          return {
+            code: 'DISPLACED_VOTE_TOKEN',
+            message: 'Token de votos nulos (NULO) encontrado antes do identificador de cargo (CARG).'
+          };
+        }
+        if (state === 'BETWEEN_OFFICES') {
+          return {
+            code: 'DISPLACED_VOTE_TOKEN',
+            message: 'Token de votos nulos (NULO) encontrado fora de um cargo ativo e fora do bloco de resumo global do BU.'
+          };
+        }
+        if (state === 'IN_SUMMARY') {
+          if (seenSummaryFields.has('NULO')) {
+            return {
+              code: 'DUPLICATE_SUMMARY_FIELD',
+              message: 'Votos nulos (NULO) informados mais de uma vez no bloco de resumo do BU.'
+            };
+          }
+          seenSummaryFields.add('NULO');
+          summaryData.nulo = qty;
+          metadata.set('SUMMARY_NULO', token.value);
           continue;
         }
+
+        // state === 'IN_OFFICE'
+        if (seenFieldsInOffice.has('NULO')) {
+          return {
+            code: 'DUPLICATE_OFFICE_FIELD',
+            message: `Votos nulos (NULO) duplicados no mesmo cargo (${currentOfficeName}).`
+          };
+        }
+        seenFieldsInOffice.add('NULO');
+
         const v: BallotVote = {
           officeCode: currentOfficeCode,
           officeName: currentOfficeName,
@@ -453,35 +617,68 @@ export abstract class BaseVrqrAdapter implements QrBuAdapter {
         };
         votes.push(v);
         if (currentBlock) currentBlock.votes.push(v);
-      } else if (token.key === 'NOMI' && token.value.includes(',')) {
-        // Suporte legado sintético: NOMI:<num>,<qty>
-        const [cNum, cQtyStr] = token.value.split(',');
-        const cQty = parseStrictNonNegativeInt(cQtyStr);
-        if (!/^\d+$/.test(cNum) || cQty === null) {
-          return { code: 'INVALID_VOTE_DATA', message: `Dados de voto nominal inválidos: '${token.value}'.` };
+      } else if (token.key === 'NOMI') {
+        if (token.value.includes(',')) {
+          // Suporte legado sintético: NOMI:<num>,<qty>
+          if (state !== 'IN_OFFICE') {
+            return {
+              code: 'DISPLACED_VOTE_TOKEN',
+              message: 'Voto nominal (NOMI) encontrado fora do bloco de cargo.'
+            };
+          }
+          const [cNum, cQtyStr] = token.value.split(',');
+          const cQty = parseStrictNonNegativeInt(cQtyStr);
+          if (!/^\d+$/.test(cNum) || cQty === null) {
+            return { code: 'INVALID_VOTE_DATA', message: `Dados de voto nominal inválidos: '${token.value}'.` };
+          }
+          const v: BallotVote = {
+            officeCode: currentOfficeCode,
+            officeName: currentOfficeName,
+            officeType: currentOfficeType,
+            candidateNumber: cNum,
+            type: 'NOMINAL',
+            quantity: cQty,
+            electionPlei: currentElectionPlei
+          };
+          votes.push(v);
+          if (currentBlock) currentBlock.votes.push(v);
+        } else {
+          // Total de votos nominais (resumo do cargo ou resumo geral)
+          const qty = parseStrictNonNegativeInt(token.value);
+          if (qty === null) {
+            return { code: 'INVALID_VOTE_DATA', message: `Quantidade total de votos nominais inválida: '${token.value}'.` };
+          }
+          if (state === 'IN_OFFICE') {
+            // No cargo, NOMI:<total> é o totalizador nominal do cargo
+            metadata.set(`NOMI_${currentOfficeCode}`, token.value);
+          } else if (state === 'IN_SUMMARY') {
+            if (seenSummaryFields.has('NOMI')) {
+              return {
+                code: 'DUPLICATE_SUMMARY_FIELD',
+                message: 'Total de votos nominais (NOMI) duplicado no bloco de resumo do BU.'
+              };
+            }
+            seenSummaryFields.add('NOMI');
+            summaryData.nomi = qty;
+            metadata.set('SUMMARY_NOMI', token.value);
+          } else {
+            return {
+              code: 'DISPLACED_VOTE_TOKEN',
+              message: 'Totalizador de votos nominais (NOMI) encontrado fora de um cargo ativo e fora do resumo do BU.'
+            };
+          }
         }
-        if (!currentOfficeCode) {
-          return { code: 'INVALID_OFFICE_CODE', message: 'Voto nominal encontrado antes do identificador de cargo (CARG).' };
-        }
-        const v: BallotVote = {
-          officeCode: currentOfficeCode,
-          officeName: currentOfficeName,
-          officeType: currentOfficeType,
-          candidateNumber: cNum,
-          type: 'NOMINAL',
-          quantity: cQty,
-          electionPlei: currentElectionPlei
-        };
-        votes.push(v);
-        if (currentBlock) currentBlock.votes.push(v);
       } else if (/^\d+$/.test(token.key)) {
         // Chave numérica pura = Voto Nominal em Candidato (<candidateNumber>:<votes>)
+        if (state !== 'IN_OFFICE') {
+          return {
+            code: 'DISPLACED_VOTE_TOKEN',
+            message: `Voto no candidato ${token.key} encontrado fora do bloco de cargo.`
+          };
+        }
         const qty = parseStrictNonNegativeInt(token.value);
         if (qty === null) {
           return { code: 'INVALID_VOTE_DATA', message: `Quantidade inválida de votos para o candidato ${token.key}: '${token.value}'.` };
-        }
-        if (!currentOfficeCode) {
-          return { code: 'INVALID_OFFICE_CODE', message: `Voto no candidato ${token.key} encontrado antes do identificador de cargo (CARG).` };
         }
         const v: BallotVote = {
           officeCode: currentOfficeCode,
@@ -495,12 +692,36 @@ export abstract class BaseVrqrAdapter implements QrBuAdapter {
         };
         votes.push(v);
         if (currentBlock) currentBlock.votes.push(v);
+      } else if (state === 'IN_SUMMARY') {
+        // Verificação estrita de gramática no bloco de resumo
+        if (!summaryAllowedKeys.has(token.key)) {
+          return {
+            code: 'DISPLACED_VOTE_TOKEN',
+            message: `Token '${token.key}' não permitido na gramática do bloco de resumo do BU.`
+          };
+        }
       }
     }
 
     // Fecha e valida o último bloco de cargo se ainda estiver pendente
     const finalBlockErr = closeCurrentOfficeBlock();
     if (finalBlockErr) return finalBlockErr;
+
+    // Conferência de consistência do bloco de resumo global do BU se completo
+    if (summaryData.totc !== undefined && summaryData.nomi !== undefined && summaryData.bran !== undefined && summaryData.nulo !== undefined) {
+      const summarySum = summaryData.nomi + summaryData.bran + summaryData.nulo;
+      if (summarySum !== summaryData.totc) {
+        return {
+          code: 'SUMMARY_TOTAL_MISMATCH',
+          message: `Inconsistência no bloco de resumo do BU: a soma dos totais (NOMI:${summaryData.nomi} + BRAN:${summaryData.bran} + NULO:${summaryData.nulo} = ${summarySum}) diverge do totalizador geral oficial (TOTC:${summaryData.totc}).`,
+          details: {
+            calculatedSum: summarySum,
+            expectedTotc: summaryData.totc,
+            summaryData
+          }
+        };
+      }
+    }
 
     // Verificação estrita de identificadores essenciais (Sem fallbacks silenciosos)
     const plei = metadata.get('PLEI');
@@ -579,6 +800,7 @@ export abstract class BaseVrqrAdapter implements QrBuAdapter {
       signature: metadata.get('ASSI') || '',
       fase: fase.trim(),
       votes,
+      metadata: Object.fromEntries(metadata),
       apto: apto !== null ? apto : undefined,
       comp: comp !== null ? comp : undefined,
       falt: falt !== null ? falt : undefined,
