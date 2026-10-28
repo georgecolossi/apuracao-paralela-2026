@@ -4,6 +4,7 @@ import {
   inspectFocusCapabilities,
   calculateNormalizedTouchPoint,
   createTouchFocusConstraints,
+  createManualDistanceConstraints,
   mapCameraError,
   CameraDeviceLike,
   FocusCapabilities
@@ -49,7 +50,7 @@ describe('PR 5 — Mobile Scanner: Gerenciamento de Câmera e Foco', () => {
   });
 
   describe('2. Inspeção Honesta de Capacidades de Hardware (FocusCapabilities)', () => {
-    it('2.1 Android/Chrome com foco contínuo e modo manual', () => {
+    it('2.1 Android/Chrome com foco contínuo, pontos de interesse e modo manual', () => {
       const rawCaps = {
         focusMode: ['continuous', 'manual', 'single-shot'],
         exposureMode: ['continuous'],
@@ -58,44 +59,62 @@ describe('PR 5 — Mobile Scanner: Gerenciamento de Câmera e Foco', () => {
 
       const inspected = inspectFocusCapabilities(rawCaps);
       expect(inspected.supportsContinuousFocus).toBe(true);
-      expect(inspected.supportsTouchFocus).toBe(true);
+      expect(inspected.supportsSpatialTouchFocus).toBe(true);
+      expect(inspected.supportsManualFocusDistance).toBe(true);
       expect(inspected.hasPointsOfInterest).toBe(true);
     });
 
-    it('2.2 Android/Chrome com foco contínuo mas SEM modo manual ou pointsOfInterest', () => {
+    it('2.2 Dispositivo com foco manual de distância mas SEM pointsOfInterest', () => {
+      const rawCaps = {
+        focusMode: ['continuous', 'manual']
+      };
+
+      const inspected = inspectFocusCapabilities(rawCaps);
+      expect(inspected.supportsContinuousFocus).toBe(true);
+      // REGRA DE AUDITORIA: foco manual NÃO confere suporte a foco espacial por toque!
+      expect(inspected.supportsSpatialTouchFocus).toBe(false);
+      expect(inspected.supportsManualFocusDistance).toBe(true);
+      expect(inspected.hasPointsOfInterest).toBe(false);
+    });
+
+    it('2.3 Android/Chrome com foco contínuo mas SEM modo manual ou pointsOfInterest', () => {
       const rawCaps = {
         focusMode: ['continuous', 'none']
       };
 
       const inspected = inspectFocusCapabilities(rawCaps);
       expect(inspected.supportsContinuousFocus).toBe(true);
-      expect(inspected.supportsTouchFocus).toBe(false);
+      expect(inspected.supportsSpatialTouchFocus).toBe(false);
+      expect(inspected.supportsManualFocusDistance).toBe(false);
     });
 
-    it('2.3 iOS/Safari (WebRTC padrão sem controles de foco expostos)', () => {
+    it('2.4 iOS/Safari (WebRTC padrão sem controles de foco expostos)', () => {
       const rawCaps = {
         aspectRatio: { min: 0.5, max: 2.0 },
         facingMode: ['environment']
-        // focusMode ausente na API WebRTC do WebKit móvel
       };
 
       const inspected = inspectFocusCapabilities(rawCaps);
       expect(inspected.supportsContinuousFocus).toBe(false);
-      expect(inspected.supportsTouchFocus).toBe(false);
+      expect(inspected.supportsSpatialTouchFocus).toBe(false);
+      expect(inspected.supportsManualFocusDistance).toBe(false);
     });
 
-    it('2.4 Fail-closed para capabilities nulas, indefinidas ou inválidas', () => {
+    it('2.5 Fail-closed para capabilities nulas, indefinidas ou inválidas', () => {
       expect(inspectFocusCapabilities(null)).toEqual({
         supportsContinuousFocus: false,
-        supportsTouchFocus: false
+        supportsSpatialTouchFocus: false,
+        supportsManualFocusDistance: false
       });
       expect(inspectFocusCapabilities(undefined)).toEqual({
         supportsContinuousFocus: false,
-        supportsTouchFocus: false
+        supportsSpatialTouchFocus: false,
+        supportsManualFocusDistance: false
       });
       expect(inspectFocusCapabilities('invalid')).toEqual({
         supportsContinuousFocus: false,
-        supportsTouchFocus: false
+        supportsSpatialTouchFocus: false,
+        supportsManualFocusDistance: false
       });
     });
   });
@@ -143,21 +162,38 @@ describe('PR 5 — Mobile Scanner: Gerenciamento de Câmera e Foco', () => {
   });
 
   describe('4. Honestidade Técnica de Touch-Focus: Não Simular Foco Não Executado', () => {
-    it('4.1 Retorna null e NENHUMA constraint se o hardware não suportar touch focus', () => {
-      const capsWithoutTouch: FocusCapabilities = {
+    it('4.1 Retorna null e NENHUMA constraint se o hardware não suportar touch focus espacial', () => {
+      const capsWithoutSpatial: FocusCapabilities = {
         supportsContinuousFocus: true,
-        supportsTouchFocus: false
+        supportsSpatialTouchFocus: false,
+        supportsManualFocusDistance: false
       };
 
       const coords = { x: 0.5, y: 0.5 };
-      const constraints = createTouchFocusConstraints(coords, capsWithoutTouch);
+      const constraints = createTouchFocusConstraints(coords, capsWithoutSpatial);
       expect(constraints).toBeNull();
     });
 
-    it('4.2 Gera constraints com pointsOfInterest se o hardware suportar', () => {
+    it('4.2 Dispositivo com apenas focusMode: manual NÃO gera constraints espaciais de toque', () => {
+      const capsWithManualOnly: FocusCapabilities = {
+        supportsContinuousFocus: true,
+        supportsSpatialTouchFocus: false,
+        supportsManualFocusDistance: true,
+        hasPointsOfInterest: false,
+        rawFocusModes: ['continuous', 'manual']
+      };
+
+      const coords = { x: 0.5, y: 0.5 };
+      // REGRA DE AUDITORIA: Não gera constraints de touch focus quando falta pointsOfInterest
+      const constraints = createTouchFocusConstraints(coords, capsWithManualOnly);
+      expect(constraints).toBeNull();
+    });
+
+    it('4.3 Gera constraints com pointsOfInterest APENAS se o hardware suportar pointsOfInterest', () => {
       const capsWithPoi: FocusCapabilities = {
         supportsContinuousFocus: true,
-        supportsTouchFocus: true,
+        supportsSpatialTouchFocus: true,
+        supportsManualFocusDistance: false,
         hasPointsOfInterest: true
       };
 
@@ -169,20 +205,29 @@ describe('PR 5 — Mobile Scanner: Gerenciamento de Câmera e Foco', () => {
       });
     });
 
-    it('4.3 Gera constraints com modo manual e distância padrão em hardware com focusMode manual', () => {
+    it('4.4 Ajuste manual de distância focal opera via função dedicada sem coordenadas espaciais', () => {
       const capsWithManual: FocusCapabilities = {
         supportsContinuousFocus: true,
-        supportsTouchFocus: true,
-        hasPointsOfInterest: false,
-        rawFocusModes: ['continuous', 'manual']
+        supportsSpatialTouchFocus: false,
+        supportsManualFocusDistance: true,
+        hasPointsOfInterest: false
       };
 
-      const coords = { x: 0.5, y: 0.5 };
-      const constraints = createTouchFocusConstraints(coords, capsWithManual);
+      const constraints = createManualDistanceConstraints(0.25, capsWithManual);
       expect(constraints).not.toBeNull();
       expect(constraints).toEqual({
-        advanced: [{ focusMode: 'manual', focusDistance: 0.2 }]
+        advanced: [{ focusMode: 'manual', focusDistance: 0.25 }]
       });
+
+      // Se hardware não suporta manual focus distance, retorna null
+      expect(createManualDistanceConstraints(0.25, {
+        supportsContinuousFocus: true,
+        supportsSpatialTouchFocus: false,
+        supportsManualFocusDistance: false
+      })).toBeNull();
+
+      // Distâncias inválidas retornam null
+      expect(createManualDistanceConstraints(-1, capsWithManual)).toBeNull();
     });
   });
 

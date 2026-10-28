@@ -4,7 +4,9 @@
  * Responsabilidades:
  * 1. Priorização determinística da câmera traseira principal (evitando lentes macro ou ultrawide).
  * 2. Detecção e aplicação de foco contínuo somente quando suportado pelo hardware.
- * 3. Detecção e aplicação de foco por toque (touch-to-focus) apenas com suporte real da API/dispositivo.
+ * 3. Separação estrita entre:
+ *    a) Foco espacial sobre ponto tocado (supportsSpatialTouchFocus / pointsOfInterest).
+ *    b) Controle manual de distância focal (supportsManualFocusDistance).
  * 4. Conversão precisa de coordenadas de toque para espaço normalizado de vídeo (0.0 a 1.0).
  * 5. Mapeamento de erros de acesso e permissões de hardware.
  */
@@ -16,7 +18,8 @@ export interface CameraDeviceLike {
 
 export interface FocusCapabilities {
   supportsContinuousFocus: boolean;
-  supportsTouchFocus: boolean;
+  supportsSpatialTouchFocus: boolean;      // Foco espacial real nas coordenadas (x, y) tocadas
+  supportsManualFocusDistance: boolean;    // Controle manual de distância focal (não espacial)
   rawFocusModes?: string[];
   hasPointsOfInterest?: boolean;
 }
@@ -65,29 +68,32 @@ export function prioritizeCameras<T extends CameraDeviceLike>(devices: T[]): T[]
 
 /**
  * Inspeciona os recursos reais do MediaStreamTrack (capabilities)
- * para determinar com precisão o que o hardware realmente suporta.
+ * separando estritamente foco espacial (pointsOfInterest) de ajuste manual de distância focal.
  */
 export function inspectFocusCapabilities(capabilities?: unknown): FocusCapabilities {
   if (!capabilities || typeof capabilities !== 'object') {
     return {
       supportsContinuousFocus: false,
-      supportsTouchFocus: false
+      supportsSpatialTouchFocus: false,
+      supportsManualFocusDistance: false
     };
   }
 
   const caps = capabilities as Record<string, unknown>;
   const focusModes = Array.isArray(caps.focusMode) ? (caps.focusMode as string[]) : [];
   const hasContinuous = focusModes.includes('continuous');
-  
-  // Suporte a foco manual ou pontos de interesse segundo a especificação W3C ImageCapture
   const hasManual = focusModes.includes('manual');
   const hasPointsOfInterest = Boolean(caps.pointsOfInterest);
 
-  const supportsTouch = hasPointsOfInterest || hasManual;
+  // REGRA DE AUDITORIA: supportsSpatialTouchFocus é verdadeiro SOMENTE quando
+  // houver suporte efetivo a pointsOfInterest na API/dispositivo.
+  // focusMode: 'manual' isolado NÃO garante foco nas coordenadas tocadas!
+  const supportsSpatialTouch = hasPointsOfInterest;
 
   return {
     supportsContinuousFocus: hasContinuous,
-    supportsTouchFocus: supportsTouch,
+    supportsSpatialTouchFocus: supportsSpatialTouch,
+    supportsManualFocusDistance: hasManual,
     rawFocusModes: focusModes,
     hasPointsOfInterest
   };
@@ -124,29 +130,42 @@ export function calculateNormalizedTouchPoint(
 }
 
 /**
- * Gera as restrições de vídeo para touch-to-focus real.
- * Retorna null se as capacidades não oferecerem suporte real ao foco por toque.
+ * Gera as restrições de vídeo para touch-to-focus espacial.
+ * Retorna null se o hardware não oferecer suporte comprovado a pointsOfInterest.
+ * NÃO assume que focusMode: manual mira nas coordenadas tocadas.
  */
 export function createTouchFocusConstraints(
   coords: NormalizedCoordinates,
   capabilities: FocusCapabilities
 ): Record<string, unknown> | null {
-  if (!capabilities.supportsTouchFocus) {
+  if (!capabilities.supportsSpatialTouchFocus || !capabilities.hasPointsOfInterest) {
     return null;
   }
 
-  const advancedConstraints: Record<string, unknown> = {};
+  return {
+    advanced: [{ pointsOfInterest: [{ x: coords.x, y: coords.y }] }]
+  };
+}
 
-  if (capabilities.hasPointsOfInterest) {
-    advancedConstraints.pointsOfInterest = [{ x: coords.x, y: coords.y }];
-  } else if (capabilities.rawFocusModes?.includes('manual')) {
-    advancedConstraints.focusMode = 'manual';
-    // Em dispositivos com modo manual sem pointsOfInterest explícito
-    advancedConstraints.focusDistance = 0.2; // Distância típica para captura de QR Code (20cm)
+/**
+ * Gera restrições para ajuste manual de distância focal quando suportado.
+ * Tratamento separado do foco espacial por toque, sem associar a coordenadas (x, y).
+ */
+export function createManualDistanceConstraints(
+  distance: number,
+  capabilities: FocusCapabilities
+): Record<string, unknown> | null {
+  if (!capabilities.supportsManualFocusDistance) {
+    return null;
+  }
+
+  // Valida que distance é um número finito positivo
+  if (typeof distance !== 'number' || !Number.isFinite(distance) || distance < 0) {
+    return null;
   }
 
   return {
-    advanced: [advancedConstraints]
+    advanced: [{ focusMode: 'manual', focusDistance: distance }]
   };
 }
 

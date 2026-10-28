@@ -9,18 +9,21 @@ export interface ErrorDetails {
   title: string;
   message: string;
   isRetryable: boolean;
+  technicalCode?: string;
 }
 
 export function formatScanError(status: number, data?: { error?: string; message?: string; reason?: string }): ErrorDetails {
   const code = (data?.error || data?.message || '').toUpperCase();
   const rawMsg = data?.message || data?.error || '';
+  const technicalCode = data?.error || (code ? code : undefined);
 
   // 1. Erros de Autenticação e RBAC
   if (status === 401) {
     return {
       title: 'Sessão Expirada',
       message: 'Sua sessão expirou ou não está autenticada. Faça login novamente para continuar.',
-      isRetryable: false
+      isRetryable: false,
+      technicalCode
     };
   }
 
@@ -29,13 +32,15 @@ export function formatScanError(status: number, data?: { error?: string; message
       return {
         title: 'Acesso Não Autorizado',
         message: 'Usuários com perfil de visualizador (VIEWER) não têm permissão para operar o scanner de BUs.',
-        isRetryable: false
+        isRetryable: false,
+        technicalCode
       };
     }
     return {
       title: 'Falha de Segurança (CSRF)',
       message: 'A validação de segurança da requisição falhou. Recarregue a página antes de nova tentativa.',
-      isRetryable: true
+      isRetryable: true,
+      technicalCode
     };
   }
 
@@ -44,7 +49,8 @@ export function formatScanError(status: number, data?: { error?: string; message
     return {
       title: 'Integridade Criptográfica Violada',
       message: 'O hash criptográfico SHA-512 do Boletim de Urna não confere com o conteúdo dos votos. BU rejeitado.',
-      isRetryable: true
+      isRetryable: true,
+      technicalCode
     };
   }
 
@@ -53,7 +59,8 @@ export function formatScanError(status: number, data?: { error?: string; message
     return {
       title: 'Boletim Já Processado',
       message: 'Este Boletim de Urna (mesma urna, zona e seção) já foi recebido e apurado anteriormente.',
-      isRetryable: false
+      isRetryable: false,
+      technicalCode
     };
   }
 
@@ -62,7 +69,8 @@ export function formatScanError(status: number, data?: { error?: string; message
     return {
       title: 'Seção Fora de Cobertura',
       message: 'Esta seção eleitoral não pertence à malha de cobertura cadastrada para a eleição ativa.',
-      isRetryable: false
+      isRetryable: false,
+      technicalCode
     };
   }
 
@@ -70,7 +78,8 @@ export function formatScanError(status: number, data?: { error?: string; message
     return {
       title: 'Cargo Não Configurado',
       message: 'O BU contém votos para cargos que não estão configurados na eleição ativa.',
-      isRetryable: false
+      isRetryable: false,
+      technicalCode
     };
   }
 
@@ -78,7 +87,8 @@ export function formatScanError(status: number, data?: { error?: string; message
     return {
       title: 'Eleição Incompatível',
       message: 'Os identificadores do BU (pleito, ano ou fase) não correspondem à eleição em andamento.',
-      isRetryable: false
+      isRetryable: false,
+      technicalCode
     };
   }
 
@@ -86,7 +96,8 @@ export function formatScanError(status: number, data?: { error?: string; message
     return {
       title: 'Modo Incompatível',
       message: 'Tentativa de enviar BU sintético/simulado para a apuração oficial.',
-      isRetryable: false
+      isRetryable: false,
+      technicalCode
     };
   }
 
@@ -95,7 +106,8 @@ export function formatScanError(status: number, data?: { error?: string; message
     return {
       title: 'Versão Não Suportada',
       message: 'O layout deste QRBU não é suportado pelo sistema (requer VRQR 6.0 oficial).',
-      isRetryable: false
+      isRetryable: false,
+      technicalCode
     };
   }
 
@@ -103,7 +115,8 @@ export function formatScanError(status: number, data?: { error?: string; message
     return {
       title: 'Layout Não Homologado',
       message: 'Versão de layout experimental desabilitada para execução em produção.',
-      isRetryable: false
+      isRetryable: false,
+      technicalCode
     };
   }
 
@@ -111,7 +124,8 @@ export function formatScanError(status: number, data?: { error?: string; message
     return {
       title: 'Formato de Envelope Inválido',
       message: 'Tokens de votos encontrados em posição inadequada no envelope do QRBU.',
-      isRetryable: true
+      isRetryable: true,
+      technicalCode
     };
   }
 
@@ -119,7 +133,8 @@ export function formatScanError(status: number, data?: { error?: string; message
     return {
       title: 'Envelope Incompleto',
       message: 'O QRBU lido possui blocos de cargos ou totalizadores incompletos.',
-      isRetryable: true
+      isRetryable: true,
+      technicalCode
     };
   }
 
@@ -127,7 +142,8 @@ export function formatScanError(status: number, data?: { error?: string; message
     return {
       title: 'Divergência Aritmética',
       message: 'A soma dos votos não coincide com os totalizadores oficiais registrados no BU.',
-      isRetryable: true
+      isRetryable: true,
+      technicalCode
     };
   }
 
@@ -135,7 +151,8 @@ export function formatScanError(status: number, data?: { error?: string; message
     return {
       title: 'Inconsistência de Partes',
       message: 'Divergência na sequência ou partes do BU multipartes. Reinicie a leitura.',
-      isRetryable: true
+      isRetryable: true,
+      technicalCode
     };
   }
 
@@ -143,7 +160,8 @@ export function formatScanError(status: number, data?: { error?: string; message
     return {
       title: 'Cabeçalho Inválido',
       message: 'O código escaneado não possui o cabeçalho padrão oficial (QRBU:...).',
-      isRetryable: true
+      isRetryable: true,
+      technicalCode
     };
   }
 
@@ -151,6 +169,7 @@ export function formatScanError(status: number, data?: { error?: string; message
   return {
     title: 'Falha no Processamento',
     message: rawMsg || `Ocorreu um erro ao processar o Boletim de Urna (Código HTTP ${status}).`,
-    isRetryable: true
+    isRetryable: true,
+    technicalCode
   };
 }

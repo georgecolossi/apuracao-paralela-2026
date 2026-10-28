@@ -31,7 +31,7 @@ import { formatScanError, ErrorDetails } from '@/lib/scanner/qrbuErrorHandler';
 export default function ScannerMobilePage() {
   const router = useRouter();
 
-  // Estados de Sessão e CSRF
+  // Estados de Sessão e CSRF (Sincronizados via Refs para eliminar Stale Closures)
   const [sessionId, setSessionId] = useState<string>('');
   const [csrfToken, setCsrfToken] = useState<string>('');
 
@@ -41,7 +41,9 @@ export default function ScannerMobilePage() {
   const [isScanning, setIsScanning] = useState<boolean>(false);
   const [focusCaps, setFocusCaps] = useState<FocusCapabilities>({
     supportsContinuousFocus: false,
-    supportsTouchFocus: false
+    supportsSpatialTouchFocus: false,
+    supportsManualFocusDistance: false,
+    hasPointsOfInterest: false
   });
   const [touchPoint, setTouchPoint] = useState<{ x: number; y: number } | null>(null);
 
@@ -55,7 +57,12 @@ export default function ScannerMobilePage() {
   // Entrada Manual e Contingência por Imagem
   const [manualInput, setManualInput] = useState<string>('');
 
-  // Refs de controle de ciclo de vida e concorrência
+  // Refs de controle de ciclo de vida, concorrência e eliminação de stale closures
+  const sessionIdRef = useRef<string>('');
+  const csrfTokenRef = useRef<string>('');
+  const generationIdRef = useRef<number>(0);
+  const activeAbortControllerRef = useRef<AbortController | null>(null);
+
   const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
   const fileQrCodeRef = useRef<Html5Qrcode | null>(null);
   const deduplicatorRef = useRef(new ScannerDeduplicator());
@@ -65,11 +72,51 @@ export default function ScannerMobilePage() {
   const wasScanningBeforeHiddenRef = useRef<boolean>(false);
 
   /**
-   * Inicializa nova sessão única e idempotente.
+   * Obtém token CSRF de forma resiliente antes de qualquer submissão de leitura.
+   */
+  const ensureCsrfToken = useCallback(async (): Promise<string | null> => {
+    if (csrfTokenRef.current) {
+      return csrfTokenRef.current;
+    }
+    try {
+      const res = await fetch('/api/csrf-token');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.csrfToken) {
+          csrfTokenRef.current = data.csrfToken;
+          setCsrfToken(data.csrfToken);
+          return data.csrfToken;
+        }
+      }
+    } catch (err) {
+      console.warn('Não foi possível obter CSRF token inicial:', err);
+    }
+    return null;
+  }, []);
+
+  /**
+   * Inicializa nova sessão única e idempotente com invalidação atômica de requisições anteriores.
    */
   const generateNewSession = useCallback(() => {
+    // 1. Incrementa contador monotônico de geração para descartar qualquer resposta pendente
+    generationIdRef.current += 1;
+
+    // 2. Aborta ativamente qualquer requisição HTTP em trânsito
+    if (activeAbortControllerRef.current) {
+      try {
+        activeAbortControllerRef.current.abort();
+      } catch {
+        // ignore
+      }
+      activeAbortControllerRef.current = null;
+    }
+
+    // 3. Gera nova sessão e sincroniza ref imediatamente
     const newSession = `SCAN-MOB-${Date.now()}-${Math.floor(1000 + Math.random() * 9000)}`;
+    sessionIdRef.current = newSession;
     setSessionId(newSession);
+
+    // 4. Limpa rastreadores de estado e estados visuais
     deduplicatorRef.current.clear();
     multipartTrackerRef.current.reset();
     setMultipartProgress(null);
@@ -77,6 +124,7 @@ export default function ScannerMobilePage() {
     setScanSuccessFlash(null);
     isProcessingRef.current = false;
     setIsProcessing(false);
+
     return newSession;
   }, []);
 
@@ -89,29 +137,18 @@ export default function ScannerMobilePage() {
   };
 
   /**
-   * Carrega Token CSRF para envio seguro de mutações.
+   * Carrega Token CSRF na montagem do componente.
    */
   useEffect(() => {
-    async function loadCsrfToken() {
-      try {
-        const res = await fetch('/api/csrf-token');
-        if (res.ok) {
-          const data = await res.json();
-          if (data.csrfToken) {
-            setCsrfToken(data.csrfToken);
-          }
-        }
-      } catch (err) {
-        console.warn('Não foi possível obter CSRF token inicial:', err);
-      }
-    }
-    void loadCsrfToken();
-  }, []);
+    void ensureCsrfToken();
+  }, [ensureCsrfToken]);
 
   /**
    * Envia o frame/código lido para o backend homologado (/api/scan).
+   * Totalmente protegido contra stale closures e respostas tardias de sessões abandonadas.
    */
   const processQrContent = async (rawDecodedText: string) => {
+    // 1. Concorrência mútua estrita: descarta se já houver processamento ativo
     if (isProcessingRef.current) return;
 
     const trimmed = (rawDecodedText || '').trim();
@@ -119,30 +156,66 @@ export default function ScannerMobilePage() {
       return;
     }
 
+    // 2. Validação de sessão vigente via Ref
+    const currentSession = sessionIdRef.current;
+    if (!currentSession) {
+      setStatusMessage('Aguardando inicialização da sessão...');
+      return;
+    }
+
     if (!deduplicatorRef.current.shouldProcess(trimmed)) {
       return;
     }
 
+    // 3. Validação de token CSRF mais recente via Ref
+    const currentCsrf = csrfTokenRef.current || (await ensureCsrfToken());
+    if (!currentCsrf) {
+      setErrorDetails({
+        title: 'Segurança CSRF',
+        message: 'Aguardando validação da credencial de segurança. Tente novamente em instantes.',
+        isRetryable: true
+      });
+      setStatusMessage('Aguardando credencial de segurança...');
+      return;
+    }
+
+    // 4. Trava atômica e captura de geração monotônica
     isProcessingRef.current = true;
     setIsProcessing(true);
     setErrorDetails(null);
     setStatusMessage('Validando QR Code recebido...');
+
+    const reqGeneration = generationIdRef.current;
+    const reqSessionId = currentSession;
+    const abortController = new AbortController();
+    activeAbortControllerRef.current = abortController;
 
     try {
       const res = await fetch('/api/scan', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {})
+          'X-CSRF-Token': currentCsrf
         },
         body: JSON.stringify({
           content: trimmed,
           isSimulation: false,
-          sessionId
-        })
+          sessionId: reqSessionId
+        }),
+        signal: abortController.signal
       });
 
+      // Se a geração ou a sessão mudou durante o tráfego HTTP, descarta sumariamente
+      if (generationIdRef.current !== reqGeneration || sessionIdRef.current !== reqSessionId) {
+        return;
+      }
+
       const data = await res.json();
+
+      // Confirma isolamento após deserialização
+      if (generationIdRef.current !== reqGeneration || sessionIdRef.current !== reqSessionId) {
+        return;
+      }
 
       if (res.ok) {
         // Feedback háptico no dispositivo móvel quando disponível
@@ -151,26 +224,44 @@ export default function ScannerMobilePage() {
         }
 
         if (data.status === 'COMPLETO') {
+          multipartTrackerRef.current.confirmBackendSuccess();
           const reportId = data.reportId;
           setStatusMessage('Boletim de Urna 100% LIDO e Verificado!');
           setScanSuccessFlash('Boletim lido com sucesso! Redirecionando...');
 
           if (html5QrCodeRef.current && html5QrCodeRef.current.isScanning) {
-            await html5QrCodeRef.current.stop();
+            await html5QrCodeRef.current.stop().catch(() => {});
           }
 
           setTimeout(() => {
-            router.push(`/admin/conferir/${reportId}`);
+            // Só redireciona se a sessão ainda for rigorosamente a mesma desta requisição
+            if (generationIdRef.current === reqGeneration && sessionIdRef.current === reqSessionId) {
+              router.push(`/admin/conferir/${reportId}`);
+            }
           }, 800);
         } else if (data.status === 'PARCIAL') {
           const partIndex = data.partIndex || (data.partsRead || 1);
           const totalParts = data.totalParts || (data.partsTotal || 2);
+          const envelopeKey = data.envelopeKey || null;
 
-          const { progress } = multipartTrackerRef.current.registerPart(partIndex, totalParts);
-          setMultipartProgress(progress);
-          setStatusMessage(progress.statusMessage);
-          setScanSuccessFlash(`Parte ${partIndex} de ${totalParts} capturada com sucesso!`);
-          setTimeout(() => setScanSuccessFlash(null), 3000);
+          const registerRes = multipartTrackerRef.current.registerPart(partIndex, totalParts, envelopeKey);
+          if (!registerRes.success) {
+            setErrorDetails({
+              title: 'Fragmento Inconsistente',
+              message: registerRes.errorMessage || 'Fragmento multipartes incompatível.',
+              isRetryable: true
+            });
+            setStatusMessage(registerRes.errorMessage || 'Fragmento incompatível.');
+          } else {
+            setMultipartProgress(registerRes.progress);
+            setStatusMessage(registerRes.progress.statusMessage);
+            setScanSuccessFlash(`Parte ${partIndex} de ${totalParts} capturada com sucesso!`);
+            setTimeout(() => {
+              if (generationIdRef.current === reqGeneration) {
+                setScanSuccessFlash(null);
+              }
+            }, 3000);
+          }
         }
       } else {
         const errorInfo = formatScanError(res.status, data);
@@ -179,11 +270,23 @@ export default function ScannerMobilePage() {
 
         if (errorInfo.isRetryable) {
           setTimeout(() => {
-            deduplicatorRef.current.clearIfMatches(trimmed);
+            if (generationIdRef.current === reqGeneration) {
+              deduplicatorRef.current.clearIfMatches(trimmed);
+            }
           }, 2500);
         }
       }
-    } catch {
+    } catch (err: any) {
+      // Se a requisição foi abortada pelo reset da sessão, descarta sem exibir erro
+      if (err?.name === 'AbortError' || abortController.signal.aborted) {
+        return;
+      }
+
+      // Se a sessão foi reiniciada durante a requisição, descarta
+      if (generationIdRef.current !== reqGeneration || sessionIdRef.current !== reqSessionId) {
+        return;
+      }
+
       const netError: ErrorDetails = {
         title: 'Falha de Conexão',
         message: 'Não foi possível comunicar com o servidor. Verifique o sinal da sua rede.',
@@ -192,11 +295,20 @@ export default function ScannerMobilePage() {
       setErrorDetails(netError);
       setStatusMessage(netError.title);
       setTimeout(() => {
-        deduplicatorRef.current.clearIfMatches(trimmed);
+        if (generationIdRef.current === reqGeneration) {
+          deduplicatorRef.current.clearIfMatches(trimmed);
+        }
       }, 2500);
     } finally {
-      isProcessingRef.current = false;
-      setIsProcessing(false);
+      // Limpa abort controller se ainda for este
+      if (activeAbortControllerRef.current === abortController) {
+        activeAbortControllerRef.current = null;
+      }
+      // Só libera processamento se a geração não tiver sido reiniciada externamente
+      if (generationIdRef.current === reqGeneration) {
+        isProcessingRef.current = false;
+        setIsProcessing(false);
+      }
     }
   };
 
@@ -222,7 +334,7 @@ export default function ScannerMobilePage() {
         {
           fps: 15,
           qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
-            // Área de enquadramento generosa (80% da menor dimensão do visor)
+            // Área de enquadramento generosa (82% da menor dimensão do visor)
             const minEdge = Math.min(viewfinderWidth, viewfinderHeight);
             const edge = Math.floor(minEdge * 0.82);
             const safeEdge = Math.max(60, edge);
@@ -231,6 +343,8 @@ export default function ScannerMobilePage() {
           aspectRatio: 1.333333 // Proporção padrão 4:3 de câmeras móveis (sem letterboxing)
         },
         (decodedText) => {
+          // O processQrContent acessa sessionIdRef e csrfTokenRef diretamente,
+          // eliminando qualquer risco de captura de valores obsoletos na closure da biblioteca
           void processQrContent(decodedText);
         },
         () => {} // Ignora frames sem QR Code
@@ -287,10 +401,10 @@ export default function ScannerMobilePage() {
 
   /**
    * Foco por Toque (Touch-to-Focus) Honesto.
-   * Não executa animação nem simulação se o hardware não oferecer suporte real.
+   * Não executa animação nem simulação se o hardware não oferecer suporte real a coordenadas espaciais (pointsOfInterest).
    */
   const handleTouchFocus = async (e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>) => {
-    if (!isScanning || !focusCaps.supportsTouchFocus || !html5QrCodeRef.current) {
+    if (!isScanning || !focusCaps.supportsSpatialTouchFocus || !html5QrCodeRef.current) {
       return;
     }
 
@@ -341,7 +455,12 @@ export default function ScannerMobilePage() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    setIsProcessing(true);
+    // Concorrência mútua
+    if (isProcessingRef.current) {
+      e.target.value = '';
+      return;
+    }
+
     setStatusMessage('Decodificando foto do BU...');
     setErrorDetails(null);
 
@@ -360,19 +479,20 @@ export default function ScannerMobilePage() {
       });
       setStatusMessage('Falha ao decodificar foto.');
     } finally {
-      setIsProcessing(false);
       e.target.value = ''; // Permite reenviar a mesma foto se necessário
     }
   };
 
   /**
-   * Entrada manual alternativa.
+   * Entrada manual alternativa protegida contra concorrência.
    */
   const handleManualSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (isProcessingRef.current) return;
     if (manualInput.trim()) {
-      void processQrContent(manualInput.trim());
+      const textToProcess = manualInput.trim();
       setManualInput('');
+      void processQrContent(textToProcess);
     }
   };
 
@@ -436,7 +556,7 @@ export default function ScannerMobilePage() {
         fileQrCodeRef.current.clear();
       }
     };
-  }, []);
+  }, [generateNewSession]);
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans pb-12 selection:bg-indigo-500 selection:text-white">
@@ -451,52 +571,64 @@ export default function ScannerMobilePage() {
             </div>
             <div>
               <h1 className="text-base font-bold text-white tracking-tight flex items-center gap-2">
-                Scanner Mobile 2.0
+                Scanner de Boletim de Urna
+                <span className="text-[10px] font-mono uppercase bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded-full border border-indigo-500/30">
+                  Universal v2.0
+                </span>
               </h1>
-              <p className="text-[11px] text-slate-400 font-medium">Apuração Paralela — Modo Oficial</p>
+              <p className="text-xs text-slate-400">
+                Sessão:{' '}
+                <span className="font-mono text-slate-300">
+                  {sessionId ? sessionId.slice(-8) : 'Iniciando...'}
+                </span>
+              </p>
             </div>
           </div>
 
           <button
-            onClick={handleResetSession}
             type="button"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold border border-slate-700/60 transition-colors"
-            title="Reiniciar a leitura e gerar nova sessão limpa"
+            onClick={handleResetSession}
+            title="Reiniciar Sessão de Leitura"
+            className="p-2 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors border border-slate-700/60"
           >
-            <RefreshCcw className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Reiniciar</span>
+            <RefreshCcw className="w-4 h-4" />
           </button>
         </div>
       </header>
 
-      <main className="flex-1 w-full max-w-2xl mx-auto px-4 py-5 flex flex-col gap-4">
-        {/* Banner de Feedback de Leitura Bem-Sucedida */}
+      <main className="max-w-2xl w-full mx-auto p-4 flex flex-col gap-4 flex-1">
+        {/* Flash de Confirmação de Sucesso */}
         {scanSuccessFlash && (
-          <div className="w-full bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 px-4 py-3 rounded-2xl flex items-center gap-3 animate-in fade-in zoom-in-95 duration-200">
+          <div className="w-full bg-emerald-500/20 border border-emerald-500/40 text-emerald-200 px-4 py-3 rounded-xl flex items-center gap-3 animate-in fade-in duration-200">
             <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
-            <span className="text-sm font-bold">{scanSuccessFlash}</span>
+            <p className="text-xs font-semibold">{scanSuccessFlash}</p>
           </div>
         )}
 
-        {/* Banner de Erro Formatado Fail-Closed */}
+        {/* Alerta de Erro com Ação Recomandada */}
         {errorDetails && (
-          <div className="w-full bg-red-500/10 border border-red-500/30 text-red-200 p-4 rounded-2xl flex items-start gap-3 shadow-lg shadow-red-950/20">
-            <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <h3 className="font-bold text-sm text-red-300 uppercase tracking-wide">{errorDetails.title}</h3>
-              <p className="text-xs text-red-200/90 mt-1 leading-relaxed">{errorDetails.message}</p>
+          <div className="w-full bg-rose-500/15 border border-rose-500/30 text-rose-200 p-4 rounded-xl flex items-start gap-3">
+            <AlertCircle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
+            <div className="text-xs flex-1">
+              <p className="font-bold text-rose-300 uppercase tracking-wide">{errorDetails.title}</p>
+              <p className="mt-1 text-slate-300 leading-relaxed">{errorDetails.message}</p>
+              {errorDetails.technicalCode && (
+                <p className="mt-2 font-mono text-[11px] text-slate-400 bg-slate-900/80 p-1.5 rounded border border-slate-800 inline-block">
+                  Código: {errorDetails.technicalCode}
+                </p>
+              )}
             </div>
           </div>
         )}
 
-        {/* Viewfinder da Câmera (Amplo, Responsivo e com Guias de Enquadramento) */}
-        <div className="w-full bg-slate-900 border border-slate-800 rounded-3xl p-3 sm:p-4 shadow-2xl relative overflow-hidden flex flex-col items-center">
+        {/* Visor da Câmera com Aspect-Ratio 4:3 e Guia Visual */}
+        <div className="relative w-full aspect-[3/4] sm:aspect-[4/3] bg-black rounded-3xl overflow-hidden border border-slate-800 shadow-2xl flex flex-col justify-center items-center">
           <div
             ref={viewfinderRef}
             onClick={handleTouchFocus}
             onTouchStart={handleTouchFocus}
-            className={`w-full aspect-[4/3] sm:aspect-video rounded-2xl overflow-hidden relative bg-black transition-all cursor-pointer ${
-              isScanning ? 'ring-2 ring-indigo-500/60 shadow-inner' : 'border border-slate-800 flex items-center justify-center'
+            className={`w-full h-full relative cursor-pointer select-none overflow-hidden ${
+              focusCaps.supportsSpatialTouchFocus ? 'touch-manipulation' : ''
             }`}
           >
             {/* Viewport de Vídeo do html5-qrcode */}
@@ -523,8 +655,8 @@ export default function ScannerMobilePage() {
               </div>
             )}
 
-            {/* Anel de Foco por Toque Real (Renderizado APENAS quando suportado pelo hardware) */}
-            {touchPoint && focusCaps.supportsTouchFocus && (
+            {/* Anel de Foco por Toque Real (Renderizado APENAS quando comprovadamente suportado pelo hardware) */}
+            {touchPoint && focusCaps.supportsSpatialTouchFocus && (
               <div
                 style={{ left: touchPoint.x, top: touchPoint.y }}
                 className="absolute w-14 h-14 -ml-7 -mt-7 rounded-full border-2 border-amber-300 bg-amber-400/20 pointer-events-none animate-ping"
