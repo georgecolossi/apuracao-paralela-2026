@@ -1,10 +1,17 @@
+import { redirect } from 'next/navigation';
 import { prisma } from '@/lib/db';
+import { requireAuthenticatedUser } from '@/lib/auth';
 import Link from 'next/link';
 import { ShieldCheck, ArrowLeft, TerminalSquare } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 
 export default async function AuditPage() {
+  const auth = await requireAuthenticatedUser();
+  if (!auth.authenticated) {
+    redirect('/login');
+  }
+
   const logs = await prisma.auditLog.findMany({
     orderBy: { createdAt: 'desc' },
     take: 50,

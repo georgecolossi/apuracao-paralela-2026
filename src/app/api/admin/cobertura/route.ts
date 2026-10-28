@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { requireAuthenticatedUser } from '@/lib/auth';
 import { prisma } from '@/lib/db';
+import { validateCsrfProtection } from '@/lib/security/csrf';
 import {
   buildCanonicalScopeKey,
   validateElectionScopesSet,
@@ -26,6 +27,11 @@ export async function POST(request: Request) {
     }
     if (auth.user.role !== 'ADMIN') {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
+    const csrf = validateCsrfProtection(request, { userId: auth.user.userId, sessionVersion: auth.user.sessionVersion });
+    if (!csrf.valid) {
+      return NextResponse.json({ error: 'Falha na validação de origem (CSRF).', reason: csrf.reason }, { status: 403 });
     }
 
     const { searchParams } = new URL(request.url);

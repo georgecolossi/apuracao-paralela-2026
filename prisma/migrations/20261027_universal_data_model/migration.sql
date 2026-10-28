@@ -273,6 +273,7 @@ CREATE TABLE "User" (
     "passwordHash" TEXT NOT NULL,
     "role" TEXT NOT NULL DEFAULT 'OPERATOR',
     "isActive" BOOLEAN NOT NULL DEFAULT true,
+    "sessionVersion" INTEGER NOT NULL DEFAULT 0,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" DATETIME NOT NULL
 );

@@ -1,10 +1,20 @@
+import { redirect } from 'next/navigation';
 import { prisma } from '@/lib/db';
+import { requireAuthenticatedUser } from '@/lib/auth';
 import Link from 'next/link';
 import { Search, ArrowLeft, Database, CheckCircle2, AlertCircle, Clock, FileCheck } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
 
 export default async function ConferenciaGlobal() {
+  const auth = await requireAuthenticatedUser();
+  if (!auth.authenticated) {
+    redirect('/login');
+  }
+  if (auth.user.role === 'VIEWER') {
+    redirect('/admin');
+  }
+
   const reports = await prisma.ballotReport.findMany({
     orderBy: { createdAt: 'desc' },
     include: { operator: true, round: true }

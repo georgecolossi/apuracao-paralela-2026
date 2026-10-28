@@ -43,7 +43,7 @@ describe('POST /api/login', () => {
   });
 
   it('A) should permit login with valid username and password', async () => {
-    vi.mocked(prisma.user.findUnique).mockResolvedValue({ id: '1', email: 'admin', role: 'ADMIN', passwordHash: 'hash', isActive: true } as any);
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({ id: '1', email: 'admin', role: 'ADMIN', passwordHash: 'hash', isActive: true, sessionVersion: 0 } as any);
     vi.mocked(bcrypt.compare).mockImplementation(async () => true);
 
     const res = await POST(mockReq({ username: 'admin', password: 'valid_password' }));
@@ -59,7 +59,7 @@ describe('POST /api/login', () => {
   });
 
   it('C) should reject if password is incorrect', async () => {
-    vi.mocked(prisma.user.findUnique).mockResolvedValue({ id: '1', email: 'admin', role: 'ADMIN', passwordHash: 'hash', isActive: true } as any);
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({ id: '1', email: 'admin', role: 'ADMIN', passwordHash: 'hash', isActive: true, sessionVersion: 0 } as any);
     vi.mocked(bcrypt.compare).mockImplementation(async () => false);
 
     const res = await POST(mockReq({ username: 'admin', password: 'wrong_password' }));
@@ -72,7 +72,7 @@ describe('POST /api/login', () => {
   });
 
   it('E) should trim username and not require email format', async () => {
-    vi.mocked(prisma.user.findUnique).mockResolvedValue({ id: '1', email: 'admin', role: 'ADMIN', passwordHash: 'hash', isActive: true } as any);
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({ id: '1', email: 'admin', role: 'ADMIN', passwordHash: 'hash', isActive: true, sessionVersion: 0 } as any);
     vi.mocked(bcrypt.compare).mockImplementation(async () => true);
 
     const res = await POST(mockReq({ username: '  admin  ', password: 'valid_password' }));

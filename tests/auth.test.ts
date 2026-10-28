@@ -20,7 +20,9 @@ vi.mock('@/lib/db', () => ({
   prisma: {
     user: {
       findUnique: vi.fn().mockImplementation(async ({ where }) => {
-        if (where.id === '123' || where.id === 'admin-id') return { id: where.id, role: 'ADMIN', isActive: true };
+        if (where.id === '123' || where.id === 'admin-id') {
+          return { id: where.id, role: 'ADMIN', isActive: true, sessionVersion: 0 };
+        }
         return null;
       }),
     },
@@ -61,13 +63,32 @@ describe('Auth validation', () => {
   });
 
   describe('requireAuthenticatedUser()', () => {
-    it('E) should return valid user if JWT is valid and has userId', async () => {
+    it('E) should return valid user if JWT is valid and has userId and matching sessionVersion', async () => {
       process.env.JWT_SECRET = 'valid_secret';
-      vi.mocked(jwt.verify).mockImplementationOnce(() => ({ userId: '123' }) as jwt.JwtPayload);
+      vi.mocked(jwt.verify).mockImplementationOnce(() => ({ userId: '123', sessionVersion: 0 }) as jwt.JwtPayload);
       const result = await requireAuthenticatedUser();
       expect(result.authenticated).toBe(true);
       if (result.authenticated) {
         expect(result.user.userId).toBe('123');
+      }
+    });
+
+    it('E2) should reject with SESSION_REVOKED if JWT sessionVersion is missing or mismatched', async () => {
+      process.env.JWT_SECRET = 'valid_secret';
+      // Missing sessionVersion
+      vi.mocked(jwt.verify).mockImplementationOnce(() => ({ userId: '123' }) as jwt.JwtPayload);
+      const res1 = await requireAuthenticatedUser();
+      expect(res1.authenticated).toBe(false);
+      if (!res1.authenticated) {
+        expect(res1.reason).toBe('SESSION_REVOKED');
+      }
+
+      // Mismatched sessionVersion
+      vi.mocked(jwt.verify).mockImplementationOnce(() => ({ userId: '123', sessionVersion: 99 }) as jwt.JwtPayload);
+      const res2 = await requireAuthenticatedUser();
+      expect(res2.authenticated).toBe(false);
+      if (!res2.authenticated) {
+        expect(res2.reason).toBe('SESSION_REVOKED');
       }
     });
 
