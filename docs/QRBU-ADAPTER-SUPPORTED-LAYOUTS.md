@@ -92,25 +92,33 @@ stateDiagram-v2
     IN_OFFICE --> IN_OFFICE: Votos Nominais / LEGP / BRAN / NULO
     IN_OFFICE --> BETWEEN_OFFICES: TOTC:&lt;qtd&gt; (Valida soma == TOTC)
     IN_OFFICE --> ERROR: CARG sem TOTC prévio (INCOMPLETE_OFFICE_BLOCK)
-    IN_OFFICE --> ERROR: BRAN/NULO/TOTC duplicado (DUPLICATE_OFFICE_FIELD)
-    BETWEEN_OFFICES --> IN_OFFICE: CARG:&lt;codigo&gt; (Próximo cargo)
-    BETWEEN_OFFICES --> IN_SUMMARY: APTA / APTS / APTT (Início do Resumo)
+    IN_OFFICE --> ERROR: BRAN/NULO/TOTC/NOMI/LEGC duplicado (DUPLICATE_OFFICE_FIELD)
+    BETWEEN_OFFICES --> IN_OFFICE: CARG:&lt;codigo&gt; (Próximo cargo legítimo)
+    BETWEEN_OFFICES --> IN_SUMMARY: APTA / APTS / APTT (Início formal do Resumo)
     BETWEEN_OFFICES --> ERROR: BRAN / NULO / TOTC fora de cargo e fora de resumo
-    IN_SUMMARY --> IN_SUMMARY: NOMI / BRAN / NULO / TOTC / HASH / ASSI
+    BETWEEN_OFFICES --> [*]: Fim do Payload sem resumo (Omissão permitida)
+    IN_SUMMARY --> IN_SUMMARY: NOMI / LEGC / BRAN / NULO / TOTC / HASH / ASSI
+    IN_SUMMARY --> ERROR: CARG pós-resumo (DISPLACED_VOTE_TOKEN - Estado Terminal)
     IN_SUMMARY --> ERROR: Voto em candidato / Token estranho à gramática
     IN_SUMMARY --> ERROR: Campos duplicados no resumo (DUPLICATE_SUMMARY_FIELD)
-    IN_SUMMARY --> [*]: Fim do Payload (Valida NOMI+BRAN+NULO == TOTC)
+    IN_SUMMARY --> ERROR: Resumo incompleto sem TOTC/NOMI/BRAN/NULO (INCOMPLETE_SUMMARY_BLOCK)
+    IN_SUMMARY --> [*]: Fim do Payload (Valida NOMI+[LEGC]+BRAN+NULO == TOTC)
 ```
 
 1. **Tokens em Cargo Ativo (`IN_OFFICE`):**
-   - Votos em branco (`BRAN`) e nulos (`NULO`) pertencem ao cargo ativo. Se repetidos no mesmo cargo, geram erro `DUPLICATE_OFFICE_FIELD`.
+   - Votos em branco (`BRAN`), nulos (`NULO`), totalizadores nominais (`NOMI`) e legenda consolidada (`LEGC`) pertencem ao cargo ativo. Se repetidos no mesmo cargo, geram erro `DUPLICATE_OFFICE_FIELD`.
+   - Distinção estrita de Legenda: `LEGP` é o voto individual por partido (gera `BallotVote`); `LEGC` é o totalizador oficial de legenda consolidada do cargo (registrado em `metadata`, sem duplicar votos).
    - O cargo encerra-se estritamente com `TOTC`. A soma dos votos nominais, legenda, brancos e nulos deve coincidir com `TOTC`, sob pena de `VOTE_TOTAL_MISMATCH`.
 2. **Tokens Fora de Cargo (`HEADER` ou `BETWEEN_OFFICES`):**
    - Votos nominais, de legenda, brancos ou nulos encontrados fora de um cargo ativo e fora do resumo do BU são rejeitados com `DISPLACED_VOTE_TOKEN`.
+   - Transição legítima entre múltiplos cargos: após o fechamento de um cargo por seu `TOTC`, novos cargos (`CARG`) são processados livremente enquanto o resumo não for iniciado.
 3. **Bloco de Resumo Global do BU (`IN_SUMMARY`):**
    - Inicia-se formalmente após `APTA` (ou `APTS`/`APTT`).
-   - Gramática expressamente autorizada: `APTA`, `APTS`, `APTT`, `NOMI`, `LEGC`, `BRAN`, `NULO`, `TOTC`, `HASH`, `ASSI`, `CERT`, `HIQT`, `HICA`, `IDEL`, `PLEI`.
-   - Os totais de `NOMI`, `BRAN` e `NULO` são acumulados no resumo e confrontados com `TOTC` do resumo (`SUMMARY_TOTAL_MISMATCH`). Nenhum voto vaza para o cargo anterior e nenhum token é descartado arbitrariamente.
+   - **Natureza Terminal:** `IN_SUMMARY` é estritamente terminal em relação a blocos de cargo. Qualquer `CARG` encontrado após o início do resumo é rejeitado com `DISPLACED_VOTE_TOKEN`, impedindo a criação de novos cargos ou vinculação de votos posteriores.
+   - **Campos Obrigatórios:** `TOTC`, `NOMI`, `BRAN` e `NULO`. Caso qualquer um esteja ausente, o bloco é rejeitado com `INCOMPLETE_SUMMARY_BLOCK`, sem substituição automática de valores ausentes por zero.
+   - **Campos Opcionais:** `APTA`, `APTS`, `APTT`, `LEGC` (presente em pleitos com eleições proporcionais), `HASH`, `ASSI`, `CERT`, `HIQT`, `HICA`, `IDEL`, `PLEI`, `VRQR`, `QRBU`.
+   - **Omissão Legítima:** Nos BUs oficiais do TSE em que a apuração e totalização são expressas individualmente por cargo antes do hash de encerramento, o bloco de resumo pós-cargos pode ser omitido (`state` encerra em `BETWEEN_OFFICES`).
+   - **Conferência Aritmética:** `NOMI + (LEGC || 0) + BRAN + NULO == TOTC`, sob pena de `SUMMARY_TOTAL_MISMATCH`. Nenhum voto vaza para cargos anteriores e nenhum token é descartado arbitrariamente.
 
 ---
 

@@ -280,6 +280,7 @@ export abstract class BaseVrqrAdapter implements QrBuAdapter {
       apts?: number;
       aptt?: number;
       nomi?: number;
+      legc?: number;
       bran?: number;
       nulo?: number;
       totc?: number;
@@ -331,6 +332,13 @@ export abstract class BaseVrqrAdapter implements QrBuAdapter {
       } else if (token.key === 'IDEL') {
         currentElectionPlei = token.value;
       } else if (token.key === 'CARG') {
+        if (state === 'IN_SUMMARY') {
+          return {
+            code: 'DISPLACED_VOTE_TOKEN',
+            message: 'Identificador de cargo (CARG) encontrado após o início formal do bloco de resumo do BU.'
+          };
+        }
+
         // Se estiver em um cargo anterior, fecha e valida o bloco
         if (state === 'IN_OFFICE') {
           const err = closeCurrentOfficeBlock();
@@ -509,9 +517,24 @@ export abstract class BaseVrqrAdapter implements QrBuAdapter {
           return { code: 'INVALID_VOTE_DATA', message: `Quantidade de legenda consolidada (LEGC) inválida: '${token.value}'.` };
         }
         if (state === 'IN_OFFICE') {
+          if (seenFieldsInOffice.has('LEGC')) {
+            return {
+              code: 'DUPLICATE_OFFICE_FIELD',
+              message: `Totalizador de legenda consolidada (LEGC) duplicado no mesmo cargo (${currentOfficeName}).`
+            };
+          }
+          seenFieldsInOffice.add('LEGC');
           metadata.set(`LEGC_${currentOfficeCode}`, token.value);
           metadata.set('LEGC', token.value);
         } else if (state === 'IN_SUMMARY') {
+          if (seenSummaryFields.has('LEGC')) {
+            return {
+              code: 'DUPLICATE_SUMMARY_FIELD',
+              message: 'Totalizador de legenda consolidada (LEGC) duplicado no resumo do BU.'
+            };
+          }
+          seenSummaryFields.add('LEGC');
+          summaryData.legc = parsedVal;
           metadata.set('SUMMARY_LEGC', token.value);
         } else {
           return {
@@ -649,6 +672,13 @@ export abstract class BaseVrqrAdapter implements QrBuAdapter {
             return { code: 'INVALID_VOTE_DATA', message: `Quantidade total de votos nominais inválida: '${token.value}'.` };
           }
           if (state === 'IN_OFFICE') {
+            if (seenFieldsInOffice.has('NOMI')) {
+              return {
+                code: 'DUPLICATE_OFFICE_FIELD',
+                message: `Totalizador nominal (NOMI) duplicado no mesmo cargo (${currentOfficeName}).`
+              };
+            }
+            seenFieldsInOffice.add('NOMI');
             // No cargo, NOMI:<total> é o totalizador nominal do cargo
             metadata.set(`NOMI_${currentOfficeCode}`, token.value);
           } else if (state === 'IN_SUMMARY') {
@@ -707,13 +737,40 @@ export abstract class BaseVrqrAdapter implements QrBuAdapter {
     const finalBlockErr = closeCurrentOfficeBlock();
     if (finalBlockErr) return finalBlockErr;
 
-    // Conferência de consistência do bloco de resumo global do BU se completo
-    if (summaryData.totc !== undefined && summaryData.nomi !== undefined && summaryData.bran !== undefined && summaryData.nulo !== undefined) {
-      const summarySum = summaryData.nomi + summaryData.bran + summaryData.nulo;
+    // Validação estrita do bloco de resumo global do BU quando presente
+    if (state === 'IN_SUMMARY') {
+      const missingFields: string[] = [];
+      if (summaryData.totc === undefined) missingFields.push('TOTC');
+      if (summaryData.nomi === undefined) missingFields.push('NOMI');
+      if (summaryData.bran === undefined) missingFields.push('BRAN');
+      if (summaryData.nulo === undefined) missingFields.push('NULO');
+
+      if (
+        missingFields.length > 0 ||
+        summaryData.totc === undefined ||
+        summaryData.nomi === undefined ||
+        summaryData.bran === undefined ||
+        summaryData.nulo === undefined
+      ) {
+        return {
+          code: 'INCOMPLETE_SUMMARY_BLOCK',
+          message: `Bloco de resumo do BU incompleto: totalizadores obrigatórios ausentes no resumo (${missingFields.join(', ')}).`,
+          details: { missingFields, summaryData }
+        };
+      }
+
+      const legcQty = summaryData.legc !== undefined ? summaryData.legc : 0;
+      const summarySum = summaryData.nomi + legcQty + summaryData.bran + summaryData.nulo;
       if (summarySum !== summaryData.totc) {
+        const formulaParts = [`NOMI:${summaryData.nomi}`];
+        if (summaryData.legc !== undefined) {
+          formulaParts.push(`LEGC:${summaryData.legc}`);
+        }
+        formulaParts.push(`BRAN:${summaryData.bran}`, `NULO:${summaryData.nulo}`);
+
         return {
           code: 'SUMMARY_TOTAL_MISMATCH',
-          message: `Inconsistência no bloco de resumo do BU: a soma dos totais (NOMI:${summaryData.nomi} + BRAN:${summaryData.bran} + NULO:${summaryData.nulo} = ${summarySum}) diverge do totalizador geral oficial (TOTC:${summaryData.totc}).`,
+          message: `Inconsistência no bloco de resumo do BU: a soma dos totais (${formulaParts.join(' + ')} = ${summarySum}) diverge do totalizador geral oficial (TOTC:${summaryData.totc}).`,
           details: {
             calculatedSum: summarySum,
             expectedTotc: summaryData.totc,

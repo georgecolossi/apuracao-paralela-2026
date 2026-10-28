@@ -569,6 +569,133 @@ describe('PR 4 — Adaptador Universal de QRBU (VRQR 4.0, 5.0, 6.0)', () => {
         expect(parsed.metadata).toBeDefined();
       }
     });
+
+    it('5.17 Rejeita novo bloco CARG após início formal do resumo com APTA (DISPLACED_VOTE_TOKEN)', () => {
+      // Cargo 1 fecha legitimamente com TOTC:5, resumo é iniciado com APTA:25, mas depois tenta reabrir Cargo 3
+      const body = 'ORIG:VOTA PLEI:2200 TURN:1 FASE:O UNFE:SC MUNI:80837 ZONA:90 SECA:1 IDUE:123 CARG:1 13:5 TOTC:5 APTA:25 CARG:3 15:2 BRAN:0 NULO:0 TOTC:2';
+      const part = createSignedPart(body);
+      const parsed = parser.parseReport(part, [part]);
+      expect('code' in parsed).toBe(true);
+      if ('code' in parsed) {
+        expect(parsed.code).toBe('DISPLACED_VOTE_TOKEN');
+        expect(parsed.message).toContain('CARG');
+        expect(parsed.message).toContain('após o início formal do bloco de resumo');
+      }
+    });
+
+    it('5.18 Rejeita resumo incompleto por ausência de TOTC (INCOMPLETE_SUMMARY_BLOCK)', () => {
+      const body = 'ORIG:VOTA PLEI:2200 TURN:1 FASE:O UNFE:SC MUNI:80837 ZONA:90 SECA:1 IDUE:123 CARG:1 13:5 TOTC:5 APTA:25 APTS:23 APTT:2 NOMI:5 BRAN:2 NULO:1';
+      const part = createSignedPart(body);
+      const parsed = parser.parseReport(part, [part]);
+      expect('code' in parsed).toBe(true);
+      if ('code' in parsed) {
+        expect(parsed.code).toBe('INCOMPLETE_SUMMARY_BLOCK');
+        expect(parsed.message).toContain('TOTC');
+      }
+    });
+
+    it('5.19 Rejeita resumo incompleto por ausência de NOMI (INCOMPLETE_SUMMARY_BLOCK)', () => {
+      const body = 'ORIG:VOTA PLEI:2200 TURN:1 FASE:O UNFE:SC MUNI:80837 ZONA:90 SECA:1 IDUE:123 CARG:1 13:5 TOTC:5 APTA:25 BRAN:2 NULO:1 TOTC:3';
+      const part = createSignedPart(body);
+      const parsed = parser.parseReport(part, [part]);
+      expect('code' in parsed).toBe(true);
+      if ('code' in parsed) {
+        expect(parsed.code).toBe('INCOMPLETE_SUMMARY_BLOCK');
+        expect(parsed.message).toContain('NOMI');
+      }
+    });
+
+    it('5.20 Rejeita resumo incompleto por ausência de BRAN (INCOMPLETE_SUMMARY_BLOCK)', () => {
+      const body = 'ORIG:VOTA PLEI:2200 TURN:1 FASE:O UNFE:SC MUNI:80837 ZONA:90 SECA:1 IDUE:123 CARG:1 13:5 TOTC:5 APTA:25 NOMI:5 NULO:1 TOTC:6';
+      const part = createSignedPart(body);
+      const parsed = parser.parseReport(part, [part]);
+      expect('code' in parsed).toBe(true);
+      if ('code' in parsed) {
+        expect(parsed.code).toBe('INCOMPLETE_SUMMARY_BLOCK');
+        expect(parsed.message).toContain('BRAN');
+      }
+    });
+
+    it('5.21 Rejeita resumo incompleto por ausência de NULO (INCOMPLETE_SUMMARY_BLOCK)', () => {
+      const body = 'ORIG:VOTA PLEI:2200 TURN:1 FASE:O UNFE:SC MUNI:80837 ZONA:90 SECA:1 IDUE:123 CARG:1 13:5 TOTC:5 APTA:25 NOMI:5 BRAN:2 TOTC:7';
+      const part = createSignedPart(body);
+      const parsed = parser.parseReport(part, [part]);
+      expect('code' in parsed).toBe(true);
+      if ('code' in parsed) {
+        expect(parsed.code).toBe('INCOMPLETE_SUMMARY_BLOCK');
+        expect(parsed.message).toContain('NULO');
+      }
+    });
+
+    it('5.22 Processa com sucesso BU com múltiplos cargos legítimos e resumo ausente quando permitido', () => {
+      // Múltiplos cargos (Cargo 1 Presidente e Cargo 3 Governador) sem bloco de resumo APTA
+      const body = 'ORIG:VOTA PLEI:2200 TURN:1 FASE:O UNFE:SC MUNI:80837 ZONA:90 SECA:1 IDUE:123 CARG:1 13:5 TOTC:5 CARG:3 15:2 TOTC:2';
+      const part = createSignedPart(body);
+      const parsed = parser.parseReport(part, [part]);
+      expect('code' in parsed).toBe(false);
+      if (!('code' in parsed)) {
+        expect(parsed.votes.length).toBe(2);
+        expect(parsed.votes.find(v => v.officeCode === '1')?.quantity).toBe(5);
+        expect(parsed.votes.find(v => v.officeCode === '3')?.quantity).toBe(2);
+      }
+    });
+
+    it('5.23 Processa com sucesso resumo com legenda consolidada LEGC sem duplicar votos', () => {
+      // Cargo 1 (5 votos nominais), Resumo com NOMI:4, LEGC:2, BRAN:1, NULO:1, TOTC:8 (4 + 2 + 1 + 1 = 8)
+      const body = 'ORIG:VOTA PLEI:2200 TURN:1 FASE:O UNFE:SC MUNI:80837 ZONA:90 SECA:1 IDUE:123 CARG:1 13:5 TOTC:5 APTA:25 NOMI:4 LEGC:2 BRAN:1 NULO:1 TOTC:8';
+      const part = createSignedPart(body);
+      const parsed = parser.parseReport(part, [part]);
+      expect('code' in parsed).toBe(false);
+      if (!('code' in parsed)) {
+        // LEGC no resumo NÃO cria novos votos de legenda
+        expect(parsed.votes.length).toBe(1);
+        expect(parsed.votes[0].quantity).toBe(5);
+        expect(parsed.metadata?.SUMMARY_LEGC).toBe('2');
+      }
+    });
+
+    it('5.24 Rejeita campos duplicados no bloco de resumo (DUPLICATE_SUMMARY_FIELD)', () => {
+      // Teste com LEGC duplicado no resumo
+      const bodyLegc = 'ORIG:VOTA PLEI:2200 TURN:1 FASE:O UNFE:SC MUNI:80837 ZONA:90 SECA:1 IDUE:123 CARG:1 13:5 TOTC:5 APTA:25 LEGC:2 LEGC:2 NOMI:4 BRAN:1 NULO:1 TOTC:8';
+      const partLegc = createSignedPart(bodyLegc);
+      const parsedLegc = parser.parseReport(partLegc, [partLegc]);
+      expect('code' in parsedLegc).toBe(true);
+      if ('code' in parsedLegc) {
+        expect(parsedLegc.code).toBe('DUPLICATE_SUMMARY_FIELD');
+        expect(parsedLegc.message).toContain('LEGC');
+      }
+
+      // Teste com APTA duplicado no resumo
+      const bodyApta = 'ORIG:VOTA PLEI:2200 TURN:1 FASE:O UNFE:SC MUNI:80837 ZONA:90 SECA:1 IDUE:123 CARG:1 13:5 TOTC:5 APTA:25 APTA:25 NOMI:5 BRAN:2 NULO:1 TOTC:8';
+      const partApta = createSignedPart(bodyApta);
+      const parsedApta = parser.parseReport(partApta, [partApta]);
+      expect('code' in parsedApta).toBe(true);
+      if ('code' in parsedApta) {
+        expect(parsedApta.code).toBe('DUPLICATE_SUMMARY_FIELD');
+      }
+    });
+
+    it('5.25 Rejeita totalizadores NOMI e LEGC duplicados no mesmo cargo (DUPLICATE_OFFICE_FIELD)', () => {
+      // Teste com NOMI duplicado no cargo
+      const bodyNomi = 'ORIG:VOTA PLEI:2200 TURN:1 FASE:O UNFE:SC MUNI:80837 ZONA:90 SECA:1 IDUE:123 CARG:1 13:5 NOMI:5 NOMI:5 TOTC:5';
+      const partNomi = createSignedPart(bodyNomi);
+      const parsedNomi = parser.parseReport(partNomi, [partNomi]);
+      expect('code' in parsedNomi).toBe(true);
+      if ('code' in parsedNomi) {
+        expect(parsedNomi.code).toBe('DUPLICATE_OFFICE_FIELD');
+        expect(parsedNomi.message).toContain('NOMI');
+      }
+
+      // Teste com LEGC duplicado no cargo
+      const bodyLegc = 'ORIG:VOTA PLEI:2200 TURN:1 FASE:O UNFE:SC MUNI:80837 ZONA:90 SECA:1 IDUE:123 CARG:1 13:5 LEGC:1 LEGC:1 TOTC:5';
+      const partLegc = createSignedPart(bodyLegc);
+      const parsedLegc = parser.parseReport(partLegc, [partLegc]);
+      expect('code' in parsedLegc).toBe(true);
+      if ('code' in parsedLegc) {
+        expect(parsedLegc.code).toBe('DUPLICATE_OFFICE_FIELD');
+        expect(parsedLegc.message).toContain('LEGC');
+      }
+    });
   });
 
   describe('6. Regras Particulares de Adaptadores por Layout Histórico', () => {
