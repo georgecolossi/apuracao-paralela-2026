@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { Tse2026BallotReportParser } from '@/lib/parser/Tse2026BallotReportParser';
+import { UniversalQrBuParser } from '@/lib/parser/adapter/UniversalQrBuParser';
 import { Tse2026SimulationParser } from '@/lib/parser/Tse2026SimulationParser';
 
 import { requireAuthenticatedUser } from '@/lib/auth';
@@ -35,7 +35,7 @@ export async function POST(req: Request) {
     const { content, isSimulation = false, sessionId } = await req.json();
     const operatorId = auth.user.userId;
 
-    const parser = isSimulation ? new Tse2026SimulationParser() : new Tse2026BallotReportParser();
+    const parser = isSimulation ? new Tse2026SimulationParser() : new UniversalQrBuParser();
 
     const partInfo = parser.parsePart(content);
     if ('code' in partInfo) {
@@ -160,7 +160,20 @@ export async function POST(req: Request) {
         where: { id: session.id },
         data: { status: 'ERROR' }
       });
-      return NextResponse.json({ error: reportData.code }, { status: 400 });
+      return NextResponse.json({ error: reportData.code, message: reportData.message }, { status: 400 });
+    }
+
+    // Validação estrita de integridade criptográfica para modo oficial
+    if (!isSimulation && reportData.hashStatus !== 'VERIFIED') {
+      await prisma.scanSession.update({
+        where: { id: session.id },
+        data: { status: 'ERROR' }
+      });
+      return NextResponse.json({
+        error: 'CRYPTOGRAPHIC_INTEGRITY_FAILED',
+        message: 'A integridade criptográfica (SHA-512) do Boletim de Urna não pôde ser verificada com sucesso.',
+        details: { hashStatus: reportData.hashStatus }
+      }, { status: 400 });
     }
 
     // Rejeição estrita de QRBU de teste/simulação em modo oficial
@@ -209,11 +222,11 @@ export async function POST(req: Request) {
         }, { status: 400 });
       }
 
-      if (activeRound.plei !== electionId) {
+      if (activeRound.plei !== electionId && (!reportData.specificElectionId || activeRound.plei !== reportData.specificElectionId)) {
         return NextResponse.json({
           error: 'ELECTION_CONTEXT_MISMATCH',
           message: 'O BU pertence a outro pleito não configurado ou inativo.',
-          received: { plei: electionId, turn: roundNumber }
+          received: { plei: electionId, specificPlei: reportData.specificElectionId, turn: roundNumber }
         }, { status: 400 });
       }
 
@@ -295,13 +308,15 @@ export async function POST(req: Request) {
       }, { status: 403 });
     }
 
-    // Regras de Cobertura por Turno
-    if (activeRound.roundNumber === 1) {
-      // 1º Turno: Cobertura estrita pré-cadastrada (193 urnas)
+    // Regras de Cobertura Contextuais Baseadas em RoundCoverage
+    const isStrictCoverage = activeRound.coverageStatus === 'HOMOLOGATED' || activeRound.coverageStatus === 'REGISTERED';
+
+    if (isStrictCoverage) {
+      // Cobertura estrita pré-cadastrada: a seção deve existir e estar contemplada no RoundCoverage
       if (!sectionInDB && !isSimulation) {
         return NextResponse.json({
           error: 'OUT_OF_COVERAGE',
-          message: 'Seção não encontrada.'
+          message: 'Seção não encontrada na cobertura homologada/registrada do turno.'
         }, { status: 403 });
       }
 
@@ -321,14 +336,15 @@ export async function POST(req: Request) {
               action: 'SCAN_OUT_OF_COVERAGE',
               result: 'REJECTED',
               identifiers: `City: ${cityCode}, Zone: ${zoneCode}, Sec: ${sectionCode}`,
-              errors: 'Seção fora da área de cobertura configurada.',
-              userId: operatorId
+              errors: 'Seção fora da área de cobertura configurada para o turno.',
+              userId: operatorId,
+              roundId: activeRound.id
             }
           });
 
           return NextResponse.json({
             error: 'OUT_OF_COVERAGE',
-            message: 'Este Boletim de Urna pertence a uma seção fora da área de cobertura configurada.'
+            message: 'Este Boletim de Urna pertence a uma seção fora da área de cobertura configurada para o turno.'
           }, { status: 403 });
         }
 
@@ -339,8 +355,8 @@ export async function POST(req: Request) {
           }, { status: 403 });
         }
       }
-    } else if (activeRound.roundNumber === 2 && !isSimulation) {
-      // 2º Turno: Cobertura dinâmica — aceita e cadastra seções elegíveis sem lista prévia
+    } else if (!isSimulation) {
+      // Cobertura provisória: aceita e cadastra dinamicamente seções elegíveis da zona/município em escopo
       if (!sectionInDB && zoneInDB) {
         const canonicalSec = sectionCode.padStart(4, '0');
         try {
@@ -356,8 +372,9 @@ export async function POST(req: Request) {
             data: {
               action: 'DYNAMIC_SECTION_REGISTERED',
               result: 'SUCCESS',
-              identifiers: `Round: 2, Zone: ${zoneInDB.zoneNumber}, Sec: ${canonicalSec}`,
-              userId: operatorId
+              identifiers: `Round: ${activeRound.roundNumber}, Zone: ${zoneInDB.zoneNumber}, Sec: ${canonicalSec}`,
+              userId: operatorId,
+              roundId: activeRound.id
             }
           });
         } catch (secErr: unknown) {
@@ -400,6 +417,11 @@ export async function POST(req: Request) {
               throw covErr;
             }
           }
+        } else if (existingCoverage.expectedBUs <= 0) {
+          return NextResponse.json({
+            error: 'SECTION_AGGREGATED_NO_BU',
+            message: 'Esta seção eleitoral é agregada e não possui Boletim de Urna independente.'
+          }, { status: 403 });
         }
       }
     }
@@ -498,11 +520,11 @@ export async function POST(req: Request) {
         }, { status: 400 });
       }
 
-      if (activeRound.plei !== electionId) {
+      if (activeRound.plei !== electionId && (!reportData.specificElectionId || activeRound.plei !== reportData.specificElectionId)) {
         return NextResponse.json({
           error: 'ELECTION_CONTEXT_MISMATCH',
           message: 'O BU pertence a outro pleito não configurado ou inativo.',
-          received: { plei: electionId, turn: roundNumber }
+          received: { plei: electionId, specificPlei: reportData.specificElectionId, turn: roundNumber }
         }, { status: 400 });
       }
 
@@ -525,8 +547,10 @@ export async function POST(req: Request) {
             status: 'PENDENTE_CONFIRMACAO',
             validationData: JSON.stringify({
               parsed: true,
+              vrqrVersion: reportData.vrqrVersion,
               hashStatus: reportData.hashStatus,
               sigStatus: reportData.sigStatus,
+              sigValidationNote: reportData.sigValidationNote,
               attendance: (reportData.apto !== undefined || reportData.comp !== undefined || reportData.falt !== undefined) ? {
                 apto: reportData.apto,
                 comp: reportData.comp,
@@ -549,26 +573,33 @@ export async function POST(req: Request) {
           quantity: number;
         }> = [];
 
+        // Resolução estrita de cargos no contexto exclusivo da eleição configurada (sem auto-criação)
+        const electionOffices = await tx.office.findMany({
+          where: { electionId: activeElection.id }
+        });
+
+        const officeMap = new Map<string, typeof electionOffices[0]>();
+        for (const off of electionOffices) {
+          officeMap.set(off.code, off);
+          officeMap.set(off.name.toLowerCase(), off);
+        }
+
         for (const vote of reportData.votes) {
-          const officeCode = OFFICE_NAME_TO_CODE[vote.officeName] || vote.officeName;
-          let office = await tx.office.findFirst({
-            where: {
-              electionId: activeElection.id,
-              OR: [
-                { code: officeCode },
-                { name: vote.officeName }
-              ]
-            }
-          });
+          const officeCode = vote.officeCode || OFFICE_NAME_TO_CODE[vote.officeName] || vote.officeName;
+          const office = officeMap.get(officeCode) || officeMap.get(vote.officeName.toLowerCase());
+
           if (!office) {
-            office = await tx.office.create({
-              data: {
+            throw new ElectionInvariantError(
+              'OFFICE_NOT_CONFIGURED',
+              `O cargo '${vote.officeName}' (código ${officeCode}) presente no Boletim de Urna não está configurado para a eleição ativa '${activeElection.name}'.`,
+              {
+                officeCode,
+                officeName: vote.officeName,
                 electionId: activeElection.id,
-                code: officeCode,
-                name: vote.officeName,
-                orderNumber: 1
+                roundId: activeRound.id,
+                electionName: activeElection.name
               }
-            });
+            );
           }
 
           let resolvedCandidateId: string | null = null;
@@ -655,6 +686,39 @@ export async function POST(req: Request) {
         console.error(`[SCAN_INVARIANT_ERROR][${correlationId}] Code: ${dbError.code}`, {
           message: dbError.message
         });
+
+        // Gravação durável de auditoria pós-rollback (executada fora da transação abortada)
+        if (dbError.code === 'OFFICE_NOT_CONFIGURED') {
+          const details = dbError.details as {
+            officeCode?: string;
+            officeName?: string;
+            electionId?: string;
+            roundId?: string;
+            electionName?: string;
+          } | undefined;
+
+          try {
+            await prisma.auditLog.create({
+              data: {
+                action: 'SCAN_OFFICE_NOT_CONFIGURED',
+                result: 'REJECTED',
+                identifiers: `Office: ${details?.officeName || 'Desconhecido'} (${details?.officeCode || 'N/A'}), Plei: ${reportData.electionId}, Turn: ${reportData.roundNumber}`,
+                errors: dbError.message,
+                userId: operatorId,
+                roundId: details?.roundId || activeRound.id,
+                electionId: details?.electionId || activeElection.id
+              }
+            });
+          } catch (auditErr) {
+            console.error(`[AUDIT_LOG_FAILURE][${correlationId}] Falha operacional ao persistir registro de auditoria pós-rollback:`, auditErr);
+            return NextResponse.json({
+              error: 'AUDIT_LOG_FAILED',
+              message: 'Falha operacional crítica ao persistir registro de auditoria.',
+              correlationId
+            }, { status: 500 });
+          }
+        }
+
         return NextResponse.json({
           status: 'ERRO_INVARIANTE',
           error: dbError.code,

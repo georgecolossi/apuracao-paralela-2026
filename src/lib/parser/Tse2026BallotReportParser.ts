@@ -1,44 +1,23 @@
 import { BallotReportParser, BallotReportData, ParseError } from './index';
-import { Tse2026QrAssembler } from './tse2026/Tse2026QrAssembler';
-import { Tse2026QrTokenizer } from './tse2026/Tse2026QrTokenizer';
-import { Tse2026SemanticParser } from './tse2026/Tse2026SemanticParser';
-import { Tse2026HashValidator } from './tse2026/Tse2026HashValidator';
-import { Tse2026SignatureValidator } from './tse2026/Tse2026SignatureValidator';
+import { UniversalQrBuParser } from './adapter/UniversalQrBuParser';
 
+/**
+ * Adaptador universal para Boletins de Urna (QRBU).
+ * Mantém compatibilidade integral com a interface histórica Tse2026BallotReportParser,
+ * delegando determinística e estritamente para o despachante universal multi-formato.
+ */
 export class Tse2026BallotReportParser implements BallotReportParser {
-  private assembler = new Tse2026QrAssembler();
-  private tokenizer = new Tse2026QrTokenizer();
-  private semanticParser = new Tse2026SemanticParser();
-  private hashValidator = new Tse2026HashValidator();
-  private sigValidator = new Tse2026SignatureValidator();
+  private universalParser = new UniversalQrBuParser();
 
   parsePart(content: string) {
-    const infoOrError = this.assembler.parseHeader(content);
-    if ('code' in infoOrError) return infoOrError;
-    return infoOrError;
+    return this.universalParser.parsePart(content);
   }
 
   reconstruct(parts: string[]) {
-    return this.assembler.reconstruct(parts);
+    return this.universalParser.reconstruct(parts);
   }
 
   parseReport(fullPayload: string, rawParts?: string[]): BallotReportData | ParseError {
-    const tokens = this.tokenizer.tokenize(fullPayload);
-    const reportDataOrError = this.semanticParser.parse(tokens);
-    
-    if ('code' in reportDataOrError) return reportDataOrError;
-
-    // Validators
-    const hashStatus = this.hashValidator.validate(fullPayload, reportDataOrError.hash || '', rawParts);
-    const sigStatus = this.sigValidator.validate(fullPayload, reportDataOrError.signature, '');
-
-    if (hashStatus === 'INVALID') {
-      return { code: 'INVALID_HASH', message: 'O hash criptográfico não confere com o conteúdo do QR' };
-    }
-
-    reportDataOrError.hashStatus = hashStatus;
-    reportDataOrError.sigStatus = sigStatus;
-
-    return reportDataOrError;
+    return this.universalParser.parseReport(fullPayload, rawParts);
   }
 }
