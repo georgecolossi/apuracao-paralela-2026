@@ -137,7 +137,8 @@ export async function POST(req: Request) {
       return NextResponse.json({
         status: 'PARCIAL',
         partsRead: partsCount,
-        totalParts
+        totalParts,
+        partIndex
       });
     }
 
