@@ -309,10 +309,8 @@ export async function saveElectionWizard(userId: string, payload: WizardPayload)
       }
 
       // ITEM 1 DA AUDITORIA: Bloquear alterações estruturais se houver BUs vinculados (independentemente de DRAFT, ACTIVE ou FINISHED)
-      const hasBoundReports = existing.reports.length > 0;
-
-      if (hasBoundReports) {
-        // Verificar se alguma alteração estrutural foi enviada:
+      // Se a eleição estiver FINISHED ou ARCHIVED, também bloquear modificações estruturais
+      if (existing.status === 'FINISHED' || existing.status === 'ARCHIVED') {
         const structuralChangeAttempted =
           payload.scopes !== undefined ||
           payload.offices !== undefined ||
@@ -322,12 +320,30 @@ export async function saveElectionWizard(userId: string, payload: WizardPayload)
 
         if (structuralChangeAttempted) {
           throw new WizardValidationError(
-            'ELECTION_HAS_BOUND_REPORTS',
-            `A eleição possui ${existing.reports.length} Boletim(ns) de Urna vinculado(s) (processados ou pendentes). Alterações estruturais (escopos, turnos, cargos, candidatos ou cobertura) estão bloqueadas para preservar a integridade do pleito.`
+            'CANNOT_MODIFY_CLOSED_ELECTION',
+            `A eleição está no status '${existing.status}' e não permite modificações estruturais (escopos, turnos, cargos, candidatos ou cobertura). Apenas edições administrativas de identificação/descrição são permitidas.`
           );
         }
       }
 
+      const hasBoundReports = existing.reports.length > 0;
+      if (hasBoundReports) {
+        // Verificar se alteração estrutural incompatível com BUs foi enviada:
+        const structuralChangeAttempted =
+          payload.scopes !== undefined ||
+          payload.offices !== undefined ||
+          payload.candidates !== undefined ||
+          payload.rounds !== undefined;
+
+        if (structuralChangeAttempted) {
+          throw new WizardValidationError(
+            'ELECTION_HAS_BOUND_REPORTS',
+            `A eleição possui ${existing.reports.length} Boletim(ns) de Urna vinculado(s) (processados ou pendentes). Alterações estruturais (escopos, turnos, cargos ou candidatos) estão bloqueadas para preservar a integridade do pleito.`
+          );
+        }
+      }
+
+      // ITEM 1 DA AUDITORIA: Preservar estritamente o status de eleições existentes (ACTIVE, FINISHED, ARCHIVED, DRAFT)
       await tx.election.update({
         where: { id: electionId },
         data: {
@@ -336,7 +352,7 @@ export async function saveElectionWizard(userId: string, payload: WizardPayload)
           type: payload.type,
           description: payload.description !== undefined ? (payload.description ? payload.description.trim() : null) : undefined,
           plei: payload.plei !== undefined ? (payload.plei ? payload.plei.trim() : null) : undefined,
-          status: 'DRAFT' // O wizard salva exclusivamente no estado DRAFT
+          status: existing.status // Preserva rigorosamente o estado existente sem reverter para DRAFT
         }
       });
     } else {
@@ -773,124 +789,210 @@ export async function saveElectionWizard(userId: string, payload: WizardPayload)
     }
 
     // 8. Processar Malha Eleitoral e Cobertura (PollingZone, PollingSection, RoundCoverage)
-    // ITEM 6 DA AUDITORIA: Permitir configuração de RoundCoverage por turno (não presumir cobertura idêntica)
+    // ITEM 3 DA AUDITORIA: Algoritmo de diff transacional exato por turno
     if (payload.coverage !== undefined) {
-      if (payload.coverage.length === 0) {
-        // Se a malha foi esvaziada explicitamente
-        for (const [, roundId] of roundMap) {
-          const reportsCount = await tx.ballotReport.count({ where: { roundId } });
-          if (reportsCount === 0) {
-            await tx.roundCoverage.deleteMany({ where: { electionRoundId: roundId } });
-            await tx.electionRound.update({
-              where: { id: roundId },
-              data: { coverageStatus: 'PROVISIONAL' }
-            });
-          }
+      // 8.1 Verificar se algum turno da eleição já possui cobertura homologada
+      for (const [, roundId] of roundMap) {
+        const roundRec = await tx.electionRound.findUnique({
+          where: { id: roundId },
+          select: { id: true, roundNumber: true, coverageStatus: true }
+        });
+        if (roundRec?.coverageStatus === 'HOMOLOGATED') {
+          throw new WizardValidationError(
+            'CANNOT_MODIFY_HOMOLOGATED_COVERAGE',
+            `A cobertura do ${roundRec.roundNumber}º Turno está homologada e não pode ser modificada pelo assistente.`
+          );
         }
-      } else {
-        // Mapear seções por turno
-        // Se item não tiver roundNumber especificado, aplica a todos os turnos
-        const sectionsByRound = new Map<number, string[]>();
+      }
 
-        for (const cov of payload.coverage) {
-          const muniCode = cov.municipalityOfficialCode.trim();
-          const muni = await tx.municipality.findUnique({
-            where: { officialCode: muniCode }
-          });
+      // 8.2 Mapear seções desejadas por turno
+      interface DesiredCoverageItem {
+        pollingSectionId: string;
+        expectedBUs: number;
+        isAggregated: boolean;
+        municipalityCode: string;
+        zoneNumber: string;
+        sectionNumber: string;
+      }
+      const desiredByRound = new Map<number, Map<string, DesiredCoverageItem>>();
 
-          if (!muni) {
-            throw new WizardValidationError('MUNICIPALITY_NOT_FOUND', `Município com código oficial '${muniCode}' não foi localizado.`);
+      for (const cov of payload.coverage) {
+        const muniCode = cov.municipalityOfficialCode.trim();
+        const muni = await tx.municipality.findUnique({
+          where: { officialCode: muniCode }
+        });
+
+        if (!muni) {
+          throw new WizardValidationError('MUNICIPALITY_NOT_FOUND', `Município com código oficial '${muniCode}' não foi localizado.`);
+        }
+
+        const zoneNum = cov.zoneNumber.trim();
+        let zone = await tx.pollingZone.findUnique({
+          where: {
+            municipalityId_zoneNumber: {
+              municipalityId: muni.id,
+              zoneNumber: zoneNum
+            }
           }
-
-          const zoneNum = cov.zoneNumber.trim();
-          const zone = await tx.pollingZone.upsert({
-            where: {
-              municipalityId_zoneNumber: {
-                municipalityId: muni.id,
-                zoneNumber: zoneNum
-              }
-            },
-            update: {},
-            create: {
+        });
+        if (!zone) {
+          zone = await tx.pollingZone.create({
+            data: {
               municipalityId: muni.id,
               zoneNumber: zoneNum
             }
           });
+        }
 
-          const secNum = cov.sectionNumber.trim();
-          const expectedBUs = cov.isAggregated ? 0 : (cov.expectedBUs !== undefined ? cov.expectedBUs : 1);
+        const secNum = cov.sectionNumber.trim();
+        const targetExpectedBUs = cov.isAggregated ? 0 : (cov.expectedBUs !== undefined ? Number(cov.expectedBUs) : 1);
 
-          const section = await tx.pollingSection.upsert({
-            where: {
-              pollingZoneId_sectionNumber: {
-                pollingZoneId: zone.id,
-                sectionNumber: secNum
-              }
-            },
-            update: {
-              expectedBUs,
-              isAggregated: Boolean(cov.isAggregated),
-              aggregatedIntoSec: cov.aggregatedIntoSec ? cov.aggregatedIntoSec.trim() : null,
-              locationName: cov.locationName ? cov.locationName.trim() : null
-            },
-            create: {
+        // Obter ou criar PollingSection preservando atributos compartilhados sem sobrescrita destrutiva
+        let section = await tx.pollingSection.findUnique({
+          where: {
+            pollingZoneId_sectionNumber: {
+              pollingZoneId: zone.id,
+              sectionNumber: secNum
+            }
+          }
+        });
+
+        if (!section) {
+          section = await tx.pollingSection.create({
+            data: {
               pollingZoneId: zone.id,
               sectionNumber: secNum,
-              expectedBUs,
+              expectedBUs: targetExpectedBUs,
               isAggregated: Boolean(cov.isAggregated),
               aggregatedIntoSec: cov.aggregatedIntoSec ? cov.aggregatedIntoSec.trim() : null,
               locationName: cov.locationName ? cov.locationName.trim() : null
             }
           });
-
-          // Determinar a quais turnos esta seção pertence
-          const targetRounds = cov.roundNumber !== undefined
-            ? [cov.roundNumber]
-            : Array.from(roundMap.keys());
-
-          for (const rNum of targetRounds) {
-            if (!sectionsByRound.has(rNum)) {
-              sectionsByRound.set(rNum, []);
-            }
-            sectionsByRound.get(rNum)!.push(section.id);
-          }
+        } else if (cov.locationName && !section.locationName) {
+          await tx.pollingSection.update({
+            where: { id: section.id },
+            data: { locationName: cov.locationName.trim() }
+          });
         }
 
-        // Sincronizar RoundCoverage para cada turno configurado
-        for (const [rNum, roundId] of roundMap) {
-          const sectionIds = sectionsByRound.get(rNum) || [];
+        // Determinar a quais turnos esta seção pertence
+        const targetRounds = cov.roundNumber !== undefined
+          ? [Number(cov.roundNumber)]
+          : Array.from(roundMap.keys());
 
-          if (sectionIds.length > 0) {
-            for (const secId of sectionIds) {
-              await tx.roundCoverage.upsert({
-                where: {
-                  electionRoundId_pollingSectionId: {
-                    electionRoundId: roundId,
-                    pollingSectionId: secId
-                  }
-                },
-                update: {
-                  expectedBUs: 1
-                },
-                create: {
-                  electionRoundId: roundId,
-                  pollingSectionId: secId,
-                  expectedBUs: 1,
-                  isManualOverride: false
+        for (const rNum of targetRounds) {
+          if (!roundMap.has(rNum)) continue;
+          if (!desiredByRound.has(rNum)) {
+            desiredByRound.set(rNum, new Map());
+          }
+          desiredByRound.get(rNum)!.set(section.id, {
+            pollingSectionId: section.id,
+            expectedBUs: targetExpectedBUs,
+            isAggregated: Boolean(cov.isAggregated),
+            municipalityCode: muniCode,
+            zoneNumber: zoneNum,
+            sectionNumber: secNum
+          });
+        }
+      }
+
+      // 8.3 Executar diff transacional por turno preservando turnos/eleições não selecionados
+      for (const [rNum, roundId] of roundMap) {
+        const desiredMap = desiredByRound.get(rNum) || new Map<string, DesiredCoverageItem>();
+
+        const existingCoverages = await tx.roundCoverage.findMany({
+          where: { electionRoundId: roundId },
+          include: {
+            pollingSection: {
+              include: {
+                zone: {
+                  include: { municipality: true }
                 }
-              });
-            }
-
-            // REGRA OBRIGATÓRIA: Nunca promover automaticamente para HOMOLOGATED
-            // Permanece como REGISTERED (Cadastrada — validação pendente)
-            await tx.electionRound.update({
-              where: { id: roundId },
-              data: {
-                coverageStatus: 'REGISTERED'
               }
-            });
+            }
+          }
+        });
+
+        const existingMap = new Map<string, typeof existingCoverages[0]>();
+        for (const ec of existingCoverages) {
+          existingMap.set(ec.pollingSectionId, ec);
+        }
+
+        // 1) Identificar vínculos a remover
+        const toRemove = existingCoverages.filter(ec => !desiredMap.has(ec.pollingSectionId));
+
+        // 2) Identificar vínculos a inserir e atualizar
+        const toInsert: DesiredCoverageItem[] = [];
+        const toUpdate: { id: string; expectedBUs: number }[] = [];
+
+        for (const [secId, desired] of desiredMap) {
+          const existing = existingMap.get(secId);
+          if (!existing) {
+            toInsert.push(desired);
+          } else if (existing.expectedBUs !== desired.expectedBUs) {
+            toUpdate.push({ id: existing.id, expectedBUs: desired.expectedBUs });
           }
         }
+
+        // 3) Bloquear alterações que comprometam BUs reais vinculados
+        for (const covToRemove of toRemove) {
+          const sec = covToRemove.pollingSection;
+          const boundBu = await tx.ballotReport.findFirst({
+            where: {
+              electionId: electionId!,
+              roundId: roundId,
+              cityCode: sec.zone.municipality.officialCode,
+              zoneCode: sec.zone.zoneNumber,
+              sectionCode: sec.sectionNumber,
+              isSimulation: false
+            }
+          });
+
+          if (boundBu) {
+            throw new WizardValidationError(
+              'CANNOT_REMOVE_SECTION_WITH_REAL_BUS',
+              `Não é possível remover a seção ${sec.sectionNumber} (Zona ${sec.zone.zoneNumber}, Município ${sec.zone.municipality.officialCode}) do ${rNum}º Turno, pois ela possui Boletim de Urna real vinculado (status: ${boundBu.status}).`
+            );
+          }
+        }
+
+        // 4) Remover vínculos obsoletos
+        if (toRemove.length > 0) {
+          await tx.roundCoverage.deleteMany({
+            where: { id: { in: toRemove.map(c => c.id) } }
+          });
+        }
+
+        // 5) Atualizar expectedBUs dos mantidos
+        for (const up of toUpdate) {
+          await tx.roundCoverage.update({
+            where: { id: up.id },
+            data: { expectedBUs: up.expectedBUs }
+          });
+        }
+
+        // 6) Inserir novos vínculos
+        for (const ins of toInsert) {
+          await tx.roundCoverage.create({
+            data: {
+              electionRoundId: roundId,
+              pollingSectionId: ins.pollingSectionId,
+              expectedBUs: ins.expectedBUs,
+              isManualOverride: false
+            }
+          });
+        }
+
+        // 7) Atualizar coverageStatus com base no estado final real da malha
+        const finalCoverageCount = await tx.roundCoverage.count({
+          where: { electionRoundId: roundId }
+        });
+
+        const newCoverageStatus = finalCoverageCount > 0 ? 'REGISTERED' : 'PROVISIONAL';
+        await tx.electionRound.update({
+          where: { id: roundId },
+          data: { coverageStatus: newCoverageStatus }
+        });
       }
     }
 
@@ -1024,6 +1126,14 @@ export async function activateElectionWizard(
       throw new WizardValidationError('ELECTION_NOT_FOUND', 'A eleição informada não existe.');
     }
 
+    // ITEM 2 DA AUDITORIA: Eleições FINISHED não podem ser reativadas implicitamente
+    if (target.status === 'FINISHED') {
+      throw new WizardValidationError(
+        'CANNOT_ACTIVATE_FINISHED_ELECTION',
+        'Eleições já finalizadas não podem ser reativadas.'
+      );
+    }
+
     if (target.rounds.length === 0) {
       throw new WizardValidationError('NO_ROUNDS_CONFIGURED', 'A eleição precisa de pelo menos 1 turno para ser ativada.');
     }
@@ -1058,11 +1168,21 @@ export async function activateElectionWizard(
         );
       }
 
-      // Se expressamente autorizado, arquiva contextualmente a eleição anterior (NÃO marca FINISHED nem altera votos!)
+      // ITEM 2 DA AUDITORIA: Se expressamente autorizado, arquiva contextualmente a eleição anterior
+      // Nenhuma eleição ARCHIVED permanece com turno operacional ACTIVE
+      // Turnos ACTIVE passam para PLANNED, preservando votos, BUs e status FINISHED dos turnos já concluídos
       for (const act of otherActive) {
         await tx.election.update({
           where: { id: act.id },
           data: { status: 'ARCHIVED' }
+        });
+
+        await tx.electionRound.updateMany({
+          where: {
+            electionId: act.id,
+            status: 'ACTIVE'
+          },
+          data: { status: 'PLANNED' }
         });
 
         await tx.auditLog.create({
@@ -1070,7 +1190,7 @@ export async function activateElectionWizard(
             userId,
             electionId: act.id,
             action: 'ELECTION_CONTEXT_SWITCH_ARCHIVED',
-            identifiers: `Archived contextually in favor of activating ${electionId}`,
+            identifiers: `Archived contextually in favor of activating ${electionId}. Active rounds paused to PLANNED.`,
             result: 'SUCCESS',
             previousStatus: 'ACTIVE',
             newStatus: 'ARCHIVED'
@@ -1079,8 +1199,18 @@ export async function activateElectionWizard(
       }
     }
 
-    // 4. Ativar a nova eleição e seu 1º Turno
-    const round1 = target.rounds.find(r => r.roundNumber === 1) || target.rounds[0];
+    // 4. Identificar e Ativar o Turno Adequado da Eleição
+    const roundToActivate =
+      target.rounds.find(r => r.status === 'PLANNED') ||
+      target.rounds.find(r => r.roundNumber === 1) ||
+      target.rounds[0];
+
+    if (!roundToActivate || roundToActivate.status === 'FINISHED') {
+      throw new WizardValidationError(
+        'ALL_ROUNDS_FINISHED',
+        'Todos os turnos desta eleição já foram finalizados. Não é possível ativá-la.'
+      );
+    }
 
     await tx.election.update({
       where: { id: electionId },
@@ -1088,7 +1218,7 @@ export async function activateElectionWizard(
     });
 
     await tx.electionRound.update({
-      where: { id: round1.id },
+      where: { id: roundToActivate.id },
       data: { status: 'ACTIVE' }
     });
 
@@ -1097,9 +1227,9 @@ export async function activateElectionWizard(
       data: {
         userId,
         electionId,
-        roundId: round1.id,
+        roundId: roundToActivate.id,
         action: 'ACTIVATE_ELECTION',
-        identifiers: `Activated Election: ${target.name} (${target.year}) - Round 1 ACTIVE`,
+        identifiers: `Activated Election: ${target.name} (${target.year}) - Round ${roundToActivate.roundNumber} ACTIVE`,
         result: 'SUCCESS',
         previousStatus: target.status,
         newStatus: 'ACTIVE',
@@ -1115,8 +1245,8 @@ export async function activateElectionWizard(
     return {
       success: true,
       electionId,
-      roundId: round1.id,
-      message: `Eleição '${target.name}' e 1º Turno ativados com sucesso.`
+      roundId: roundToActivate.id,
+      message: `Eleição '${target.name}' e ${roundToActivate.roundNumber}º Turno ativados com sucesso.`
     };
   });
 }
