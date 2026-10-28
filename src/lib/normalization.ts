@@ -39,7 +39,7 @@ const NUMBER_WORDS: Record<number, string[]> = {
  * A primeira frase da lista é a frase canônica sugerida na interface.
  */
 export function getConfirmationAliases(
-  action: 'RESET' | 'ACTIVATE',
+  action: 'RESET' | 'ACTIVATE' | 'ACTIVATE_ELECTION',
   roundNumber?: number
 ): { canonical: string; aliases: string[] } {
   if (action === 'RESET') {
@@ -95,6 +95,19 @@ export function getConfirmationAliases(
     return {
       canonical,
       aliases: Array.from(new Set(aliases))
+    };
+  }
+
+  if (action === 'ACTIVATE_ELECTION') {
+    return {
+      canonical: 'ATIVAR ELEIÇÃO',
+      aliases: [
+        'ATIVAR ELEIÇÃO',
+        'ATIVAR ELEICAO',
+        'ATIVAR',
+        'ATIVAR ELEICAO PRINCIPAL',
+        'ATIVAR ELEIÇÃO PRINCIPAL'
+      ]
     };
   }
 

@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { LayoutDashboard, ScanLine, Clock, Settings, LogOut, Menu, ExternalLink } from 'lucide-react';
+import { LayoutDashboard, ScanLine, Clock, Settings, LogOut, Menu, ExternalLink, Sparkles } from 'lucide-react';
 import { useState } from 'react';
 
 export default function AdminShell({ children }: { children: React.ReactNode }) {
@@ -18,6 +18,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
 
   const links = [
     { href: '/admin', label: 'Painel', icon: LayoutDashboard },
+    { href: '/admin/wizard', label: 'Assistente', icon: Sparkles },
     { href: '/admin/scanner', label: 'Scanner', icon: ScanLine },
     { href: '/admin/turnos', label: 'Turnos', icon: Clock },
     { href: '/admin/configuracao', label: 'Configuração', icon: Settings },
