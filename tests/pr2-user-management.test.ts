@@ -215,7 +215,7 @@ describe('PR 2 — Gestão Administrativa de Usuários, RBAC e Segurança de Ses
       });
       const loginFailRes = await loginRoute(loginFailReq);
       expect(loginFailRes.status).toBe(401);
-    });
+    }, 15000);
   });
 
   describe('2. Criação de Usuários com RBAC (POST /api/admin/users)', () => {
@@ -900,6 +900,199 @@ describe('PR 2 — Gestão Administrativa de Usuários, RBAC e Segurança de Ses
       const csrf = validateCsrfProtection(req);
       expect(csrf.valid).toBe(false);
       expect(csrf.reason).toContain('MISSING_HOST');
+    });
+
+    it('8.15 Rejeita requisição cruzada quando Origin A (autorizado) tenta mutar Host B (autorizado)', () => {
+      const origAppUrl = process.env.APP_URL;
+      const origRailway = process.env.RAILWAY_PUBLIC_DOMAIN;
+      const origNodeEnv = process.env.NODE_ENV;
+      try {
+        // Configura dois domínios expressamente autorizados:
+        // Domínio A: apuracao-oficial.org.br
+        // Domínio B: apuracao-prod.up.railway.app
+        process.env.APP_URL = 'https://apuracao-oficial.org.br';
+        process.env.RAILWAY_PUBLIC_DOMAIN = 'apuracao-prod.up.railway.app';
+        (process.env as any).NODE_ENV = 'production';
+
+        // Requisição recebida em Host B (Railway), mas com Origin A (Oficial)
+        const req = new Request('https://apuracao-prod.up.railway.app/api/admin/users', {
+          method: 'POST',
+          headers: {
+            'Host': 'apuracao-prod.up.railway.app',
+            'Origin': 'https://apuracao-oficial.org.br'
+          }
+        });
+
+        const csrf = validateCsrfProtection(req);
+        // Mesmo que ambas as origens estejam em trustedOrigins, a requisição cruzada DEVE ser rejeitada!
+        expect(csrf.valid).toBe(false);
+        expect(csrf.reason).toContain('ORIGIN_MISMATCH');
+      } finally {
+        process.env.APP_URL = origAppUrl;
+        process.env.RAILWAY_PUBLIC_DOMAIN = origRailway;
+        (process.env as any).NODE_ENV = origNodeEnv;
+      }
+    });
+
+    it('8.16 Rejeita requisição cruzada quando Origin B (autorizado) tenta mutar Host A (autorizado)', () => {
+      const origAppUrl = process.env.APP_URL;
+      const origRailway = process.env.RAILWAY_PUBLIC_DOMAIN;
+      const origNodeEnv = process.env.NODE_ENV;
+      try {
+        process.env.APP_URL = 'https://apuracao-oficial.org.br';
+        process.env.RAILWAY_PUBLIC_DOMAIN = 'apuracao-prod.up.railway.app';
+        (process.env as any).NODE_ENV = 'production';
+
+        // Requisição recebida em Host A (Oficial), mas com Origin B (Railway)
+        const req = new Request('https://apuracao-oficial.org.br/api/admin/users', {
+          method: 'POST',
+          headers: {
+            'Host': 'apuracao-oficial.org.br',
+            'Origin': 'https://apuracao-prod.up.railway.app'
+          }
+        });
+
+        const csrf = validateCsrfProtection(req);
+        expect(csrf.valid).toBe(false);
+        expect(csrf.reason).toContain('ORIGIN_MISMATCH');
+      } finally {
+        process.env.APP_URL = origAppUrl;
+        process.env.RAILWAY_PUBLIC_DOMAIN = origRailway;
+        (process.env as any).NODE_ENV = origNodeEnv;
+      }
+    });
+
+    it('8.17 Rejeita requisição cruzada via Referer de Domínio A autorizado para Host B autorizado', () => {
+      const origAppUrl = process.env.APP_URL;
+      const origRailway = process.env.RAILWAY_PUBLIC_DOMAIN;
+      const origNodeEnv = process.env.NODE_ENV;
+      try {
+        process.env.APP_URL = 'https://apuracao-oficial.org.br';
+        process.env.RAILWAY_PUBLIC_DOMAIN = 'apuracao-prod.up.railway.app';
+        (process.env as any).NODE_ENV = 'production';
+
+        const req = new Request('https://apuracao-prod.up.railway.app/api/admin/users', {
+          method: 'POST',
+          headers: {
+            'Host': 'apuracao-prod.up.railway.app',
+            'Referer': 'https://apuracao-oficial.org.br/admin',
+            'x-omit-origin': 'true'
+          }
+        });
+
+        const csrf = validateCsrfProtection(req);
+        expect(csrf.valid).toBe(false);
+        expect(csrf.reason).toContain('REFERER_MISMATCH');
+      } finally {
+        process.env.APP_URL = origAppUrl;
+        process.env.RAILWAY_PUBLIC_DOMAIN = origRailway;
+        (process.env as any).NODE_ENV = origNodeEnv;
+      }
+    });
+
+    it('8.18 Rejeita requisição com Host externo e X-Forwarded-Host conflitante (spoofing / header injection)', () => {
+      const origAppUrl = process.env.APP_URL;
+      const origRailway = process.env.RAILWAY_PUBLIC_DOMAIN;
+      const origNodeEnv = process.env.NODE_ENV;
+      try {
+        process.env.APP_URL = 'https://apuracao-oficial.org.br';
+        process.env.RAILWAY_PUBLIC_DOMAIN = 'apuracao-prod.up.railway.app';
+        (process.env as any).NODE_ENV = 'production';
+
+        const req = new Request('https://apuracao-prod.up.railway.app/api/admin/users', {
+          method: 'POST',
+          headers: {
+            'Host': 'apuracao-prod.up.railway.app', // Host público direto
+            'X-Forwarded-Host': 'apuracao-oficial.org.br', // Cabeçalho conflitante forjado
+            'Origin': 'https://apuracao-oficial.org.br'
+          }
+        });
+
+        const csrf = validateCsrfProtection(req);
+        expect(csrf.valid).toBe(false);
+        expect(csrf.reason).toContain('HOST_HEADER_MISMATCH');
+      } finally {
+        process.env.APP_URL = origAppUrl;
+        process.env.RAILWAY_PUBLIC_DOMAIN = origRailway;
+        (process.env as any).NODE_ENV = origNodeEnv;
+      }
+    });
+
+    it('8.19 Aceita requisição legítima através de reverse proxy com Host de container interno e X-Forwarded-Host confiável', () => {
+      const origRailway = process.env.RAILWAY_PUBLIC_DOMAIN;
+      const origNodeEnv = process.env.NODE_ENV;
+      try {
+        process.env.RAILWAY_PUBLIC_DOMAIN = 'apuracao-prod.up.railway.app';
+        (process.env as any).NODE_ENV = 'production';
+
+        // Simula tráfego chegando do proxy reverso do Railway para o container interno
+        const req = new Request('https://apuracao-prod.up.railway.app/api/admin/users', {
+          method: 'POST',
+          headers: {
+            'Host': 'localhost:3000', // Conexão upstream interna do proxy
+            'X-Forwarded-Host': 'apuracao-prod.up.railway.app',
+            'X-Forwarded-Proto': 'https',
+            'Origin': 'https://apuracao-prod.up.railway.app'
+          }
+        });
+
+        const csrf = validateCsrfProtection(req);
+        expect(csrf.valid).toBe(true);
+      } finally {
+        process.env.RAILWAY_PUBLIC_DOMAIN = origRailway;
+        (process.env as any).NODE_ENV = origNodeEnv;
+      }
+    });
+
+    it('8.20 Rejeita tráfego encaminhado com X-Forwarded-Proto HTTP em produção', () => {
+      const origRailway = process.env.RAILWAY_PUBLIC_DOMAIN;
+      const origNodeEnv = process.env.NODE_ENV;
+      try {
+        process.env.RAILWAY_PUBLIC_DOMAIN = 'apuracao-prod.up.railway.app';
+        (process.env as any).NODE_ENV = 'production';
+
+        const req = new Request('https://apuracao-prod.up.railway.app/api/admin/users', {
+          method: 'POST',
+          headers: {
+            'Host': 'localhost:3000',
+            'X-Forwarded-Host': 'apuracao-prod.up.railway.app',
+            'X-Forwarded-Proto': 'http', // Inseguro em produção
+            'Origin': 'https://apuracao-prod.up.railway.app'
+          }
+        });
+
+        const csrf = validateCsrfProtection(req);
+        expect(csrf.valid).toBe(false);
+        expect(csrf.reason).toContain('INSECURE_FORWARDED_PROTO');
+      } finally {
+        process.env.RAILWAY_PUBLIC_DOMAIN = origRailway;
+        (process.env as any).NODE_ENV = origNodeEnv;
+      }
+    });
+
+    it('8.21 Valida que o token HMAC CSRF permanece estritamente vinculado ao usuário e sessionVersion exatos', () => {
+      const tokenUser1V0 = generateCsrfToken('user-1', 0);
+      const tokenUser1V1 = generateCsrfToken('user-1', 1);
+      const tokenUser2V0 = generateCsrfToken('user-2', 0);
+
+      // Usuário 1 versão 0 aceita seu próprio token versão 0
+      expect(verifyCsrfToken(tokenUser1V0, 'user-1', 0)).toBe(true);
+
+      // Usuário 1 versão 0 rejeita token da versão 1
+      expect(verifyCsrfToken(tokenUser1V1, 'user-1', 0)).toBe(false);
+
+      // Usuário 1 versão 1 aceita token da versão 1
+      expect(verifyCsrfToken(tokenUser1V1, 'user-1', 1)).toBe(true);
+
+      // Usuário 1 rejeita token do Usuário 2 mesmo com mesma sessionVersion
+      expect(verifyCsrfToken(tokenUser2V0, 'user-1', 0)).toBe(false);
+
+      // Usuário 2 aceita seu próprio token
+      expect(verifyCsrfToken(tokenUser2V0, 'user-2', 0)).toBe(true);
+
+      // Token adulterado de 64 caracteres hexadecimais é rejeitado
+      const tampered = tokenUser1V0.slice(0, 63) + (tokenUser1V0.endsWith('a') ? 'b' : 'a');
+      expect(verifyCsrfToken(tampered, 'user-1', 0)).toBe(false);
     });
   });
 

@@ -29,6 +29,31 @@ export interface CsrfAuthContext {
 }
 
 /**
+ * Normaliza strings de host removendo portas padrão explícitas (:80, :443) e espaços.
+ */
+export function normalizeHost(host: string): string {
+  const clean = host.trim().toLowerCase();
+  if (clean.endsWith(':80')) return clean.slice(0, -3);
+  if (clean.endsWith(':443')) return clean.slice(0, -4);
+  return clean;
+}
+
+/**
+ * Identifica se um host é de loopback local (desenvolvimento / proxies internos).
+ */
+export function isLoopbackHost(host: string): boolean {
+  const h = normalizeHost(host);
+  return (
+    h === 'localhost' ||
+    h.startsWith('localhost:') ||
+    h === '127.0.0.1' ||
+    h.startsWith('127.0.0.1:') ||
+    h === '[::1]' ||
+    h.startsWith('[::1]:')
+  );
+}
+
+/**
  * Retorna os hosts confiáveis rigorosamente configurados no ambiente.
  * Nenhum sufixo genérico de wildcard é permitido.
  */
@@ -37,18 +62,18 @@ export function getTrustedHosts(): Set<string> {
 
   if (process.env.APP_URL) {
     try {
-      trusted.add(new URL(process.env.APP_URL).host.toLowerCase());
+      trusted.add(normalizeHost(new URL(process.env.APP_URL).host));
     } catch {}
   }
 
   if (process.env.NEXT_PUBLIC_APP_URL) {
     try {
-      trusted.add(new URL(process.env.NEXT_PUBLIC_APP_URL).host.toLowerCase());
+      trusted.add(normalizeHost(new URL(process.env.NEXT_PUBLIC_APP_URL).host));
     } catch {}
   }
 
   if (process.env.RAILWAY_PUBLIC_DOMAIN) {
-    trusted.add(process.env.RAILWAY_PUBLIC_DOMAIN.trim().toLowerCase());
+    trusted.add(normalizeHost(process.env.RAILWAY_PUBLIC_DOMAIN));
   }
 
   // Em ambientes de teste e desenvolvimento local, autoriza explicitamente apenas loopback
@@ -82,7 +107,7 @@ export function getTrustedOrigins(): Set<string> {
 
   if (process.env.RAILWAY_PUBLIC_DOMAIN) {
     // Domínios públicos do Railway operam sob HTTPS
-    origins.add(`https://${process.env.RAILWAY_PUBLIC_DOMAIN.trim().toLowerCase()}`);
+    origins.add(`https://${normalizeHost(process.env.RAILWAY_PUBLIC_DOMAIN)}`);
   }
 
   // Em ambientes de teste e desenvolvimento local
@@ -183,21 +208,47 @@ export function validateCsrfProtection(
   const trustedHosts = getTrustedHosts();
   const trustedOrigins = getTrustedOrigins();
 
-  const directHost = req.headers.get('host')?.trim().toLowerCase();
-  const forwardedHost = req.headers.get('x-forwarded-host')?.trim().toLowerCase();
+  const rawDirectHost = req.headers.get('host')?.trim();
+  const rawForwardedHost = req.headers.get('x-forwarded-host')?.trim();
+  const rawForwardedProto = req.headers.get('x-forwarded-proto')?.trim().toLowerCase();
+
+  const directHost = rawDirectHost ? normalizeHost(rawDirectHost) : null;
 
   // 5. Validação rigorosa de Host e X-Forwarded-Host:
-  // Não confia em cabeçalhos de encaminhamento arbitrariamente fornecidos pelo cliente.
+  // Não confia cegamente em cabeçalhos de encaminhamento e bloqueia descompassos entre Host externo e X-Forwarded-Host.
   let resolvedHost: string | null = null;
-  if (forwardedHost) {
-    if (trustedHosts.has(forwardedHost)) {
-      resolvedHost = forwardedHost;
-    } else {
+  if (rawForwardedHost) {
+    const forwardedHosts = rawForwardedHost
+      .split(',')
+      .map(h => normalizeHost(h.trim()))
+      .filter(Boolean);
+
+    if (forwardedHosts.length === 0) {
       return {
         valid: false,
-        reason: `UNTRUSTED_FORWARDED_HOST: O host encaminhado '${forwardedHost}' não consta na lista de domínios autorizados.`
+        reason: 'MALFORMED_FORWARDED_HOST: Cabeçalho X-Forwarded-Host vazio ou malformado.'
       };
     }
+
+    const clientForwardedHost = forwardedHosts[0];
+
+    if (!trustedHosts.has(clientForwardedHost)) {
+      return {
+        valid: false,
+        reason: `UNTRUSTED_FORWARDED_HOST: O host encaminhado '${clientForwardedHost}' não consta na lista de domínios autorizados.`
+      };
+    }
+
+    // Se o Host direto for um domínio público externo (não loopback) e divergir do X-Forwarded-Host:
+    // Trata como inconsistência/forjamento e rejeita imediatamente.
+    if (directHost && !isLoopbackHost(directHost) && directHost !== clientForwardedHost) {
+      return {
+        valid: false,
+        reason: `HOST_HEADER_MISMATCH: Conflito detectado entre Host ('${directHost}') e X-Forwarded-Host ('${clientForwardedHost}').`
+      };
+    }
+
+    resolvedHost = clientForwardedHost;
   } else if (directHost) {
     if (trustedHosts.has(directHost)) {
       resolvedHost = directHost;
@@ -211,6 +262,14 @@ export function validateCsrfProtection(
     return {
       valid: false,
       reason: 'MISSING_HOST: Requisição de mutação sem cabeçalho Host ou X-Forwarded-Host.'
+    };
+  }
+
+  // Em produção, se o tráfego foi encaminhado com protocolo, ele DEVE ser estritamente HTTPS
+  if (process.env.NODE_ENV === 'production' && rawForwardedProto && rawForwardedProto !== 'https') {
+    return {
+      valid: false,
+      reason: 'INSECURE_FORWARDED_PROTO: Tráfego encaminhado em produção deve utilizar HTTPS.'
     };
   }
 
@@ -235,17 +294,31 @@ export function validateCsrfProtection(
       };
     }
 
-    const normalizedOrigin = originUrl.origin.toLowerCase();
-    const originHost = originUrl.host.toLowerCase();
-
-    const isOriginTrusted =
-      trustedOrigins.has(normalizedOrigin) ||
-      (originHost === resolvedHost && (process.env.NODE_ENV !== 'production' || originUrl.protocol === 'https:'));
-
-    if (!isOriginTrusted) {
+    if (originUrl.protocol !== 'http:' && originUrl.protocol !== 'https:') {
       return {
         valid: false,
-        reason: `ORIGIN_MISMATCH: origin '${originHeader}' diverge dos domínios autorizados para host '${resolvedHost}'.`
+        reason: 'INSECURE_ORIGIN_SCHEME: Protocolo de Origin inválido ou inseguro.'
+      };
+    }
+
+    const normalizedOrigin = originUrl.origin.toLowerCase();
+    const originHost = normalizeHost(originUrl.host);
+
+    // A. A origem DEVE coincidir estritamente com o host público efetivo da requisição.
+    // Não aceita automaticamente um Origin apenas porque pertence a trustedOrigins.
+    // Impede que uma origem autorizada A seja utilizada para autorizar uma mutação recebida em uma origem B diferente.
+    if (originHost !== resolvedHost) {
+      return {
+        valid: false,
+        reason: `ORIGIN_MISMATCH: A origem informada '${originHeader}' diverge do host da requisição '${resolvedHost}'.`
+      };
+    }
+
+    // B. A origem completa DEVE estar presente na lista de origens expressamente autorizadas.
+    if (!trustedOrigins.has(normalizedOrigin)) {
+      return {
+        valid: false,
+        reason: `UNTRUSTED_ORIGIN: A origem '${normalizedOrigin}' não consta na lista de origens expressamente autorizadas.`
       };
     }
 
@@ -268,17 +341,29 @@ export function validateCsrfProtection(
       };
     }
 
-    const normalizedRefererOrigin = refererUrl.origin.toLowerCase();
-    const refererHost = refererUrl.host.toLowerCase();
-
-    const isRefererTrusted =
-      trustedOrigins.has(normalizedRefererOrigin) ||
-      (refererHost === resolvedHost && (process.env.NODE_ENV !== 'production' || refererUrl.protocol === 'https:'));
-
-    if (!isRefererTrusted) {
+    if (refererUrl.protocol !== 'http:' && refererUrl.protocol !== 'https:') {
       return {
         valid: false,
-        reason: `REFERER_MISMATCH: referer '${refererHeader}' diverge dos domínios autorizados para host '${resolvedHost}'.`
+        reason: 'INSECURE_REFERER_SCHEME: Protocolo de Referer inválido ou inseguro.'
+      };
+    }
+
+    const normalizedRefererOrigin = refererUrl.origin.toLowerCase();
+    const refererHost = normalizeHost(refererUrl.host);
+
+    // A. O host do Referer DEVE coincidir estritamente com o host público efetivo da requisição.
+    if (refererHost !== resolvedHost) {
+      return {
+        valid: false,
+        reason: `REFERER_MISMATCH: O referer informado '${refererHeader}' diverge do host da requisição '${resolvedHost}'.`
+      };
+    }
+
+    // B. A origem do Referer DEVE estar presente na lista de origens autorizadas.
+    if (!trustedOrigins.has(normalizedRefererOrigin)) {
+      return {
+        valid: false,
+        reason: `UNTRUSTED_REFERER: O referer '${normalizedRefererOrigin}' não consta na lista de origens expressamente autorizadas.`
       };
     }
 
