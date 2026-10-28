@@ -1177,7 +1177,70 @@ export async function activateElectionWizard(
       };
     }
 
-    // 3. Verificar Concorrência de Eleição Ativa
+    // 3. Identificar e Validar inequivocamente o Turno Adequado da Eleição (Fail-Closed)
+    let roundToActivate: typeof target.rounds[0];
+
+    if (target.status === 'ARCHIVED') {
+      // Retomada de eleição arquivada:
+      // Identificar inequivocamente o turno anteriormente pausado através do log de auditoria
+      const lastPausedLog = await tx.auditLog.findFirst({
+        where: {
+          electionId: target.id,
+          action: 'ELECTION_CONTEXT_SWITCH_ARCHIVED',
+          roundId: { not: null }
+        },
+        orderBy: { createdAt: 'desc' }
+      });
+
+      if (!lastPausedLog || !lastPausedLog.roundId) {
+        throw new WizardValidationError(
+          'PAUSED_ROUND_NOT_RESOLVED',
+          'Não foi possível identificar por evidência de auditoria qual turno foi pausado nesta eleição arquivada. Operação bloqueada por segurança.'
+        );
+      }
+
+      const candidateRound = target.rounds.find(r => r.id === lastPausedLog.roundId);
+      if (!candidateRound) {
+        throw new WizardValidationError(
+          'PAUSED_ROUND_NOT_RESOLVED',
+          `O turno registrado no log de auditoria (${lastPausedLog.roundId}) não foi encontrado nesta eleição.`
+        );
+      }
+
+      if (candidateRound.status === 'FINISHED') {
+        throw new WizardValidationError(
+          'PAUSED_ROUND_NOT_RESOLVED',
+          `O turno identificado pela evidência de auditoria (${candidateRound.roundNumber}º Turno) já se encontra finalizado.`
+        );
+      }
+
+      if (candidateRound.status !== 'PLANNED') {
+        throw new WizardValidationError(
+          'PAUSED_ROUND_NOT_RESOLVED',
+          `O turno identificado pela evidência de auditoria (${candidateRound.roundNumber}º Turno) não se encontra no estado PLANNED (status atual: ${candidateRound.status}).`
+        );
+      }
+
+      roundToActivate = candidateRound;
+    } else if (target.status === 'DRAFT') {
+      // Eleição nova (DRAFT): deve iniciar obrigatoriamente e estritamente pelo 1º Turno (roundNumber 1) no estado PLANNED
+      // Elimina qualquer fallback para outro turno e impede a ativação automática do 2º turno
+      const round1 = target.rounds.find(r => r.roundNumber === 1);
+      if (!round1 || round1.status !== 'PLANNED') {
+        throw new WizardValidationError(
+          'FIRST_ROUND_NOT_READY',
+          'A ativação inicial da eleição exige estritamente que o 1º Turno esteja configurado e no estado PLANNED.'
+        );
+      }
+      roundToActivate = round1;
+    } else {
+      throw new WizardValidationError(
+        'INVALID_ELECTION_STATUS_FOR_ACTIVATION',
+        `A eleição possui status '${target.status}' incompatível com ativação via Wizard.`
+      );
+    }
+
+    // 4. Verificar Concorrência de Eleição Ativa
     const otherActive = await tx.election.findMany({
       where: {
         id: { not: electionId },
@@ -1236,50 +1299,6 @@ export async function activateElectionWizard(
           });
         }
       }
-    }
-
-    // 4. Identificar e Ativar inequivocamente o Turno Adequado da Eleição
-    let roundToActivate: typeof target.rounds[0] | undefined;
-
-    if (target.status === 'ARCHIVED') {
-      // Retomada de eleição arquivada:
-      // Identificar inequivocamente o turno anteriormente pausado através do log de auditoria
-      const lastPausedLog = await tx.auditLog.findFirst({
-        where: {
-          electionId: target.id,
-          action: 'ELECTION_CONTEXT_SWITCH_ARCHIVED',
-          roundId: { not: null }
-        },
-        orderBy: { createdAt: 'desc' }
-      });
-
-      if (lastPausedLog?.roundId) {
-        roundToActivate = target.rounds.find(
-          r => r.id === lastPausedLog.roundId && r.status !== 'FINISHED'
-        );
-      }
-
-      // Fallback para turno não finalizado se não houver log
-      if (!roundToActivate) {
-        const nonFinishedRounds = target.rounds.filter(r => r.status !== 'FINISHED');
-        roundToActivate = nonFinishedRounds.find(r => r.status === 'PLANNED') || nonFinishedRounds[0];
-      }
-    } else {
-      // Eleição nova (DRAFT): deve iniciar obrigatoriamente pelo 1º Turno (roundNumber 1)
-      // NUNCA ativar automaticamente o 2º turno!
-      const round1 = target.rounds.find(r => r.roundNumber === 1);
-      if (round1 && round1.status === 'PLANNED') {
-        roundToActivate = round1;
-      } else {
-        roundToActivate = target.rounds.find(r => r.status === 'PLANNED');
-      }
-    }
-
-    if (!roundToActivate || roundToActivate.status === 'FINISHED') {
-      throw new WizardValidationError(
-        'ALL_ROUNDS_FINISHED',
-        'Todos os turnos desta eleição já foram finalizados ou não há turno válido disponível para ativação.'
-      );
     }
 
     // Garantir unicidade: nenhum outro turno desta eleição pode estar ACTIVE

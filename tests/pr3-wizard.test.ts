@@ -739,6 +739,18 @@ describe('PR 3 — Assistente Universal de Configuração (Auditoria Independent
           rounds: { create: { roundNumber: 1, status: 'PLANNED' } },
           scopes: { create: { scopeKey: 'ESTADUAL:SC', scopeType: 'ESTADUAL' } },
           offices: { create: { code: '11', name: 'Prefeito' } }
+        },
+        include: { rounds: true }
+      });
+
+      // Evidência de auditoria exigida para retomada fail-closed de eleição arquivada
+      await prisma.auditLog.create({
+        data: {
+          userId: adminUser.id,
+          electionId: electionA.id,
+          roundId: electionA.rounds[0].id,
+          action: 'ELECTION_CONTEXT_SWITCH_ARCHIVED',
+          result: 'SUCCESS'
         }
       });
 
@@ -1004,6 +1016,281 @@ describe('PR 3 — Assistente Universal de Configuração (Auditoria Independent
       expect(checkEl?.status).toBe('DRAFT');
       const checkRound = await prisma.electionRound.findFirst({ where: { electionId: election.id } });
       expect(checkRound?.status).toBe('PLANNED');
+    });
+
+    it('5.9 Retomada de eleição ARCHIVED sem log de pausa deve ser rejeitada com PAUSED_ROUND_NOT_RESOLVED (Fail-Closed)', async () => {
+      const election = await prisma.election.create({
+        data: {
+          name: 'Eleição Arquivada Sem Log',
+          year: 2024,
+          status: 'ARCHIVED',
+          rounds: { create: { roundNumber: 1, status: 'PLANNED' } },
+          scopes: { create: { scopeKey: 'ESTADUAL:SC', scopeType: 'ESTADUAL' } },
+          offices: { create: { code: '11', name: 'Prefeito' } }
+        }
+      });
+
+      const req = new Request('http://localhost:3000/api/admin/wizard/activate', {
+        method: 'POST',
+        headers: createAuthHeaders(adminCsrfToken),
+        body: JSON.stringify({
+          electionId: election.id,
+          confirmationText: 'ATIVAR ELEIÇÃO'
+        })
+      });
+
+      const res = await activateWizard(req);
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toBe('PAUSED_ROUND_NOT_RESOLVED');
+
+      // Garantir integridade fail-closed: continua ARCHIVED
+      const checkEl = await prisma.election.findUnique({ where: { id: election.id } });
+      expect(checkEl?.status).toBe('ARCHIVED');
+    });
+
+    it('5.10 Retomada com log apontando para turno inexistente deve ser rejeitada com PAUSED_ROUND_NOT_RESOLVED', async () => {
+      const election = await prisma.election.create({
+        data: {
+          name: 'Eleição Arquivada Log Turno Inexistente',
+          year: 2024,
+          status: 'ARCHIVED',
+          rounds: { create: { roundNumber: 1, status: 'PLANNED' } },
+          scopes: { create: { scopeKey: 'ESTADUAL:SC', scopeType: 'ESTADUAL' } },
+          offices: { create: { code: '11', name: 'Prefeito' } }
+        }
+      });
+
+      // Criar turno em outra eleição para satisfazer a foreign key do AuditLog,
+      // simulando inconsistência em que o roundId do log não pertence aos rounds da eleição alvo
+      const otherEl = await prisma.election.create({
+        data: {
+          name: 'Outra Eleição Externa',
+          year: 2024,
+          rounds: { create: { roundNumber: 1, status: 'PLANNED' } }
+        },
+        include: { rounds: true }
+      });
+
+      await prisma.auditLog.create({
+        data: {
+          userId: adminUser.id,
+          electionId: election.id,
+          roundId: otherEl.rounds[0].id,
+          action: 'ELECTION_CONTEXT_SWITCH_ARCHIVED',
+          result: 'SUCCESS'
+        }
+      });
+
+      const req = new Request('http://localhost:3000/api/admin/wizard/activate', {
+        method: 'POST',
+        headers: createAuthHeaders(adminCsrfToken),
+        body: JSON.stringify({
+          electionId: election.id,
+          confirmationText: 'ATIVAR ELEIÇÃO'
+        })
+      });
+
+      const res = await activateWizard(req);
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toBe('PAUSED_ROUND_NOT_RESOLVED');
+
+      // Garantir integridade: eleição continua ARCHIVED
+      const checkEl = await prisma.election.findUnique({ where: { id: election.id } });
+      expect(checkEl?.status).toBe('ARCHIVED');
+    });
+
+    it('5.11 Retomada com log apontando para turno FINISHED deve ser rejeitada com PAUSED_ROUND_NOT_RESOLVED', async () => {
+      const election = await prisma.election.create({
+        data: {
+          name: 'Eleição Arquivada Log Turno Finished',
+          year: 2024,
+          status: 'ARCHIVED',
+          rounds: {
+            create: [
+              { roundNumber: 1, status: 'FINISHED' },
+              { roundNumber: 2, status: 'PLANNED' }
+            ]
+          },
+          scopes: { create: { scopeKey: 'ESTADUAL:SC', scopeType: 'ESTADUAL' } },
+          offices: { create: { code: '11', name: 'Prefeito' } }
+        },
+        include: { rounds: true }
+      });
+
+      const round1 = election.rounds.find(r => r.roundNumber === 1)!;
+
+      // Log aponta para o round 1 que já está FINISHED
+      await prisma.auditLog.create({
+        data: {
+          userId: adminUser.id,
+          electionId: election.id,
+          roundId: round1.id,
+          action: 'ELECTION_CONTEXT_SWITCH_ARCHIVED',
+          result: 'SUCCESS'
+        }
+      });
+
+      const req = new Request('http://localhost:3000/api/admin/wizard/activate', {
+        method: 'POST',
+        headers: createAuthHeaders(adminCsrfToken),
+        body: JSON.stringify({
+          electionId: election.id,
+          confirmationText: 'ATIVAR ELEIÇÃO'
+        })
+      });
+
+      const res = await activateWizard(req);
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toBe('PAUSED_ROUND_NOT_RESOLVED');
+
+      // Eleição continua ARCHIVED e turno 1 FINISHED, turno 2 PLANNED
+      const checkEl = await prisma.election.findUnique({ where: { id: election.id } });
+      expect(checkEl?.status).toBe('ARCHIVED');
+      const checkRounds = await prisma.electionRound.findMany({ where: { electionId: election.id } });
+      expect(checkRounds.find(r => r.roundNumber === 1)?.status).toBe('FINISHED');
+      expect(checkRounds.find(r => r.roundNumber === 2)?.status).toBe('PLANNED');
+    });
+
+    it('5.12 Eleição DRAFT sem turno 1 configurado deve ser rejeitada com FIRST_ROUND_NOT_READY', async () => {
+      const election = await prisma.election.create({
+        data: {
+          name: 'Eleição Sem Turno 1',
+          year: 2024,
+          status: 'DRAFT',
+          rounds: {
+            create: [
+              { roundNumber: 2, status: 'PLANNED' } // Somente turno 2 configurado
+            ]
+          },
+          scopes: { create: { scopeKey: 'ESTADUAL:SC', scopeType: 'ESTADUAL' } },
+          offices: { create: { code: '11', name: 'Prefeito' } }
+        }
+      });
+
+      const req = new Request('http://localhost:3000/api/admin/wizard/activate', {
+        method: 'POST',
+        headers: createAuthHeaders(adminCsrfToken),
+        body: JSON.stringify({
+          electionId: election.id,
+          confirmationText: 'ATIVAR ELEIÇÃO'
+        })
+      });
+
+      const res = await activateWizard(req);
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toBe('FIRST_ROUND_NOT_READY');
+
+      // Garantir que round 2 NUNCA é ativado automaticamente
+      const checkRound = await prisma.electionRound.findFirst({ where: { electionId: election.id } });
+      expect(checkRound?.status).toBe('PLANNED');
+      const checkEl = await prisma.election.findUnique({ where: { id: election.id } });
+      expect(checkEl?.status).toBe('DRAFT');
+    });
+
+    it('5.13 Eleição DRAFT com turno 1 FINISHED e turno 2 PLANNED deve ser rejeitada com FIRST_ROUND_NOT_READY', async () => {
+      const election = await prisma.election.create({
+        data: {
+          name: 'Eleição Draft Turno 1 Incompatível',
+          year: 2024,
+          status: 'DRAFT',
+          rounds: {
+            create: [
+              { roundNumber: 1, status: 'FINISHED' },
+              { roundNumber: 2, status: 'PLANNED' }
+            ]
+          },
+          scopes: { create: { scopeKey: 'ESTADUAL:SC', scopeType: 'ESTADUAL' } },
+          offices: { create: { code: '11', name: 'Prefeito' } }
+        }
+      });
+
+      const req = new Request('http://localhost:3000/api/admin/wizard/activate', {
+        method: 'POST',
+        headers: createAuthHeaders(adminCsrfToken),
+        body: JSON.stringify({
+          electionId: election.id,
+          confirmationText: 'ATIVAR ELEIÇÃO'
+        })
+      });
+
+      const res = await activateWizard(req);
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toBe('FIRST_ROUND_NOT_READY');
+
+      // Garantir que o 2º turno NÃO foi ativado automaticamente
+      const checkRounds = await prisma.electionRound.findMany({ where: { electionId: election.id } });
+      expect(checkRounds.find(r => r.roundNumber === 2)?.status).toBe('PLANNED');
+      const checkEl = await prisma.election.findUnique({ where: { id: election.id } });
+      expect(checkEl?.status).toBe('DRAFT');
+    });
+
+    it('5.14 Rollback transacional completo ao rejeitar ativação fail-closed preservando eleição ativa concorrente', async () => {
+      // 1. Eleição X atualmente ACTIVE com round 1 ACTIVE
+      const activeEl = await prisma.election.create({
+        data: {
+          name: 'Eleição Ativa Intacta',
+          year: 2026,
+          status: 'ACTIVE',
+          rounds: { create: { roundNumber: 1, status: 'ACTIVE' } },
+          scopes: { create: { scopeKey: 'ESTADUAL:SC', scopeType: 'ESTADUAL' } },
+          offices: { create: { code: '1', name: 'Presidente' } }
+        },
+        include: { rounds: true }
+      });
+
+      // 2. Eleição Y ARCHIVED sem log de pausa
+      const archivedEl = await prisma.election.create({
+        data: {
+          name: 'Eleição Arquivada Sem Evidência',
+          year: 2024,
+          status: 'ARCHIVED',
+          rounds: { create: { roundNumber: 1, status: 'PLANNED' } },
+          scopes: { create: { scopeKey: 'ESTADUAL:SC', scopeType: 'ESTADUAL' } },
+          offices: { create: { code: '11', name: 'Prefeito' } }
+        },
+        include: { rounds: true }
+      });
+
+      // Contagem de logs antes
+      const logCountBefore = await prisma.auditLog.count();
+
+      // Tentativa de ativação de Y com consentimento de desativação
+      const req = new Request('http://localhost:3000/api/admin/wizard/activate', {
+        method: 'POST',
+        headers: createAuthHeaders(adminCsrfToken),
+        body: JSON.stringify({
+          electionId: archivedEl.id,
+          confirmationText: 'ATIVAR ELEIÇÃO',
+          allowDeactivateCurrent: true
+        })
+      });
+
+      const res = await activateWizard(req);
+      expect(res.status).toBe(400);
+      const data = await res.json();
+      expect(data.error).toBe('PAUSED_ROUND_NOT_RESOLVED');
+
+      // Garantir integridade absoluta pós-falha (rollback integral):
+      // Eleição X continua ACTIVE e seu turno continua ACTIVE
+      const checkActive = await prisma.election.findUnique({ where: { id: activeEl.id } });
+      expect(checkActive?.status).toBe('ACTIVE');
+      const checkActiveRound = await prisma.electionRound.findFirst({ where: { electionId: activeEl.id } });
+      expect(checkActiveRound?.status).toBe('ACTIVE');
+
+      // Eleição Y continua ARCHIVED e seu turno continua PLANNED
+      const checkArchived = await prisma.election.findUnique({ where: { id: archivedEl.id } });
+      expect(checkArchived?.status).toBe('ARCHIVED');
+      const checkArchivedRound = await prisma.electionRound.findFirst({ where: { electionId: archivedEl.id } });
+      expect(checkArchivedRound?.status).toBe('PLANNED');
+
+      // Nenhum log espúrio persistido
+      const logCountAfter = await prisma.auditLog.count();
+      expect(logCountAfter).toBe(logCountBefore);
     });
   });
 
