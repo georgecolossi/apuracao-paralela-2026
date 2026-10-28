@@ -110,7 +110,7 @@ export function getOfficeDataAggregate(
   }
   const isT2Presidente = (String(turno) === '2' || turno === 2) && officeName === 'Presidente';
   const candidates = Array.from(candidateMap.values())
-    .filter(c => c.quantity > 0 || isT2Presidente)
+    .filter(c => c.quantity > 0 || isT2Presidente || Boolean(c.candidateName && c.candidateName.trim().length > 0))
     .sort((a, b) => {
       const votesDiff = b.quantity - a.quantity;
       if (votesDiff !== 0) return votesDiff;
@@ -121,5 +121,5 @@ export function getOfficeDataAggregate(
   const legendas = Array.from(legendaMap.values())
     .filter(l => l.quantity > 0)
     .sort((a, b) => b.quantity - a.quantity);
-  return { candidates, legendas, brancos, nulos, nulosTecnicos, pendentes, totalValidos: validosNominais + validosLegenda, totalGeral };
+  return { candidates, legendas, brancos, nulos, nulosTecnicos, pendentes, totalValidos: validosNominais + validosLegenda, validosNominais, validosLegenda, totalGeral };
 }
