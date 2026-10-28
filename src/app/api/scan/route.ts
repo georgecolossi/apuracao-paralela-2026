@@ -6,6 +6,7 @@ import { Tse2026SimulationParser } from '@/lib/parser/Tse2026SimulationParser';
 import { requireAuthenticatedUser } from '@/lib/auth';
 import { validateCsrfProtection } from '@/lib/security/csrf';
 import { OFFICE_NAME_TO_CODE } from '@/lib/metadata/voteEnricher';
+import { extractEnvelopeKeyFromContent } from '@/lib/scanner/envelopeIdentifier';
 import {
   validateBallotIngestionInvariants,
   ElectionInvariantError,
@@ -134,10 +135,29 @@ export async function POST(req: Request) {
     });
 
     if (partsCount < totalParts) {
+      // Determina chave estável e verificável do envelope eleitoral
+      let envelopeKey = extractEnvelopeKeyFromContent(content);
+      if (!envelopeKey) {
+        // Tenta recuperar de fragmentos estruturais previamente salvos nesta sessão
+        const previousParts = await prisma.ballotReportPart.findMany({
+          where: { sessionId: session.id },
+          select: { rawContent: true }
+        });
+        for (const prev of previousParts) {
+          const key = extractEnvelopeKeyFromContent(prev.rawContent);
+          if (key) {
+            envelopeKey = key;
+            break;
+          }
+        }
+      }
+
       return NextResponse.json({
         status: 'PARCIAL',
         partsRead: partsCount,
-        totalParts
+        totalParts,
+        partIndex,
+        envelopeKey: envelopeKey || null
       });
     }
 
