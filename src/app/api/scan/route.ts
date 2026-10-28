@@ -160,7 +160,20 @@ export async function POST(req: Request) {
         where: { id: session.id },
         data: { status: 'ERROR' }
       });
-      return NextResponse.json({ error: reportData.code }, { status: 400 });
+      return NextResponse.json({ error: reportData.code, message: reportData.message }, { status: 400 });
+    }
+
+    // Validação estrita de integridade criptográfica para modo oficial
+    if (!isSimulation && reportData.hashStatus !== 'VERIFIED') {
+      await prisma.scanSession.update({
+        where: { id: session.id },
+        data: { status: 'ERROR' }
+      });
+      return NextResponse.json({
+        error: 'CRYPTOGRAPHIC_INTEGRITY_FAILED',
+        message: 'A integridade criptográfica (SHA-512) do Boletim de Urna não pôde ser verificada com sucesso.',
+        details: { hashStatus: reportData.hashStatus }
+      }, { status: 400 });
     }
 
     // Rejeição estrita de QRBU de teste/simulação em modo oficial
@@ -295,13 +308,15 @@ export async function POST(req: Request) {
       }, { status: 403 });
     }
 
-    // Regras de Cobertura por Turno
-    if (activeRound.roundNumber === 1) {
-      // 1º Turno: Cobertura estrita pré-cadastrada (193 urnas)
+    // Regras de Cobertura Contextuais Baseadas em RoundCoverage
+    const isStrictCoverage = activeRound.coverageStatus === 'HOMOLOGATED' || activeRound.coverageStatus === 'REGISTERED';
+
+    if (isStrictCoverage) {
+      // Cobertura estrita pré-cadastrada: a seção deve existir e estar contemplada no RoundCoverage
       if (!sectionInDB && !isSimulation) {
         return NextResponse.json({
           error: 'OUT_OF_COVERAGE',
-          message: 'Seção não encontrada.'
+          message: 'Seção não encontrada na cobertura homologada/registrada do turno.'
         }, { status: 403 });
       }
 
@@ -321,14 +336,15 @@ export async function POST(req: Request) {
               action: 'SCAN_OUT_OF_COVERAGE',
               result: 'REJECTED',
               identifiers: `City: ${cityCode}, Zone: ${zoneCode}, Sec: ${sectionCode}`,
-              errors: 'Seção fora da área de cobertura configurada.',
-              userId: operatorId
+              errors: 'Seção fora da área de cobertura configurada para o turno.',
+              userId: operatorId,
+              roundId: activeRound.id
             }
           });
 
           return NextResponse.json({
             error: 'OUT_OF_COVERAGE',
-            message: 'Este Boletim de Urna pertence a uma seção fora da área de cobertura configurada.'
+            message: 'Este Boletim de Urna pertence a uma seção fora da área de cobertura configurada para o turno.'
           }, { status: 403 });
         }
 
@@ -339,8 +355,8 @@ export async function POST(req: Request) {
           }, { status: 403 });
         }
       }
-    } else if (activeRound.roundNumber === 2 && !isSimulation) {
-      // 2º Turno: Cobertura dinâmica — aceita e cadastra seções elegíveis sem lista prévia
+    } else if (!isSimulation) {
+      // Cobertura provisória: aceita e cadastra dinamicamente seções elegíveis da zona/município em escopo
       if (!sectionInDB && zoneInDB) {
         const canonicalSec = sectionCode.padStart(4, '0');
         try {
@@ -356,8 +372,9 @@ export async function POST(req: Request) {
             data: {
               action: 'DYNAMIC_SECTION_REGISTERED',
               result: 'SUCCESS',
-              identifiers: `Round: 2, Zone: ${zoneInDB.zoneNumber}, Sec: ${canonicalSec}`,
-              userId: operatorId
+              identifiers: `Round: ${activeRound.roundNumber}, Zone: ${zoneInDB.zoneNumber}, Sec: ${canonicalSec}`,
+              userId: operatorId,
+              roundId: activeRound.id
             }
           });
         } catch (secErr: unknown) {
@@ -400,6 +417,11 @@ export async function POST(req: Request) {
               throw covErr;
             }
           }
+        } else if (existingCoverage.expectedBUs <= 0) {
+          return NextResponse.json({
+            error: 'SECTION_AGGREGATED_NO_BU',
+            message: 'Esta seção eleitoral é agregada e não possui Boletim de Urna independente.'
+          }, { status: 403 });
         }
       }
     }
@@ -551,26 +573,38 @@ export async function POST(req: Request) {
           quantity: number;
         }> = [];
 
+        // Resolução estrita de cargos no contexto exclusivo da eleição configurada (sem auto-criação)
+        const electionOffices = await tx.office.findMany({
+          where: { electionId: activeElection.id }
+        });
+
+        const officeMap = new Map<string, typeof electionOffices[0]>();
+        for (const off of electionOffices) {
+          officeMap.set(off.code, off);
+          officeMap.set(off.name.toLowerCase(), off);
+        }
+
         for (const vote of reportData.votes) {
           const officeCode = vote.officeCode || OFFICE_NAME_TO_CODE[vote.officeName] || vote.officeName;
-          let office = await tx.office.findFirst({
-            where: {
-              electionId: activeElection.id,
-              OR: [
-                { code: officeCode },
-                { name: vote.officeName }
-              ]
-            }
-          });
+          const office = officeMap.get(officeCode) || officeMap.get(vote.officeName.toLowerCase());
+
           if (!office) {
-            office = await tx.office.create({
+            await tx.auditLog.create({
               data: {
-                electionId: activeElection.id,
-                code: officeCode,
-                name: vote.officeName,
-                orderNumber: 1
+                action: 'SCAN_OFFICE_NOT_CONFIGURED',
+                result: 'REJECTED',
+                identifiers: `Office: ${vote.officeName} (${officeCode}), Plei: ${reportData.electionId}`,
+                errors: `Cargo '${vote.officeName}' (código ${officeCode}) presente no Boletim de Urna não está configurado na eleição ativa '${activeElection.name}'.`,
+                userId: operatorId,
+                roundId: activeRound.id
               }
             });
+
+            throw new ElectionInvariantError(
+              'OFFICE_NOT_CONFIGURED',
+              `O cargo '${vote.officeName}' (código ${officeCode}) presente no Boletim de Urna não está configurado para a eleição ativa '${activeElection.name}'.`,
+              { officeCode, officeName: vote.officeName, electionId: activeElection.id }
+            );
           }
 
           let resolvedCandidateId: string | null = null;

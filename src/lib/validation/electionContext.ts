@@ -63,6 +63,8 @@ export function getSafeOperatorErrorMessage(code: string): string {
       return 'Turno eleitoral não encontrado.';
     case 'OFFICE_NOT_FOUND':
       return 'Cargo eleitoral não encontrado na eleição ativa.';
+    case 'OFFICE_NOT_CONFIGURED':
+      return 'Cargo eleitoral presente no Boletim de Urna não está configurado para a eleição ativa.';
     case 'CANDIDATE_NOT_FOUND':
       return 'Candidato informado não foi localizado.';
     case 'PARTY_NOT_FOUND':

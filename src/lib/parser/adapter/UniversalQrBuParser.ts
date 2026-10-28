@@ -34,10 +34,35 @@ export class UniversalQrBuParser implements QrBuAdapter {
   }
 
   /**
-   * Retorna os formatos oficialmente comprovados e suportados pelo sistema.
+   * Retorna os formatos oficialmente homologados e comprovados com fixtures reais em disco.
+   */
+  getHomologatedVersions(): string[] {
+    return ['VRQR:6.0'];
+  }
+
+  /**
+   * Retorna os formatos mantidos como experimentais (código implementado, pendente de fixtures oficiais em disco).
+   */
+  getExperimentalVersions(): Array<{ version: string; description: string; reason: string }> {
+    return [
+      {
+        version: 'VRQR:5.0',
+        description: 'Eleições Gerais 2022',
+        reason: 'Pendente de pacote oficial de fixtures reais com SHA-512 comprovado no repositório.'
+      },
+      {
+        version: 'VRQR:4.0',
+        description: 'Eleições Municipais 2020',
+        reason: 'Pendente de pacote oficial de fixtures reais com SHA-512 comprovado no repositório.'
+      }
+    ];
+  }
+
+  /**
+   * Retorna os formatos suportados por padrão (homologados).
    */
   getSupportedVersions(): string[] {
-    return ['VRQR:6.0', 'VRQR:5.0', 'VRQR:4.0'];
+    return this.getHomologatedVersions();
   }
 
   /**
@@ -71,7 +96,7 @@ export class UniversalQrBuParser implements QrBuAdapter {
   /**
    * Resolve o adaptador apropriado de forma rigorosa, sem inferência silenciosa.
    */
-  resolveAdapter(content: string): QrBuAdapter | ParseError {
+  resolveAdapter(content: string, options?: { allowExperimental?: boolean }): QrBuAdapter | ParseError {
     if (!content || typeof content !== 'string') {
       return { code: 'INVALID_HEADER', message: 'Conteúdo do QRBU ausente ou vazio.' };
     }
@@ -104,7 +129,11 @@ export class UniversalQrBuParser implements QrBuAdapter {
         parseReport: (full: string, raw?: string[]): BallotReportData | ParseError => {
           const res = this.simulationParser.parseReport(full, raw);
           if ('code' in res) return res;
-          return res as BallotReportData;
+          const report = res as BallotReportData;
+          report.hashStatus = 'UNAVAILABLE';
+          report.sigStatus = 'UNAVAILABLE';
+          report.sigValidationNote = 'Simulação: validação criptográfica dispensada para ambiente de testes.';
+          return report;
         }
       };
     }
@@ -122,6 +151,20 @@ export class UniversalQrBuParser implements QrBuAdapter {
 
     for (const adapter of this.adapters) {
       if (adapter.canHandle(trimmed)) {
+        // Bloqueio fail-closed em produção para formatos experimentais não homologados com fixtures
+        const isExperimental = adapter.version === 'VRQR:5.0' || adapter.version === 'VRQR:4.0';
+        if (isExperimental && process.env.ALLOW_EXPERIMENTAL_VRQR !== 'true' && process.env.NODE_ENV !== 'test' && !options?.allowExperimental) {
+          return {
+            code: 'UNHOMOLOGATED_VRQR_VERSION',
+            message: `A versão do formato QRBU '${adapter.version}' é experimental e está desabilitada para ingestão oficial por padrão (pendente de fixtures oficiais em disco).`,
+            details: {
+              detectedVersion: adapter.version,
+              homologatedVersions: this.getHomologatedVersions(),
+              experimentalVersions: this.getExperimentalVersions().map(e => e.version)
+            }
+          };
+        }
+
         return adapter;
       }
     }
