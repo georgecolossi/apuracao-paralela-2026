@@ -1,8 +1,18 @@
+import { redirect } from 'next/navigation';
 import { prisma } from '@/lib/db';
+import { requireAuthenticatedUser } from '@/lib/auth';
 import ConfirmButton from './ConfirmButton';
 import { CheckCircle2, XCircle, HelpCircle, FileCheck2, Info, MapPin, Hash, ShieldAlert } from 'lucide-react';
 
 export default async function ConferirPage({ params }: { params: Promise<{ id: string }> }) {
+  const auth = await requireAuthenticatedUser();
+  if (!auth.authenticated) {
+    redirect('/login');
+  }
+  if (auth.user.role === 'VIEWER') {
+    redirect('/admin');
+  }
+
   const { id } = await params;
 
   const report = await prisma.ballotReport.findUnique({

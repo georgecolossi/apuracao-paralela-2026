@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Trash2, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import { getConfirmationAliases, validateAdminConfirmation } from '@/lib/normalization';
 
 export default function TurnoResetClient({ roundId, roundNumber }: { roundId: string; roundNumber: number }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -13,12 +14,12 @@ export default function TurnoResetClient({ roundId, roundNumber }: { roundId: st
   const router = useRouter();
 
   const roundName = roundNumber === 1 ? 'Primeiro Turno' : roundNumber === 2 ? 'Segundo Turno' : `${roundNumber}º Turno`;
-  const roundNameUpper = roundNumber === 1 ? 'PRIMEIRO TURNO' : roundNumber === 2 ? 'SEGUNDO TURNO' : `${roundNumber}º TURNO`;
-  const expectedText = `ZERAR ${roundNameUpper}`;
+  const { canonical: expectedText, aliases } = getConfirmationAliases('RESET', roundNumber);
+  const isInputValid = validateAdminConfirmation(confirmText, aliases);
 
   const handleReset = async () => {
     setError('');
-    if (confirmText.trim() !== expectedText) {
+    if (!isInputValid) {
       setError(`Digite exatamente: ${expectedText}`);
       return;
     }
@@ -109,7 +110,7 @@ export default function TurnoResetClient({ roundId, roundNumber }: { roundId: st
               </button>
               <button 
                 onClick={handleReset}
-                disabled={loading || success || confirmText.trim() !== expectedText}
+                disabled={loading || success || !isInputValid}
                 className="px-4 py-2 rounded-lg font-bold uppercase tracking-wider text-xs bg-red-600 hover:bg-red-700 text-white transition-colors disabled:opacity-50 flex items-center gap-2"
               >
                 {loading ? 'Limpando...' : success ? <><CheckCircle2 className="w-4 h-4" /> Zerado!</> : 'Executar Limpeza'}

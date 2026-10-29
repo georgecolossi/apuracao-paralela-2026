@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { PlayCircle, AlertTriangle } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import { getConfirmationAliases, validateAdminConfirmation } from '@/lib/normalization';
 
 export default function TurnoManagerClient({ roundId, roundNumber, hasActiveRound }: { roundId: string; roundNumber: number; hasActiveRound: boolean }) {
   const [isOpen, setIsOpen] = useState(false);
@@ -12,12 +13,12 @@ export default function TurnoManagerClient({ roundId, roundNumber, hasActiveRoun
   const router = useRouter();
 
   const roundLabel = roundNumber === 2 ? 'Segundo Turno' : `${roundNumber}º Turno`;
-  const roundLabelUpper = roundNumber === 2 ? 'SEGUNDO TURNO' : `${roundNumber}º TURNO`;
+  const { canonical: expected, aliases } = getConfirmationAliases('ACTIVATE', roundNumber);
+  const isInputValid = validateAdminConfirmation(confirmText, aliases);
 
   const handleActivate = async () => {
     setError('');
-    const expected = `ATIVAR ${roundLabelUpper}`;
-    if (confirmText.trim() !== expected) {
+    if (!isInputValid) {
       setError(`Digite exatamente: ${expected}`);
       return;
     }
@@ -27,7 +28,7 @@ export default function TurnoManagerClient({ roundId, roundNumber, hasActiveRoun
       const res = await fetch('/api/admin/turnos/activate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ roundId })
+        body: JSON.stringify({ roundId, confirmationText: confirmText.trim() })
       });
       
       const data = await res.json();
@@ -78,14 +79,14 @@ export default function TurnoManagerClient({ roundId, roundNumber, hasActiveRoun
               
               <div className="mt-6 pt-4 border-t border-slate-100">
                 <p className="font-bold text-slate-900 mb-2">
-                  Para prosseguir, digite: <span className="font-black bg-slate-100 px-2 py-0.5 rounded select-all">ATIVAR {roundLabelUpper}</span>
+                  Para prosseguir, digite: <span className="font-black bg-slate-100 px-2 py-0.5 rounded select-all">{expected}</span>
                 </p>
                 <input 
                   type="text" 
                   value={confirmText}
                   onChange={e => setConfirmText(e.target.value)}
                   className="w-full px-4 py-2 rounded-lg border border-slate-300 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-bold text-slate-900 placeholder:text-slate-500 bg-white"
-                  placeholder={`ATIVAR ${roundLabelUpper}`}
+                  placeholder={expected}
                   disabled={loading}
                 />
               </div>
@@ -103,7 +104,7 @@ export default function TurnoManagerClient({ roundId, roundNumber, hasActiveRoun
               </button>
               <button 
                 onClick={handleActivate}
-                disabled={loading}
+                disabled={loading || !isInputValid}
                 className="px-4 py-2 rounded-lg font-bold uppercase tracking-wider text-xs bg-red-600 hover:bg-red-700 text-white transition-colors disabled:opacity-50"
               >
                 {loading ? 'Processando...' : 'Confirmar Ativação'}

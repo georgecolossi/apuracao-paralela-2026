@@ -8,222 +8,195 @@ generator client {
 }
 
 model Election {
-  id          String   @id @default(uuid())
-  plei        String?
+  id          String          @id @default(uuid())
+  slug        String          @unique @default(uuid())
+  plei        String?         // Código canônico de referência ou identificador legado
   name        String
   year        Int
+  type        String          @default("GENERAL") // GENERAL, MUNICIPAL, SUPPLEMENTARY, CONSULTA
+  status      String          @default("DRAFT") // DRAFT, ACTIVE, FINISHED, ARCHIVED
   description String?
-  status      String   @default("PLANNED") // PLANNED, ACTIVE, FINISHED
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
 
   rounds      ElectionRound[]
+  scopes      ElectionScope[]
+  offices     Office[]
   reports     BallotReport[]
+  tseConfigs  TseSyncConfig[]
+  auditLogs   AuditLog[]
 }
 
 model ElectionRound {
-  id           String   @id @default(uuid())
-  electionId   String
-  roundNumber  Int
-  plei         String?
-  status       String   @default("PLANNED")
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id                       String          @id @default(uuid())
+  electionId               String
+  roundNumber              Int
+  plei                     String?         // Código do pleito oficial TSE (ex: 2110, 6258)
+  status                   String          @default("PLANNED") // PLANNED, ACTIVE, FINISHED
+  coverageStatus           String          @default("PROVISIONAL") // PROVISIONAL, REGISTERED, HOMOLOGATED
+  coverageOrigin           String?         // MANUAL_IMPORT, TSE_EA16_IMPORT, TSE_CONFIG_SYNC, ADMIN_CADASTRO
+  coverageHomologatedAt    DateTime?
+  coverageHomologatedBy    String?         // ID do usuário homologador ou 'SISTEMA_TSE'
+  coverageHomologationType  String?         // ADMIN_HOMOLOGATION, TSE_OFFICIAL_CONFIRMATION
+  coverageEvidenceNotes    String?         // Hash de verificação, notas ou checksum oficial
+  date                     DateTime?
+  createdAt                DateTime        @default(now())
+  updatedAt                DateTime        @updatedAt
 
-  election     Election       @relation(fields: [electionId], references: [id])
-  reports      BallotReport[]
-  coverage     RoundCoverage[]
+  election                 Election        @relation(fields: [electionId], references: [id], onDelete: Cascade)
+  reports                  BallotReport[]
+  coverage                 RoundCoverage[]
+  auditLogs                AuditLog[]
+
+  @@unique([electionId, roundNumber])
+}
+
+model ElectionScope {
+  id             String        @id @default(uuid())
+  electionId     String
+  scopeType      String        @default("MUNICIPAL") // NACIONAL, ESTADUAL, MUNICIPAL
+  scopeKey       String        // Chave determinística única: 'BR', 'UF:SC', 'MUN:80837'
+  stateId        String?
+  municipalityId String?
+  isCoverageArea Boolean       @default(true)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  election       Election      @relation(fields: [electionId], references: [id], onDelete: Cascade)
+  state          State?        @relation(fields: [stateId], references: [id])
+  municipality   Municipality? @relation(fields: [municipalityId], references: [id])
+
+  @@unique([electionId, scopeKey])
 }
 
 model State {
-  id           String   @id @default(uuid())
-  name         String
-  abbreviation String   @unique
+  id             String          @id @default(uuid())
+  name           String
+  abbreviation   String          @unique
   municipalities Municipality[]
+  scopes         ElectionScope[]
 }
 
 model Municipality {
-  id           String   @id @default(uuid())
+  id           String          @id @default(uuid())
   stateId      String
   name         String
-  officialCode String   @unique
-  isCoverage   Boolean  @default(false)
+  officialCode String          @unique // Código TSE (ex: 80837)
+  ibgeCode     String?
+  isCoverage   Boolean         @default(false)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  state        State           @relation(fields: [stateId], references: [id])
   zones        PollingZone[]
-  state        State    @relation(fields: [stateId], references: [id])
+  scopes       ElectionScope[]
 }
 
 model PollingZone {
-  id             String   @id @default(uuid())
+  id             String           @id @default(uuid())
   municipalityId String
   zoneNumber     String
-  expectedBUs    Int?     @default(0)
+  expectedBUs    Int?             @default(0)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  municipality   Municipality     @relation(fields: [municipalityId], references: [id])
   sections       PollingSection[]
-  municipality   Municipality @relation(fields: [municipalityId], references: [id])
+
+  @@unique([municipalityId, zoneNumber])
 }
 
 model PollingSection {
-  id            String   @id @default(uuid())
-  pollingZoneId String
-  sectionNumber String
-  expectedBUs   Int?     @default(1)
-  stations      PollingStation[]
-  zone          PollingZone @relation(fields: [pollingZoneId], references: [id])
-  coverages     RoundCoverage[]
+  id                String           @id @default(uuid())
+  pollingZoneId     String
+  sectionNumber     String
+  isAggregated      Boolean          @default(false)
+  aggregatedIntoSec String?
+  expectedBUs       Int?             @default(1)
+  locationName      String?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  zone              PollingZone      @relation(fields: [pollingZoneId], references: [id])
+  coverages         RoundCoverage[]
+  stations          PollingStation[]
+
+  @@unique([pollingZoneId, sectionNumber])
 }
 
 model PollingStation {
-  id           String   @id @default(uuid())
-  sectionId    String
-  urnCode      String
-  metadata     String?
-  section      PollingSection @relation(fields: [sectionId], references: [id])
+  id        String         @id @default(uuid())
+  sectionId String
+  urnCode   String
+  metadata  String?
+
+  section   PollingSection @relation(fields: [sectionId], references: [id])
+}
+
+model RoundCoverage {
+  id               String         @id @default(uuid())
+  electionRoundId  String
+  pollingSectionId String
+  expectedBUs      Int            @default(1)
+  isManualOverride Boolean        @default(false)
+  notes            String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  electionRound    ElectionRound  @relation(fields: [electionRoundId], references: [id], onDelete: Cascade)
+  pollingSection   PollingSection @relation(fields: [pollingSectionId], references: [id], onDelete: Cascade)
+
+  @@unique([electionRoundId, pollingSectionId])
 }
 
 model Office {
-  id            String   @id @default(uuid())
-  name          String
-  orderNumber   Int
-  configuration String?
-  candidates    Candidate[]
-  votes         BallotVote[]
+  id               String       @id @default(uuid())
+  electionId       String
+  code             String       // Código oficial TSE (ex: 1=Pres, 11=Pref, etc.)
+  name             String       // Presidente, Prefeito, etc.
+  type             String       @default("MAJORITARIO") // MAJORITARIO, PROPORCIONAL
+  orderNumber      Int          @default(1)
+  maxVotesPerVoter Int          @default(1)
+  configuration    String?
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  election         Election     @relation(fields: [electionId], references: [id], onDelete: Cascade)
+  candidates       Candidate[]
+  votes            BallotVote[]
+
+  @@unique([electionId, code])
 }
 
 model Party {
-  id                 String   @id @default(uuid())
-  officialIdentifier String   @unique
+  id                 String       @id @default(uuid())
+  officialIdentifier String       @unique // Número da legenda (ex: 13, 22)
   name               String
   abbreviation       String
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+
   candidates         Candidate[]
   votes              BallotVote[]
 }
 
 model Candidate {
-  id                 String   @id @default(uuid())
-  partyId            String
+  id                 String       @id @default(uuid())
   officeId           String
-  officialIdentifier String   @unique // Numero do candidato
+  partyId            String
+  candidateNumber    String       // Número na urna (ex: 13, 22)
   name               String
   ballotName         String
+  photoUrl           String?
+  isActive           Boolean      @default(true)
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
 
-  party              Party    @relation(fields: [partyId], references: [id])
-  office             Office   @relation(fields: [officeId], references: [id])
+  office             Office       @relation(fields: [officeId], references: [id], onDelete: Cascade)
+  party              Party        @relation(fields: [partyId], references: [id])
   votes              BallotVote[]
-}
 
-model ScanSession {
-  id            String   @id @default(uuid())
-  sequenceId    String   @unique
-  operatorId    String?
-  status        String   @default("ACTIVE")
-  expectedParts Int
-  isSimulation  Boolean  @default(false)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  parts         BallotReportPart[]
-  operator      User?    @relation(fields: [operatorId], references: [id])
-}
-
-model BallotReport {
-  id             String   @id @default(uuid())
-  deterministicId String  @unique
-  electionId     String
-  roundId        String
-  stateCode      String
-  cityCode       String
-  zoneCode       String
-  sectionCode    String
-  urnCode        String
-  hash           String?
-  signature      String?
-  status         String   @default("RECEBIDO")
-  isSimulation   Boolean  @default(false)
-  operatorId     String?
-  validationData String?
-  metadata       String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-
-  election       Election       @relation(fields: [electionId], references: [id])
-  round          ElectionRound  @relation(fields: [roundId], references: [id])
-  operator       User?          @relation(fields: [operatorId], references: [id])
-  votes          BallotVote[]
-  auditLogs      AuditLog[]
-}
-
-model BallotReportPart {
-  id             String   @id @default(uuid())
-  sessionId      String
-  partIndex      Int
-  totalParts     Int
-  rawContent     String
-  contentHash    String
-  operatorId     String?
-  status         String   @default("STORED")
-  createdAt      DateTime @default(now())
-
-  session        ScanSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  operator       User?        @relation(fields: [operatorId], references: [id])
-
-  @@unique([sessionId, partIndex])
-}
-
-model BallotVote {
-  id             String   @id @default(uuid())
-  reportId       String
-  officeId       String
-  candidateId    String?
-  candidateNumber String?
-  partyId        String?
-  partyNumber    String?
-  voteType       String   // NOMINAL, LEGENDA, BRANCO, NULO
-  quantity       Int
-
-  report         BallotReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
-  office         Office       @relation(fields: [officeId], references: [id])
-  candidate      Candidate?   @relation(fields: [candidateId], references: [id])
-  party          Party?       @relation(fields: [partyId], references: [id])
-}
-
-model User {
-  id             String   @id @default(uuid())
-  name           String
-  email          String   @unique
-  passwordHash   String
-  role           String   @default("OPERATOR")
-  isActive       Boolean  @default(true)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-
-  reportsProcessed BallotReport[]
-  partsReceived    BallotReportPart[]
-  auditLogs        AuditLog[]
-  scanSessions     ScanSession[]
-}
-
-model AuditLog {
-  id             String   @id @default(uuid())
-  userId         String?
-  action         String
-  reportId       String?
-  identifiers    String?
-  result         String
-  previousStatus String?
-  newStatus      String?
-  errors         String?
-  ipAddress      String?
-  createdAt      DateTime @default(now())
-
-  user           User?         @relation(fields: [userId], references: [id])
-  report         BallotReport? @relation(fields: [reportId], references: [id])
-}
-
-model ProcessingError {
-  id             String   @id @default(uuid())
-  errorCode      String
-  message        String
-  stackTrace     String?
-  metadata       String?
-  createdAt      DateTime @default(now())
+  @@unique([officeId, candidateNumber]) // Desacoplado: permite repetição entre cargos e pleitos
 }
 
 model CandidateMetadata {
@@ -245,14 +218,159 @@ model CandidateMetadata {
   updatedAt         DateTime @updatedAt
 }
 
-model RoundCoverage {
-  id               String   @id @default(uuid())
-  electionRoundId  String
-  pollingSectionId String
-  expectedBUs      Int      @default(1)
+model ScanSession {
+  id            String             @id @default(uuid())
+  sequenceId    String             @unique
+  operatorId    String?
+  status        String             @default("ACTIVE")
+  expectedParts Int
+  isSimulation  Boolean            @default(false)
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
 
-  electionRound    ElectionRound  @relation(fields: [electionRoundId], references: [id], onDelete: Cascade)
-  pollingSection   PollingSection @relation(fields: [pollingSectionId], references: [id], onDelete: Cascade)
+  operator      User?              @relation(fields: [operatorId], references: [id])
+  parts         BallotReportPart[]
+}
 
-  @@unique([electionRoundId, pollingSectionId])
+model BallotReport {
+  id              String             @id @default(uuid())
+  deterministicId String             @unique
+  electionId      String
+  roundId         String
+  stateCode       String
+  cityCode        String
+  zoneCode        String
+  sectionCode     String
+  urnCode         String
+  vrqrVersion     String?            // Versão detectada do layout QRBU (ex: 4.0, 5.0, 6.0)
+  hash            String?
+  signature       String?
+  hashStatus      String             @default("UNCHECKED")
+  sigStatus       String             @default("UNCHECKED")
+  status          String             @default("RECEBIDO") // RECEBIDO, PENDENTE_CONFIRMACAO, PROCESSADO, REJEITADO, CONFLITO
+  isSimulation    Boolean            @default(false)
+  operatorId      String?
+  validationData  String?
+  metadata        String?
+  confirmedAt     DateTime?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  election        Election           @relation(fields: [electionId], references: [id])
+  round           ElectionRound      @relation(fields: [roundId], references: [id])
+  operator        User?              @relation(fields: [operatorId], references: [id])
+  votes           BallotVote[]
+  parts           BallotReportPart[]
+  auditLogs       AuditLog[]
+}
+
+model BallotReportPart {
+  id          String        @id @default(uuid())
+  reportId    String?
+  sessionId   String
+  partIndex   Int
+  totalParts  Int
+  rawContent  String
+  contentHash String
+  status      String        @default("STORED")
+  operatorId  String?
+  createdAt   DateTime      @default(now())
+
+  session     ScanSession   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  report      BallotReport? @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  operator    User?         @relation(fields: [operatorId], references: [id])
+
+  @@unique([sessionId, partIndex])
+}
+
+model BallotVote {
+  id              String       @id @default(uuid())
+  reportId        String
+  officeId        String
+  candidateId     String?
+  candidateNumber String?
+  partyId         String?
+  partyNumber     String?
+  voteType        String       @default("NOMINAL") // NOMINAL, LEGENDA, BRANCO, NULO
+  quantity        Int
+  createdAt       DateTime     @default(now())
+
+  report          BallotReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  office          Office       @relation(fields: [officeId], references: [id])
+  candidate       Candidate?   @relation(fields: [candidateId], references: [id])
+  party           Party?       @relation(fields: [partyId], references: [id])
+}
+
+model User {
+  id               String             @id @default(uuid())
+  name             String
+  email            String             @unique
+  passwordHash     String
+  role             String             @default("OPERATOR") // ADMIN, OPERATOR, VIEWER
+  isActive         Boolean            @default(true)
+  sessionVersion   Int                @default(0)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  reportsProcessed BallotReport[]
+  reportParts      BallotReportPart[]
+  scanSessions     ScanSession[]
+  auditLogs        AuditLog[]
+}
+
+model AuditLog {
+  id             String         @id @default(uuid())
+  userId         String?
+  electionId     String?
+  roundId        String?
+  reportId       String?
+  action         String
+  identifiers    String?
+  result         String
+  previousStatus String?
+  newStatus      String?
+  errors         String?
+  ipAddress      String?
+  metadata       String?
+  createdAt      DateTime       @default(now())
+
+  user           User?          @relation(fields: [userId], references: [id])
+  election       Election?      @relation(fields: [electionId], references: [id])
+  round          ElectionRound? @relation(fields: [roundId], references: [id])
+  report         BallotReport?  @relation(fields: [reportId], references: [id])
+}
+
+model TseSyncConfig {
+  id                   String    @id @default(uuid())
+  electionId           String
+  roundNumber          Int
+  configKey            String    // Chave canônica única por escopo: R1:OFFICE-1:NACIONAL:BR:GLOBAL
+  officeCode           String?   // Código do cargo no TSE (ex: 1, 11)
+  officialElectionCode String    // Código oficial da eleição no TSE (ex: 6257, 6258)
+  scopeType            String    @default("MUNICIPAL") // NACIONAL, ESTADUAL, MUNICIPAL
+  uf                   String?   // 'BR', 'SC', 'SP', etc.
+  muniTseCode          String?   // Código TSE do município (ex: 80837)
+  sourceUrl            String?   // URL base ou padrão
+  status               String    @default("ACTIVE") // ACTIVE, PAUSED, ERROR, COMPLETED
+  lastSyncAt           DateTime?
+  lastStatus           String?
+  lastError            String?
+  syncIntervalSeconds  Int       @default(15)
+  isActive             Boolean   @default(true)
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  election             Election  @relation(fields: [electionId], references: [id], onDelete: Cascade)
+
+  @@unique([electionId, configKey])
+  @@index([electionId, roundNumber])
+}
+
+model ProcessingError {
+  id         String   @id @default(uuid())
+  errorCode  String
+  message    String
+  stackTrace String?
+  metadata   String?
+  createdAt  DateTime @default(now())
 }

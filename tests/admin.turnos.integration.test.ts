@@ -88,7 +88,7 @@ describe('Admin Turnos Activation', () => {
 
     const req = new Request('http://localhost', {
       method: 'POST',
-      body: JSON.stringify({ roundId: round2Id })
+      body: JSON.stringify({ roundId: round2Id, confirmationText: 'ATIVAR SEGUNDO TURNO' })
     });
     const res = await POST(req);
     expect(res.status).toBe(200);
@@ -124,7 +124,7 @@ describe('Admin Turnos Activation', () => {
 
     const req = new Request('http://localhost', {
       method: 'POST',
-      body: JSON.stringify({ roundId: round2Id })
+      body: JSON.stringify({ roundId: round2Id, confirmationText: 'ATIVAR SEGUNDO TURNO' })
     });
     await POST(req);
 
@@ -140,7 +140,7 @@ describe('Admin Turnos Activation', () => {
 
     const req = new Request('http://localhost', {
       method: 'POST',
-      body: JSON.stringify({ roundId: round1Id })
+      body: JSON.stringify({ roundId: round1Id, confirmationText: 'ATIVAR PRIMEIRO TURNO' })
     });
     const res = await POST(req);
 
@@ -167,7 +167,7 @@ describe('Admin Turnos Activation', () => {
 
     const req = new Request('http://localhost', {
       method: 'POST',
-      body: JSON.stringify({ roundId: r3.id })
+      body: JSON.stringify({ roundId: r3.id, confirmationText: 'ATIVAR TERCEIRO TURNO' })
     });
     const res = await POST(req);
 
@@ -188,4 +188,48 @@ describe('Admin Turnos Activation', () => {
     expect(res2.status).toBe(403);
   });
 
+    it('F. CONFIRMAÇÃO OBRIGATÓRIA: Exige confirmação válida no backend e aceita variações flexíveis', async () => {
+    vi.mocked(requireAuthenticatedUser).mockResolvedValue({ authenticated: true, user: { userId: adminUserId, role: 'ADMIN' } } as any);
+
+    // 1. Confirmação ausente -> 400
+    const reqMissing = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({ roundId: round2Id })
+    });
+    const resMissing = await POST(reqMissing);
+    expect(resMissing.status).toBe(400);
+    const jsonMissing = await resMissing.json();
+    expect(jsonMissing.error).toMatch(/Confirmação obrigatória/i);
+
+    // 2. Confirmação vazia -> 400
+    const reqEmpty = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({ roundId: round2Id, confirmationText: '   ' })
+    });
+    const resEmpty = await POST(reqEmpty);
+    expect(resEmpty.status).toBe(400);
+    const jsonEmpty = await resEmpty.json();
+    expect(jsonEmpty.error).toMatch(/Confirmação obrigatória/i);
+
+    // 3. Confirmação incorreta -> 400
+    const reqBad = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({ roundId: round2Id, confirmationText: 'CONFIRMAR ATIVAÇÃO' })
+    });
+    const resBad = await POST(reqBad);
+    expect(resBad.status).toBe(400);
+    const jsonBad = await resBad.json();
+    expect(jsonBad.error).toMatch(/Confirmação obrigatória/i);
+
+    // 4. Confirmação flexível em minúsculas e ordinal -> 200
+    const reqGood = new Request('http://localhost', {
+      method: 'POST',
+      body: JSON.stringify({ roundId: round2Id, confirmationText: 'ativar 2º turno' })
+    });
+    const resGood = await POST(reqGood);
+    expect(resGood.status).toBe(200);
+
+    const r2 = await prisma.electionRound.findUnique({ where: { id: round2Id } });
+    expect(r2?.status).toBe('ACTIVE');
+  });
 });

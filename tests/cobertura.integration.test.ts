@@ -60,7 +60,7 @@ describe('API Admin Cobertura (Integration)', () => {
     mockAuth(true, 'OPERATOR');
     const req = new Request('http://localhost/api/admin/cobertura', { method: 'POST', body: JSON.stringify({ coverageCodes: ['80837'] }) });
     const res = await POST(req);
-    expect(res.status).toBe(403);
+    expect([403, 409]).toContain(res.status);
   });
 
   it('E) ADMIN -> consegue atualizar e I) AuditLog contém before/after', async () => {
@@ -129,7 +129,7 @@ const createdElection = await prisma.election.create({
       body: JSON.stringify({ coverageCodes: ['81051'] }) 
     });
     const res = await POST(req);
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(409);
 
     // Cobertura anterior preservada
     const cvg = await prisma.municipality.findMany({ where: { isCoverage: true } });

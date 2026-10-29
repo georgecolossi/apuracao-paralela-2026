@@ -83,14 +83,7 @@ describe('Eleições 2026 — Segundo Turno: Ajustes Finais do Painel Público (
       data: { pollingZoneId: zone90.id, sectionNumber: '0090', expectedBUs: 1 }
     });
 
-    // 4. Cargo Presidente
-    let presOffice = await prisma.office.findFirst({ where: { name: 'Presidente' } });
-    if (!presOffice) {
-      presOffice = await prisma.office.create({ data: { name: 'Presidente', orderNumber: 1 } });
-    }
-    presOfficeId = presOffice.id;
-
-    // 5. Eleição e Turnos
+    // 4. Eleição e Turnos
     const election = await prisma.election.create({
       data: {
         year: 2026,
@@ -100,6 +93,13 @@ describe('Eleições 2026 — Segundo Turno: Ajustes Finais do Painel Público (
       }
     });
     electionId = election.id;
+
+    // 5. Cargo Presidente
+    let presOffice = await prisma.office.findFirst({ where: { electionId: election.id, name: 'Presidente' } });
+    if (!presOffice) {
+      presOffice = await prisma.office.create({ data: { electionId: election.id, code: '1', name: 'Presidente', orderNumber: 1 } });
+    }
+    presOfficeId = presOffice.id;
 
     // Round 1 (FINISHED, plei 3220)
     const round1 = await prisma.electionRound.create({

@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { requireAuthenticatedUser } from '@/lib/auth';
 import { prisma } from '@/lib/db';
+import { getConfirmationAliases, validateAdminConfirmation } from '@/lib/normalization';
+import { validateCsrfProtection } from '@/lib/security/csrf';
 
 export async function POST(req: Request) {
   try {
@@ -12,6 +14,11 @@ export async function POST(req: Request) {
 
     if (auth.user.role !== 'ADMIN') {
       return NextResponse.json({ error: 'Proibido' }, { status: 403 });
+    }
+
+    const csrf = validateCsrfProtection(req, { userId: auth.user.userId, sessionVersion: auth.user.sessionVersion });
+    if (!csrf.valid) {
+      return NextResponse.json({ error: 'Falha na validação de origem (CSRF).', reason: csrf.reason }, { status: 403 });
     }
 
     // This is the global operational reset toggle.
@@ -37,9 +44,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Turno não encontrado' }, { status: 404 });
     }
 
-    const roundNameUpper = round.roundNumber === 1 ? 'PRIMEIRO TURNO' : round.roundNumber === 2 ? 'SEGUNDO TURNO' : `${round.roundNumber}º TURNO`;
-    const expected = `ZERAR ${roundNameUpper}`;
-    if (!confirmationText || confirmationText.trim() !== expected) {
+    const { aliases } = getConfirmationAliases('RESET', round.roundNumber);
+    if (!confirmationText || !validateAdminConfirmation(confirmationText, aliases)) {
       return NextResponse.json({ error: 'Confirmação incorreta' }, { status: 400 });
     }
 
