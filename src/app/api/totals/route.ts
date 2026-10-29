@@ -163,11 +163,15 @@ export async function GET(req: Request) {
 
     const coverageCount = eligibleCoverages.length;
     
-    // Denominador derivado exclusivamente de RoundCoverage.expectedBUs
+    // Denominador derivado exclusivamente de RoundCoverage.expectedBUs pré-configurados
     const expectedAgg = await prisma.roundCoverage.aggregate({
       where: { 
         electionRoundId: targetRound.id,
-        expectedBUs: { gt: 0 }
+        expectedBUs: { gt: 0 },
+        OR: [
+          { notes: null },
+          { notes: { not: 'DYNAMIC_SECTION' } }
+        ]
       },
       _sum: { expectedBUs: true }
     });
@@ -321,7 +325,7 @@ export async function GET(req: Request) {
     for (const office of offices) {
       for (const cand of office.candidates) {
         const alreadyInTotals = totals.some(
-          t => t.officeName === office.name && t.candidateNumber === cand.candidateNumber && t.voteType === 'NOMINAL'
+          t => t.officeId === office.id && t.candidateNumber === cand.candidateNumber && t.voteType === 'NOMINAL'
         );
         if (!alreadyInTotals) {
           totals.push({
@@ -356,7 +360,7 @@ export async function GET(req: Request) {
         });
 
         for (const c of legacyCandidates) {
-          const exists = totals.some(t => t.officeName === presOffice.name && t.candidateNumber === c.candidateNumber && t.voteType === 'NOMINAL');
+          const exists = totals.some(t => t.officeId === presOffice.id && t.candidateNumber === c.candidateNumber && t.voteType === 'NOMINAL');
           if (!exists) {
             totals.push({
               officeId: presOffice.id,
@@ -444,73 +448,82 @@ export async function GET(req: Request) {
       };
     }
 
-    // Projeções Matemáticas por Cargo: Denominador deriva estritamente de expectedBUsCount
+    // Projeções Matemáticas por Cargo: Identificadas preferencialmente por officeId
     const projections: Record<string, any> = {};
     for (const office of offices) {
+      let projObj: any;
+
       if (office.type !== 'MAJORITARIO') {
-        projections[office.name] = {
+        projObj = {
+          officeId: office.id,
+          officeName: office.name,
           hasProjection: false,
           status: 'UNAVAILABLE',
           reason: 'PROPORTIONAL_NOT_ALLOWED',
           message: 'Projeção matemática indisponível para cargos proporcionais.'
         };
-        continue;
-      }
-
-      // Se a cobertura não possui denominador positivo comprovável
-      if (expectedBUsCount <= 0) {
-        projections[office.name] = {
+      } else if (expectedBUsCount <= 0) {
+        projObj = {
+          officeId: office.id,
+          officeName: office.name,
           hasProjection: false,
           status: 'UNAVAILABLE',
           reason: 'DENOMINATOR_UNAVAILABLE',
           message: 'Projeção indisponível: cobertura sem total de urnas esperado definido.'
         };
-        continue;
-      }
-
-      // Se não há BUs processados
-      if (processedReportsCount === 0) {
-        projections[office.name] = {
+      } else if (processedReportsCount === 0) {
+        projObj = {
+          officeId: office.id,
+          officeName: office.name,
           hasProjection: false,
           status: 'UNAVAILABLE',
           reason: 'WAITING_FIRST_BU',
           message: 'Aguardando confirmação dos primeiros Boletins de Urna.'
         };
-        continue;
+      } else {
+        // Agrupa estritamente pelo officeId do cargo!
+        const officeNominals = totals.filter(t => t.officeId === office.id && t.voteType === 'NOMINAL');
+        const isCompleted = processedReportsCount >= expectedBUsCount;
+
+        const projectedCandidates = officeNominals.map(c => {
+          const v = c.quantity || 0;
+          const proj = isCompleted ? v : Math.round((v * expectedBUsCount) / processedReportsCount);
+          return {
+            candidateNumber: c.candidateNumber,
+            candidateName: c.candidateName,
+            partyAbbreviation: c.partyAbbreviation,
+            currentVotes: v,
+            projectedVotes: proj
+          };
+        });
+
+        const totalProjValid = projectedCandidates.reduce((acc, c) => acc + c.projectedVotes, 0);
+
+        projObj = {
+          officeId: office.id,
+          officeName: office.name,
+          hasProjection: true,
+          status: isCompleted ? 'COMPLETED' : 'ACTIVE',
+          method: 'LINEAR_PROPORTIONAL',
+          isProvisional,
+          expectedReports: expectedBUsCount,
+          processedReports: processedReportsCount,
+          coveragePercent: Number(((processedReportsCount / expectedBUsCount) * 100).toFixed(2)),
+          projectedValidVotes: totalProjValid,
+          candidates: projectedCandidates.map(c => ({
+            ...c,
+            projectedPercent: totalProjValid > 0 ? ((c.projectedVotes / totalProjValid) * 100).toFixed(2).replace('.', ',') : '0,00'
+          })),
+          disclaimer: 'Estimativa matemática proporcional às urnas apuradas. Não representa resultado oficial do TSE nem declaração definitiva de vencedor.'
+        };
       }
 
-      const officeNominals = totals.filter(t => t.officeName === office.name && t.voteType === 'NOMINAL');
-      const isCompleted = processedReportsCount >= expectedBUsCount;
-
-      const projectedCandidates = officeNominals.map(c => {
-        const v = c.quantity || 0;
-        const proj = isCompleted ? v : Math.round((v * expectedBUsCount) / processedReportsCount);
-        return {
-          candidateNumber: c.candidateNumber,
-          candidateName: c.candidateName,
-          partyAbbreviation: c.partyAbbreviation,
-          currentVotes: v,
-          projectedVotes: proj
-        };
-      });
-
-      const totalProjValid = projectedCandidates.reduce((acc, c) => acc + c.projectedVotes, 0);
-
-      projections[office.name] = {
-        hasProjection: true,
-        status: isCompleted ? 'COMPLETED' : 'ACTIVE',
-        method: 'LINEAR_PROPORTIONAL',
-        isProvisional,
-        expectedReports: expectedBUsCount,
-        processedReports: processedReportsCount,
-        coveragePercent: Number(((processedReportsCount / expectedBUsCount) * 100).toFixed(2)),
-        projectedValidVotes: totalProjValid,
-        candidates: projectedCandidates.map(c => ({
-          ...c,
-          projectedPercent: totalProjValid > 0 ? ((c.projectedVotes / totalProjValid) * 100).toFixed(2).replace('.', ',') : '0,00'
-        })),
-        disclaimer: 'Estimativa matemática proporcional às urnas apuradas. Não representa resultado oficial do TSE nem declaração definitiva de vencedor.'
-      };
+      // Identificação primária por officeId
+      projections[office.id] = projObj;
+      // Compatibilidade legada com correspondência inequívoca de cargo
+      if (!projections[office.name]) {
+        projections[office.name] = projObj;
+      }
     }
 
     // Compatibilidade histórica: apenas na eleição 2026 plei 3221 provisória
@@ -524,8 +537,9 @@ export async function GET(req: Request) {
       isProvisional,
       receivedReports: receivedReportsCount,
       processedReports: processedReportsCount,
-      expectedReports: isProvisional ? 0 : expectedBUsCount,
-      officialExpectedReports: isProvisional ? null : expectedBUsCount,
+      expectedReports: expectedBUsCount,
+      registeredExpectedReports: expectedBUsCount,
+      officialExpectedReports: (canonicalCoverageStatus === 'HOMOLOGATED' || canonicalCoverageStatus === 'REGISTERED') ? expectedBUsCount : null,
       estimatedReferenceBUs,
       dynamicallyRegisteredSections: dynamicSectionsCount,
       attendance,

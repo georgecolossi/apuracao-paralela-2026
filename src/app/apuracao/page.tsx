@@ -4,6 +4,7 @@ import { Activity, Archive, ShieldCheck, AlertCircle, RefreshCw, ChevronDown, Ch
 import { getOfficeDataAggregate } from '@/lib/presentation/apuracaoHelper';
 
 function OfficeResultCard({
+  officeId,
   officeName,
   officeType,
   candidates,
@@ -53,7 +54,7 @@ function OfficeResultCard({
     isMajoritario &&
     projectionData?.hasProjection &&
     progressProcessed >= 1 &&
-    progressTotal > 0
+    (projectionData?.expectedReports > 0 || progressTotal > 0)
   );
 
   const totalApurados = validVotes + blankVotes + nullVotes;
@@ -79,10 +80,14 @@ function OfficeResultCard({
           {isProvisional ? (
             <div>
               <div className="text-sm font-black text-indigo-950">
-                {progressProcessed.toLocaleString('pt-BR')} urnas apuradas
+                {progressTotal > 0
+                  ? `${progressProcessed.toLocaleString('pt-BR')} / ${progressTotal.toLocaleString('pt-BR')} urnas`
+                  : `${progressProcessed.toLocaleString('pt-BR')} urnas apuradas`}
               </div>
               <div className="text-[10px] uppercase font-bold tracking-wider text-amber-700 mt-0.5">
-                Regime provisório dinâmico
+                {progressTotal > 0
+                  ? `Regime provisório (${progressPercent}%)`
+                  : 'Regime provisório dinâmico'}
               </div>
             </div>
           ) : (
@@ -423,7 +428,7 @@ export default function ApuracaoDashboard() {
                 PROJEÇÃO MATEMÁTICA COM BASE NAS URNAS APURADAS*
               </strong>
               <span className="text-[11px] opacity-90 block mt-0.5">
-                Estimativa calculada proporcionalmente com base em {p} de {e} urnas apuradas ({e > 0 ? ((p / e) * 100).toFixed(1).replace('.', ',') : '0'}% da malha).
+                Estimativa calculada proporcionalmente com base em {p} de {e > 0 ? e : p} urnas apuradas {e > 0 ? `(${((p / e) * 100).toFixed(1).replace('.', ',')}% da malha)` : ''}.
                 Não representa resultado oficial do TSE nem declaração definitiva de vencedor. Válida exclusivamente para cargos majoritários.
               </span>
             </div>
@@ -439,7 +444,9 @@ export default function ApuracaoDashboard() {
                 COBERTURA EM REGIME PROVISÓRIO DINÂMICO
               </strong>
               <span className="text-[11px] opacity-90 block mt-0.5">
-                Seções eleitorais cadastradas dinamicamente via coleta presencial de QRBUs ({paralela.dynamicallyRegisteredSections || p} seções recebidas). Total oficial esperado aguarda homologação da malha territorial.
+                {e > 0
+                  ? `Malha com ${e} urnas esperadas em regime provisório (${p} urnas recebidas). Total oficial aguarda homologação formal da cobertura.`
+                  : `Seções eleitorais cadastradas dinamicamente via coleta presencial de QRBUs (${paralela.dynamicallyRegisteredSections || p} seções recebidas). Total oficial esperado aguarda homologação da malha territorial.`}
               </span>
             </div>
           </div>
@@ -448,15 +455,17 @@ export default function ApuracaoDashboard() {
         {/* Lista de Cargos */}
         <div className="grid grid-cols-1 gap-6">
           {officesList.map((office: any) => {
+            const officeId = office.id;
             const officeName = office.name;
             const isMajoritario = office.type === 'MAJORITARIO';
-            const data = getOfficeDataAggregate(paralela.election?.plei, round, officeName, paralela.totals);
-            const expKey = `PARALELA:${round}:${officeName}`;
-            const officeProjection = paralela.projections?.[officeName];
+            const data = getOfficeDataAggregate(paralela.election?.plei, round, officeId, paralela.totals, officeName);
+            const expKey = `PARALELA:${round}:${officeId || officeName}`;
+            const officeProjection = paralela.projections?.[officeId] || paralela.projections?.[officeName];
 
             return (
               <OfficeResultCard
-                key={officeName}
+                key={officeId || officeName}
+                officeId={officeId}
                 officeName={officeName}
                 officeType={office.type}
                 candidates={data.candidates}

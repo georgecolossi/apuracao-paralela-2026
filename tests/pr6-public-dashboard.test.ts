@@ -1526,4 +1526,439 @@ describe('PR 6 — Painel Público Universal e Projeções Dinâmicas (Auditoria
       expect(leakedCand).toBeUndefined();
     });
   });
+
+  // ---------------------------------------------------------------------------
+  // 16. Alinhamento de Denominador da API e Interface (Reauditoria P0)
+  // ---------------------------------------------------------------------------
+  describe('16. Alinhamento de Denominadores da API e Interface (Reauditoria P0)', () => {
+    it('16.1 PROVISIONAL com 0 urnas esperadas: denominador zero e projeção indisponível', async () => {
+      const el = await prisma.election.create({
+        data: {
+          name: 'Eleição Provisória 0 Esperadas',
+          year: 2026,
+          type: 'MUNICIPAL',
+          status: 'ACTIVE',
+          rounds: {
+            create: { roundNumber: 1, status: 'ACTIVE', coverageStatus: 'PROVISIONAL' }
+          }
+        },
+        include: { rounds: true }
+      });
+      const rId = el.rounds[0].id;
+
+      const off = await prisma.office.create({
+        data: { electionId: el.id, code: '11', name: 'Prefeito', type: 'MAJORITARIO' }
+      });
+
+      await prisma.candidate.create({
+        data: { officeId: off.id, partyId: party13.id, candidateNumber: '13', name: 'Candidato 13', ballotName: 'CANDIDATO 13' }
+      });
+
+      // 1 BU processado dinamicamente
+      await prisma.ballotReport.create({
+        data: {
+          deterministicId: 'BU-PROV-0-TEST',
+          electionId: el.id,
+          roundId: rId,
+          status: 'PROCESSADO',
+          isSimulation: false,
+          stateCode: 'SC',
+          cityCode: '80837',
+          zoneCode: '0090',
+          sectionCode: '0001',
+          urnCode: 'U0001',
+          votes: {
+            create: [{ officeId: off.id, voteType: 'NOMINAL', candidateNumber: '13', quantity: 10 }]
+          }
+        }
+      });
+
+      const res = await totalsRoute(new Request(`http://localhost/api/totals?election=${el.id}&round=1`));
+      expect(res.status).toBe(200);
+      const json = await res.json();
+
+      expect(json.isProvisional).toBe(true);
+      expect(json.canonicalCoverageStatus).toBe('PROVISIONAL');
+      expect(json.coverageStatusLabel).toBe('Cobertura Provisória');
+      expect(json.expectedReports).toBe(0);
+      expect(json.registeredExpectedReports).toBe(0);
+      expect(json.officialExpectedReports).toBeNull();
+      expect(json.processedReports).toBe(1);
+
+      // Projeção declarada expressamente como indisponível
+      const proj = json.projections[off.id] || json.projections[off.name];
+      expect(proj.hasProjection).toBe(false);
+      expect(proj.reason).toBe('DENOMINATOR_UNAVAILABLE');
+    });
+
+    it('16.2 PROVISIONAL com 30 urnas esperadas e 1 processada: projeção provisória ativa e denominadores alinhados', async () => {
+      const el = await prisma.election.create({
+        data: {
+          name: 'Eleição Provisória 30 Esperadas',
+          year: 2026,
+          type: 'MUNICIPAL',
+          status: 'ACTIVE',
+          rounds: {
+            create: { roundNumber: 1, status: 'ACTIVE', coverageStatus: 'PROVISIONAL' }
+          }
+        },
+        include: { rounds: true }
+      });
+      const rId = el.rounds[0].id;
+
+      const off = await prisma.office.create({
+        data: { electionId: el.id, code: '11', name: 'Prefeito', type: 'MAJORITARIO' }
+      });
+
+      await prisma.candidate.create({
+        data: { officeId: off.id, partyId: party13.id, candidateNumber: '13', name: 'Candidato 13', ballotName: 'CANDIDATO 13' }
+      });
+
+      // Cadastra 30 urnas esperadas em RoundCoverage
+      const zone = await prisma.pollingZone.create({
+        data: { municipalityId: muniConcordia.id, zoneNumber: 'Z30_S16', expectedBUs: 30 }
+      });
+      const sec = await prisma.pollingSection.create({
+        data: { pollingZoneId: zone.id, sectionNumber: 'S30_S16', expectedBUs: 30 }
+      });
+      await prisma.roundCoverage.create({
+        data: { electionRoundId: rId, pollingSectionId: sec.id, expectedBUs: 30 }
+      });
+
+      // 1 BU processado com 10 votos
+      await prisma.ballotReport.create({
+        data: {
+          deterministicId: 'BU-PROV-30-TEST',
+          electionId: el.id,
+          roundId: rId,
+          status: 'PROCESSADO',
+          isSimulation: false,
+          stateCode: 'SC',
+          cityCode: '80837',
+          zoneCode: 'Z30_S16',
+          sectionCode: 'S30_S16',
+          urnCode: 'U30',
+          votes: {
+            create: [{ officeId: off.id, voteType: 'NOMINAL', candidateNumber: '13', quantity: 10 }]
+          }
+        }
+      });
+
+      const res = await totalsRoute(new Request(`http://localhost/api/totals?election=${el.id}&round=1`));
+      expect(res.status).toBe(200);
+      const json = await res.json();
+
+      // Denominadores alinhados e transparentes
+      expect(json.isProvisional).toBe(true);
+      expect(json.canonicalCoverageStatus).toBe('PROVISIONAL');
+      expect(json.coverageStatusLabel).toBe('Cobertura Provisória');
+      expect(json.expectedReports).toBe(30);
+      expect(json.registeredExpectedReports).toBe(30);
+      expect(json.officialExpectedReports).toBeNull(); // Não homologado oficialmente
+      expect(json.processedReports).toBe(1);
+
+      // Projeção provisória ativa usando exatamente as 30 urnas
+      const proj = json.projections[off.id] || json.projections[off.name];
+      expect(proj.hasProjection).toBe(true);
+      expect(proj.isProvisional).toBe(true);
+      expect(proj.expectedReports).toBe(30);
+      expect(proj.processedReports).toBe(1);
+      expect(proj.candidates[0].currentVotes).toBe(10);
+      expect(proj.candidates[0].projectedVotes).toBe(300); // 10 * 30 / 1
+    });
+
+    it('16.3 PROVISIONAL com 193 urnas esperadas e 10 processadas: projeção e progresso proporcionais exatos', async () => {
+      const el = await prisma.election.create({
+        data: {
+          name: 'Eleição Provisória 193 Esperadas',
+          year: 2026,
+          type: 'MUNICIPAL',
+          status: 'ACTIVE',
+          rounds: {
+            create: { roundNumber: 1, status: 'ACTIVE', coverageStatus: 'PROVISIONAL' }
+          }
+        },
+        include: { rounds: true }
+      });
+      const rId = el.rounds[0].id;
+
+      const off = await prisma.office.create({
+        data: { electionId: el.id, code: '11', name: 'Prefeito', type: 'MAJORITARIO' }
+      });
+
+      await prisma.candidate.create({
+        data: { officeId: off.id, partyId: party22.id, candidateNumber: '22', name: 'Candidato 22', ballotName: 'CANDIDATO 22' }
+      });
+
+      const zone = await prisma.pollingZone.create({
+        data: { municipalityId: muniConcordia.id, zoneNumber: 'Z193_S16', expectedBUs: 193 }
+      });
+      const sec = await prisma.pollingSection.create({
+        data: { pollingZoneId: zone.id, sectionNumber: 'S193_S16', expectedBUs: 193 }
+      });
+      await prisma.roundCoverage.create({
+        data: { electionRoundId: rId, pollingSectionId: sec.id, expectedBUs: 193 }
+      });
+
+      // 10 BUs processados com 5 votos cada = 50 votos
+      for (let i = 1; i <= 10; i++) {
+        await prisma.ballotReport.create({
+          data: {
+            deterministicId: `BU-PROV-193-${i}`,
+            electionId: el.id,
+            roundId: rId,
+            status: 'PROCESSADO',
+            isSimulation: false,
+            stateCode: 'SC',
+            cityCode: '80837',
+            zoneCode: 'Z193_S16',
+            sectionCode: `S193_S16-${i}`,
+            urnCode: `U193-${i}`,
+            votes: {
+              create: [{ officeId: off.id, voteType: 'NOMINAL', candidateNumber: '22', quantity: 5 }]
+            }
+          }
+        });
+      }
+
+      const res = await totalsRoute(new Request(`http://localhost/api/totals?election=${el.id}&round=1`));
+      expect(res.status).toBe(200);
+      const json = await res.json();
+
+      expect(json.isProvisional).toBe(true);
+      expect(json.expectedReports).toBe(193);
+      expect(json.registeredExpectedReports).toBe(193);
+      expect(json.officialExpectedReports).toBeNull();
+      expect(json.processedReports).toBe(10);
+
+      const proj = json.projections[off.id];
+      expect(proj.hasProjection).toBe(true);
+      expect(proj.expectedReports).toBe(193);
+      expect(proj.processedReports).toBe(10);
+      expect(proj.candidates[0].currentVotes).toBe(50);
+      // Math.round((50 * 193) / 10) = Math.round(965) = 965
+      expect(proj.candidates[0].projectedVotes).toBe(965);
+    });
+
+    it('16.4 REGISTERED e HOMOLOGATED expõem officialExpectedReports e status canônico', async () => {
+      // REGISTERED
+      const elReg = await prisma.election.create({
+        data: {
+          name: 'Eleição Registro Oficial',
+          year: 2026,
+          type: 'GENERAL',
+          status: 'ACTIVE',
+          rounds: {
+            create: { roundNumber: 1, status: 'ACTIVE', coverageStatus: 'REGISTERED' }
+          }
+        },
+        include: { rounds: true }
+      });
+      const rRegId = elReg.rounds[0].id;
+      const zoneReg = await prisma.pollingZone.create({
+        data: { municipalityId: muniConcordia.id, zoneNumber: 'ZREG_S16', expectedBUs: 50 }
+      });
+      const secReg = await prisma.pollingSection.create({
+        data: { pollingZoneId: zoneReg.id, sectionNumber: 'SREG_S16', expectedBUs: 50 }
+      });
+      await prisma.roundCoverage.create({
+        data: { electionRoundId: rRegId, pollingSectionId: secReg.id, expectedBUs: 50 }
+      });
+
+      const resReg = await totalsRoute(new Request(`http://localhost/api/totals?election=${elReg.id}&round=1`));
+      const jsonReg = await resReg.json();
+      expect(jsonReg.canonicalCoverageStatus).toBe('REGISTERED');
+      expect(jsonReg.isProvisional).toBe(false);
+      expect(jsonReg.expectedReports).toBe(50);
+      expect(jsonReg.officialExpectedReports).toBe(50);
+
+      // HOMOLOGATED
+      const elHom = await prisma.election.create({
+        data: {
+          name: 'Eleição Homologada Oficial',
+          year: 2026,
+          type: 'GENERAL',
+          status: 'ACTIVE',
+          rounds: {
+            create: { roundNumber: 1, status: 'ACTIVE', coverageStatus: 'HOMOLOGATED' }
+          }
+        },
+        include: { rounds: true }
+      });
+      const rHomId = elHom.rounds[0].id;
+      const zoneHom = await prisma.pollingZone.create({
+        data: { municipalityId: muniConcordia.id, zoneNumber: 'ZHOM_S16', expectedBUs: 80 }
+      });
+      const secHom = await prisma.pollingSection.create({
+        data: { pollingZoneId: zoneHom.id, sectionNumber: 'SHOM_S16', expectedBUs: 80 }
+      });
+      await prisma.roundCoverage.create({
+        data: { electionRoundId: rHomId, pollingSectionId: secHom.id, expectedBUs: 80 }
+      });
+
+      const resHom = await totalsRoute(new Request(`http://localhost/api/totals?election=${elHom.id}&round=1`));
+      const jsonHom = await resHom.json();
+      expect(jsonHom.canonicalCoverageStatus).toBe('HOMOLOGATED');
+      expect(jsonHom.isProvisional).toBe(false);
+      expect(jsonHom.expectedReports).toBe(80);
+      expect(jsonHom.officialExpectedReports).toBe(80);
+    });
+
+    it('16.5 Cargos proporcionais nunca recebem extrapolação mesmo com denominador definido', async () => {
+      const el = await prisma.election.create({
+        data: {
+          name: 'Eleição Proporcional Sem Extrapolação',
+          year: 2026,
+          type: 'MUNICIPAL',
+          status: 'ACTIVE',
+          rounds: {
+            create: { roundNumber: 1, status: 'ACTIVE', coverageStatus: 'PROVISIONAL' }
+          }
+        },
+        include: { rounds: true }
+      });
+      const rId = el.rounds[0].id;
+
+      const offProp = await prisma.office.create({
+        data: { electionId: el.id, code: '13', name: 'Vereador', type: 'PROPORCIONAL' }
+      });
+
+      const zone = await prisma.pollingZone.create({
+        data: { municipalityId: muniConcordia.id, zoneNumber: 'ZPROP_S16', expectedBUs: 100 }
+      });
+      const sec = await prisma.pollingSection.create({
+        data: { pollingZoneId: zone.id, sectionNumber: 'SPROP_S16', expectedBUs: 100 }
+      });
+      await prisma.roundCoverage.create({
+        data: { electionRoundId: rId, pollingSectionId: sec.id, expectedBUs: 100 }
+      });
+
+      const res = await totalsRoute(new Request(`http://localhost/api/totals?election=${el.id}&round=1`));
+      const json = await res.json();
+      const proj = json.projections[offProp.id] || json.projections[offProp.name];
+      expect(proj.hasProjection).toBe(false);
+      expect(proj.reason).toBe('PROPORTIONAL_NOT_ALLOWED');
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // 17. Agrupamento de Cargos por ID e Isolamento de Cargos Homônimos (Reauditoria P1)
+  // ---------------------------------------------------------------------------
+  describe('17. Agrupamento Estrito de Cargos por ID e Isolamento de Homônimos (Reauditoria P1)', () => {
+    it('17.1 Dois cargos com o mesmo nome, códigos distintos e candidatos repetidos devem ser 100% isolados', async () => {
+      const el = await prisma.election.create({
+        data: {
+          name: 'Eleição com Cargos de Mesmo Nome',
+          year: 2026,
+          type: 'MUNICIPAL',
+          status: 'ACTIVE',
+          rounds: {
+            create: { roundNumber: 1, status: 'ACTIVE', coverageStatus: 'REGISTERED' }
+          }
+        },
+        include: { rounds: true }
+      });
+      const rId = el.rounds[0].id;
+
+      // Dois cargos distintos compartilhando EXATAMENTE o mesmo nome 'Conselheiro'
+      const cargoA = await prisma.office.create({
+        data: { electionId: el.id, code: '91', name: 'Conselheiro', type: 'MAJORITARIO', orderNumber: 1 }
+      });
+      const cargoB = await prisma.office.create({
+        data: { electionId: el.id, code: '92', name: 'Conselheiro', type: 'MAJORITARIO', orderNumber: 2 }
+      });
+
+      // Ambos os cargos possuem candidato com o MESMO número '10'
+      const candA = await prisma.candidate.create({
+        data: { officeId: cargoA.id, partyId: party13.id, candidateNumber: '10', name: 'Alfa A', ballotName: 'ALFA A' }
+      });
+      const candB = await prisma.candidate.create({
+        data: { officeId: cargoB.id, partyId: party22.id, candidateNumber: '10', name: 'Alfa B', ballotName: 'ALFA B' }
+      });
+
+      const zone = await prisma.pollingZone.create({
+        data: { municipalityId: muniConcordia.id, zoneNumber: 'ZHOM1_S17', expectedBUs: 10 }
+      });
+      const sec = await prisma.pollingSection.create({
+        data: { pollingZoneId: zone.id, sectionNumber: 'SHOM1_S17', expectedBUs: 10 }
+      });
+      await prisma.roundCoverage.create({
+        data: { electionRoundId: rId, pollingSectionId: sec.id, expectedBUs: 10 }
+      });
+
+      // 1 BU com votos distintos para cada cargo: 15 votos no cargo A, 40 votos no cargo B
+      await prisma.ballotReport.create({
+        data: {
+          deterministicId: 'BU-HOMONIMO-TEST',
+          electionId: el.id,
+          roundId: rId,
+          status: 'PROCESSADO',
+          isSimulation: false,
+          stateCode: 'SC',
+          cityCode: '80837',
+          zoneCode: 'ZHOM1_S17',
+          sectionCode: 'SHOM1_S17',
+          urnCode: 'UHOM1',
+          votes: {
+            create: [
+              { officeId: cargoA.id, voteType: 'NOMINAL', candidateNumber: '10', quantity: 15 },
+              { officeId: cargoB.id, voteType: 'NOMINAL', candidateNumber: '10', quantity: 40 }
+            ]
+          }
+        }
+      });
+
+      const res = await totalsRoute(new Request(`http://localhost/api/totals?election=${el.id}&round=1`));
+      expect(res.status).toBe(200);
+      const json = await res.json();
+
+      // 1. Totais contém 2 itens distintos com seus respectivos officeIds
+      expect(json.totals.length).toBe(2);
+      const itemA = json.totals.find((t: any) => t.officeId === cargoA.id);
+      const itemB = json.totals.find((t: any) => t.officeId === cargoB.id);
+
+      expect(itemA).toBeDefined();
+      expect(itemB).toBeDefined();
+      expect(itemA.candidateNumber).toBe('10');
+      expect(itemA.candidateName).toBe('ALFA A');
+      expect(itemA.quantity).toBe(15);
+
+      expect(itemB.candidateNumber).toBe('10');
+      expect(itemB.candidateName).toBe('ALFA B');
+      expect(itemB.quantity).toBe(40);
+
+      // 2. getOfficeDataAggregate filtra estritamente por officeId
+      const aggA = getOfficeDataAggregate(json.election.plei, 1, cargoA.id, json.totals, cargoA.name);
+      expect(aggA.candidates.length).toBe(1);
+      expect(aggA.candidates[0].candidateNumber).toBe('10');
+      expect(aggA.candidates[0].candidateName).toBe('ALFA A');
+      expect(aggA.candidates[0].quantity).toBe(15);
+      expect(aggA.totalValidos).toBe(15);
+
+      const aggB = getOfficeDataAggregate(json.election.plei, 1, cargoB.id, json.totals, cargoB.name);
+      expect(aggB.candidates.length).toBe(1);
+      expect(aggB.candidates[0].candidateNumber).toBe('10');
+      expect(aggB.candidates[0].candidateName).toBe('ALFA B');
+      expect(aggB.candidates[0].quantity).toBe(40);
+      expect(aggB.totalValidos).toBe(40);
+
+      // 3. Projeções indexadas por officeId com cálculos isolados
+      const projA = json.projections[cargoA.id];
+      const projB = json.projections[cargoB.id];
+
+      expect(projA).toBeDefined();
+      expect(projB).toBeDefined();
+      expect(projA.officeId).toBe(cargoA.id);
+      expect(projB.officeId).toBe(cargoB.id);
+
+      // 15 votos * 10 / 1 = 150
+      expect(projA.candidates[0].projectedVotes).toBe(150);
+      // 40 votos * 10 / 1 = 400
+      expect(projB.candidates[0].projectedVotes).toBe(400);
+
+      // Nenhuma mutação executada na rota GET
+      const totalCandidatesInDb = await prisma.candidate.count({ where: { officeId: { in: [cargoA.id, cargoB.id] } } });
+      expect(totalCandidatesInDb).toBe(2);
+    });
+  });
 });

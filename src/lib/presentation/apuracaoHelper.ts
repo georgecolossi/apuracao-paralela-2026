@@ -1,4 +1,5 @@
 export interface TotalItem {
+  officeId?: string;
   officeName: string;
   candidateNumber?: string | null;
   partyNumber?: string | null;
@@ -46,10 +47,28 @@ export interface LegendaDisplay {
 export function getOfficeDataAggregate(
   pleito: string | null | undefined,
   turno: number | null | undefined,
-  officeName: string,
-  allTotals: TotalItem[]
+  officeIdentifier: string,
+  allTotals: TotalItem[],
+  officeNameFallback?: string
 ) {
-  const officeVotes = allTotals.filter(t => t.officeName === officeName);
+  // 1. Tenta correspondência estrita por officeId
+  let officeVotes = allTotals.filter(t => t.officeId && t.officeId === officeIdentifier);
+
+  // 2. Se não encontrou por officeId, tenta correspondência legada mediante correspondência inequívoca
+  if (officeVotes.length === 0) {
+    const targetName = officeNameFallback || officeIdentifier;
+    const matchingOfficeIds = new Set(
+      allTotals.filter(t => t.officeName === targetName).map(t => t.officeId || t.officeName)
+    );
+    if (matchingOfficeIds.size <= 1) {
+      officeVotes = allTotals.filter(t => t.officeName === targetName);
+    } else {
+      // Múltiplos cargos compartilham o mesmo nome sem identificador de ID inequívoco
+      officeVotes = [];
+    }
+  }
+
+  const displayOfficeName = officeNameFallback || officeVotes[0]?.officeName || officeIdentifier;
   let totalGeral = 0;
   let validosNominais = 0;
   let validosLegenda = 0;
@@ -62,7 +81,7 @@ export function getOfficeDataAggregate(
   for (const v of officeVotes) {
     totalGeral += v.quantity;
     const hasResolvedName = Boolean(v.candidateName && v.candidateName.trim().length > 0);
-    const destiny = classifyVotePresentation(pleito, turno, officeName, v.voteType, v.candidateNumber, hasResolvedName);
+    const destiny = classifyVotePresentation(pleito, turno, displayOfficeName, v.voteType, v.candidateNumber, hasResolvedName);
     switch (destiny) {
       case 'BRANCO':
         brancos += v.quantity;
@@ -108,7 +127,7 @@ export function getOfficeDataAggregate(
         break;
     }
   }
-  const isT2Presidente = (String(turno) === '2' || turno === 2) && officeName === 'Presidente';
+  const isT2Presidente = (String(turno) === '2' || turno === 2) && displayOfficeName === 'Presidente';
   const candidates = Array.from(candidateMap.values())
     .filter(c => c.quantity > 0 || isT2Presidente || Boolean(c.candidateName && c.candidateName.trim().length > 0))
     .sort((a, b) => {

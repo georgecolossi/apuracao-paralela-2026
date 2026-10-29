@@ -427,7 +427,8 @@ export async function POST(req: Request) {
               data: {
                 electionRoundId: activeRound.id,
                 pollingSectionId: sectionInDB.id,
-                expectedBUs: 1
+                expectedBUs: 1,
+                notes: 'DYNAMIC_SECTION'
               }
             });
           } catch (covErr: unknown) {
