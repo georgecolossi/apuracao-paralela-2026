@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { prisma } from '../src/lib/db';
 import { GET as totalsRoute } from '../src/app/api/totals/route';
-import { getOfficeDataAggregate, classifyVotePresentation } from '../src/lib/presentation/apuracaoHelper';
+import { getOfficeDataAggregate, classifyVotePresentation, TotalItem } from '../src/lib/presentation/apuracaoHelper';
 
 describe('PR 6 — Painel Público Universal e Projeções Dinâmicas (Auditoria Independente)', () => {
   let stateSC: any;
@@ -1959,6 +1959,235 @@ describe('PR 6 — Painel Público Universal e Projeções Dinâmicas (Auditoria
       // Nenhuma mutação executada na rota GET
       const totalCandidatesInDb = await prisma.candidate.count({ where: { officeId: { in: [cargoA.id, cargoB.id] } } });
       expect(totalCandidatesInDb).toBe(2);
+    });
+
+    it('17.2 Chamada por ID de B quando só existem totais de A: B deve retornar agregação vazia sem recorrer ao nome', () => {
+      // Mock de totais contendo apenas votos do Cargo A ('id-cargo-a')
+      const mockTotalsA: TotalItem[] = [
+        {
+          officeId: 'id-cargo-a',
+          officeName: 'Conselheiro',
+          candidateNumber: '10',
+          partyNumber: '13',
+          voteType: 'NOMINAL',
+          quantity: 25,
+          candidateName: 'Candidato Alfa A',
+          partyAbbreviation: 'PT'
+        },
+        {
+          officeId: 'id-cargo-a',
+          officeName: 'Conselheiro',
+          voteType: 'BRANCO',
+          quantity: 3
+        },
+        {
+          officeId: 'id-cargo-a',
+          officeName: 'Conselheiro',
+          voteType: 'NULO',
+          quantity: 2
+        }
+      ];
+
+      // Chamada fornecendo explicitamente officeId de B e nome de B
+      const aggB = getOfficeDataAggregate('3220', 1, 'id-cargo-b', mockTotalsA, 'Conselheiro');
+
+      // Deve retornar agregação 100% vazia - FAIL-CLOSED (sem fallback para votos de A)
+      expect(aggB.candidates).toEqual([]);
+      expect(aggB.legendas).toEqual([]);
+      expect(aggB.totalValidos).toBe(0);
+      expect(aggB.validosNominais).toBe(0);
+      expect(aggB.validosLegenda).toBe(0);
+      expect(aggB.brancos).toBe(0);
+      expect(aggB.nulos).toBe(0);
+      expect(aggB.totalGeral).toBe(0);
+
+      // Chamada fornecendo officeId de B sem o 5º argumento
+      const aggBSemFallback = getOfficeDataAggregate('3220', 1, 'id-cargo-b', mockTotalsA);
+      expect(aggBSemFallback.candidates).toEqual([]);
+      expect(aggBSemFallback.totalValidos).toBe(0);
+      expect(aggBSemFallback.totalGeral).toBe(0);
+    });
+
+    it('17.3 Chamada por ID de B quando A e B possuem votos: cada agregação deve conter apenas seus próprios votos', () => {
+      const mockTotalsAB: TotalItem[] = [
+        {
+          officeId: 'id-cargo-a',
+          officeName: 'Conselheiro',
+          candidateNumber: '10',
+          partyNumber: '13',
+          voteType: 'NOMINAL',
+          quantity: 30,
+          candidateName: 'Candidato Alfa A',
+          partyAbbreviation: 'PT'
+        },
+        {
+          officeId: 'id-cargo-a',
+          officeName: 'Conselheiro',
+          voteType: 'BRANCO',
+          quantity: 5
+        },
+        {
+          officeId: 'id-cargo-b',
+          officeName: 'Conselheiro',
+          candidateNumber: '10',
+          partyNumber: '22',
+          voteType: 'NOMINAL',
+          quantity: 70,
+          candidateName: 'Candidato Alfa B',
+          partyAbbreviation: 'PL'
+        },
+        {
+          officeId: 'id-cargo-b',
+          officeName: 'Conselheiro',
+          voteType: 'NULO',
+          quantity: 8
+        }
+      ];
+
+      const aggA = getOfficeDataAggregate('3220', 1, 'id-cargo-a', mockTotalsAB, 'Conselheiro');
+      const aggB = getOfficeDataAggregate('3220', 1, 'id-cargo-b', mockTotalsAB, 'Conselheiro');
+
+      // Cargo A: apenas seus 30 nominais e 5 brancos
+      expect(aggA.totalValidos).toBe(30);
+      expect(aggA.validosNominais).toBe(30);
+      expect(aggA.brancos).toBe(5);
+      expect(aggA.nulos).toBe(0);
+      expect(aggA.totalGeral).toBe(35);
+      expect(aggA.candidates.length).toBe(1);
+      expect(aggA.candidates[0].candidateName).toBe('Candidato Alfa A');
+      expect(aggA.candidates[0].quantity).toBe(30);
+
+      // Cargo B: apenas seus 70 nominais e 8 nulos
+      expect(aggB.totalValidos).toBe(70);
+      expect(aggB.validosNominais).toBe(70);
+      expect(aggB.brancos).toBe(0);
+      expect(aggB.nulos).toBe(8);
+      expect(aggB.totalGeral).toBe(78);
+      expect(aggB.candidates.length).toBe(1);
+      expect(aggB.candidates[0].candidateName).toBe('Candidato Alfa B');
+      expect(aggB.candidates[0].quantity).toBe(70);
+    });
+
+    it('17.4 Chamada legada por nome com correspondência inequívoca: retorna agregação correta', () => {
+      // Mock onde apenas 1 cargo se chama 'Prefeito'
+      const mockTotalsPrefeito: TotalItem[] = [
+        {
+          officeId: 'id-prefeito',
+          officeName: 'Prefeito',
+          candidateNumber: '15',
+          partyNumber: '15',
+          voteType: 'NOMINAL',
+          quantity: 120,
+          candidateName: 'Candidato Prefeito 15',
+          partyAbbreviation: 'MDB'
+        },
+        {
+          officeId: 'id-prefeito',
+          officeName: 'Prefeito',
+          voteType: 'BRANCO',
+          quantity: 10
+        }
+      ];
+
+      // Chamada legada usando officeIdentifier = 'Prefeito' sem 5º argumento
+      const aggNome = getOfficeDataAggregate(null, 1, 'Prefeito', mockTotalsPrefeito);
+      expect(aggNome.totalValidos).toBe(120);
+      expect(aggNome.brancos).toBe(10);
+      expect(aggNome.totalGeral).toBe(130);
+      expect(aggNome.candidates.length).toBe(1);
+      expect(aggNome.candidates[0].candidateNumber).toBe('15');
+
+      // Chamada legada fornecendo officeIdentifier nulo/vazio e officeNameFallback = 'Prefeito'
+      const aggLegadoNull = getOfficeDataAggregate(null, 1, null, mockTotalsPrefeito, 'Prefeito');
+      expect(aggLegadoNull.totalValidos).toBe(120);
+      expect(aggLegadoNull.brancos).toBe(10);
+    });
+
+    it('17.5 Chamada legada por nome com dois cargos homônimos: deve recusar a agregação ambígua', () => {
+      // Dois cargos homônimos distintos ('Conselheiro') com totais em allTotals
+      const mockTotalsHomonym: TotalItem[] = [
+        {
+          officeId: 'id-cargo-a',
+          officeName: 'Conselheiro',
+          candidateNumber: '10',
+          partyNumber: '13',
+          voteType: 'NOMINAL',
+          quantity: 30,
+          candidateName: 'Candidato Alfa A',
+          partyAbbreviation: 'PT'
+        },
+        {
+          officeId: 'id-cargo-b',
+          officeName: 'Conselheiro',
+          candidateNumber: '10',
+          partyNumber: '22',
+          voteType: 'NOMINAL',
+          quantity: 70,
+          candidateName: 'Candidato Alfa B',
+          partyAbbreviation: 'PL'
+        }
+      ];
+
+      // Chamada legada passando apenas o nome 'Conselheiro'
+      const aggAmbiguo = getOfficeDataAggregate(null, 1, 'Conselheiro', mockTotalsHomonym);
+      expect(aggAmbiguo.totalValidos).toBe(0);
+      expect(aggAmbiguo.totalGeral).toBe(0);
+      expect(aggAmbiguo.candidates).toEqual([]);
+
+      // Chamada legada passando officeIdentifier nulo e fallback 'Conselheiro'
+      const aggAmbiguoNull = getOfficeDataAggregate(null, 1, null, mockTotalsHomonym, 'Conselheiro');
+      expect(aggAmbiguoNull.totalValidos).toBe(0);
+      expect(aggAmbiguoNull.totalGeral).toBe(0);
+      expect(aggAmbiguoNull.candidates).toEqual([]);
+    });
+
+    it('17.6 Preservação do cenário em que ambos os cargos possuem candidatos com o mesmo número e múltiplos tipos de voto', () => {
+      const mockTotalsComplex: TotalItem[] = [
+        // Cargo A
+        { officeId: 'id-cargo-a', officeName: 'Conselheiro', candidateNumber: '99', partyNumber: '10', voteType: 'NOMINAL', quantity: 50, candidateName: 'Cand 99 Cargo A' },
+        { officeId: 'id-cargo-a', officeName: 'Conselheiro', partyNumber: '10', voteType: 'LEGENDA', quantity: 20, partyAbbreviation: 'PRB' },
+        { officeId: 'id-cargo-a', officeName: 'Conselheiro', voteType: 'BRANCO', quantity: 5 },
+        { officeId: 'id-cargo-a', officeName: 'Conselheiro', voteType: 'NULO', quantity: 3 },
+
+        // Cargo B
+        { officeId: 'id-cargo-b', officeName: 'Conselheiro', candidateNumber: '99', partyNumber: '20', voteType: 'NOMINAL', quantity: 80, candidateName: 'Cand 99 Cargo B' },
+        { officeId: 'id-cargo-b', officeName: 'Conselheiro', partyNumber: '20', voteType: 'LEGENDA', quantity: 15, partyAbbreviation: 'PSC' },
+        { officeId: 'id-cargo-b', officeName: 'Conselheiro', voteType: 'BRANCO', quantity: 12 },
+        { officeId: 'id-cargo-b', officeName: 'Conselheiro', voteType: 'NULO', quantity: 9 }
+      ];
+
+      const aggA = getOfficeDataAggregate('3220', 1, 'id-cargo-a', mockTotalsComplex, 'Conselheiro');
+      const aggB = getOfficeDataAggregate('3220', 1, 'id-cargo-b', mockTotalsComplex, 'Conselheiro');
+
+      // Verificação Cargo A
+      expect(aggA.validosNominais).toBe(50);
+      expect(aggA.validosLegenda).toBe(20);
+      expect(aggA.totalValidos).toBe(70);
+      expect(aggA.brancos).toBe(5);
+      expect(aggA.nulos).toBe(3);
+      expect(aggA.totalGeral).toBe(78);
+      expect(aggA.candidates.length).toBe(1);
+      expect(aggA.candidates[0].candidateNumber).toBe('99');
+      expect(aggA.candidates[0].candidateName).toBe('Cand 99 Cargo A');
+      expect(aggA.candidates[0].quantity).toBe(50);
+      expect(aggA.legendas.length).toBe(1);
+      expect(aggA.legendas[0].partyNumber).toBe('10');
+      expect(aggA.legendas[0].quantity).toBe(20);
+
+      // Verificação Cargo B
+      expect(aggB.validosNominais).toBe(80);
+      expect(aggB.validosLegenda).toBe(15);
+      expect(aggB.totalValidos).toBe(95);
+      expect(aggB.brancos).toBe(12);
+      expect(aggB.nulos).toBe(9);
+      expect(aggB.totalGeral).toBe(116);
+      expect(aggB.candidates.length).toBe(1);
+      expect(aggB.candidates[0].candidateNumber).toBe('99');
+      expect(aggB.candidates[0].candidateName).toBe('Cand 99 Cargo B');
+      expect(aggB.candidates[0].quantity).toBe(80);
+      expect(aggB.legendas.length).toBe(1);
+      expect(aggB.legendas[0].partyNumber).toBe('20');
+      expect(aggB.legendas[0].quantity).toBe(15);
     });
   });
 });
