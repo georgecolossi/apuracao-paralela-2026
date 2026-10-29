@@ -448,8 +448,17 @@ export async function GET(req: Request) {
       };
     }
 
-    // Projeções Matemáticas por Cargo: Identificadas preferencialmente por officeId
+    // Projeções Matemáticas por Cargo: Identificadas canonicamente por officeId
     const projections: Record<string, any> = {};
+
+    // Mapeamento de contagem por nome para garantir compatibilidade legada exclusivamente com correspondência inequívoca
+    const officeNameCounts = new Map<string, number>();
+    for (const off of offices) {
+      if (off.name) {
+        officeNameCounts.set(off.name, (officeNameCounts.get(off.name) || 0) + 1);
+      }
+    }
+
     for (const office of offices) {
       let projObj: any;
 
@@ -518,10 +527,13 @@ export async function GET(req: Request) {
         };
       }
 
-      // Identificação primária por officeId
+      // 1. Identificação canônica estrita: sempre por office.id
       projections[office.id] = projObj;
-      // Compatibilidade legada com correspondência inequívoca de cargo
-      if (!projections[office.name]) {
+
+      // 2. Compatibilidade legada com correspondência inequívoca:
+      // Cria alias por nome SOMENTE se o nome identificar um único cargo na eleição (sem homônimos).
+      // Se houver dois ou mais cargos com o mesmo nome, NENHUM alias por nome é criado.
+      if (office.name && officeNameCounts.get(office.name) === 1) {
         projections[office.name] = projObj;
       }
     }

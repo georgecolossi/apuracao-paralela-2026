@@ -454,17 +454,30 @@ export default function ApuracaoDashboard() {
 
         {/* Lista de Cargos */}
         <div className="grid grid-cols-1 gap-6">
-          {officesList.map((office: any) => {
+          {officesList.map((office: any, idx: number) => {
             const officeId = office.id;
             const officeName = office.name;
             const isMajoritario = office.type === 'MAJORITARIO';
             const data = getOfficeDataAggregate(paralela.election?.plei, round, officeId, paralela.totals, officeName);
-            const expKey = `PARALELA:${round}:${officeId || officeName}`;
-            const officeProjection = paralela.projections?.[officeId] || paralela.projections?.[officeName];
+            const expKey = `PARALELA:${round}:${officeId || `${officeName}-${idx}`}`;
+            // Seleção estrita da projeção (Fail-Closed):
+            // 1. Quando officeId estiver disponível, a seleção é estritamente por ID.
+            //    Se não existir projeção para esse ID, NÃO recorrer ao nome.
+            // 2. O fallback por nome só pode ser mantido para objetos comprovadamente legados, sem ID de cargo,
+            //    e com correspondência inequívoca (exatamente 1 cargo com esse nome).
+            let officeProjection = null;
+            if (officeId) {
+              officeProjection = paralela.projections?.[officeId] || null;
+            } else if (officeName) {
+              const matchingCount = officesList.filter((o: any) => o.name === officeName).length;
+              if (matchingCount === 1) {
+                officeProjection = paralela.projections?.[officeName] || null;
+              }
+            }
 
             return (
               <OfficeResultCard
-                key={officeId || officeName}
+                key={officeId ? officeId : `${officeName}-${idx}`}
                 officeId={officeId}
                 officeName={officeName}
                 officeType={office.type}

@@ -1956,6 +1956,9 @@ describe('PR 6 — Painel Público Universal e Projeções Dinâmicas (Auditoria
       // 40 votos * 10 / 1 = 400
       expect(projB.candidates[0].projectedVotes).toBe(400);
 
+      // Não cria alias por nome quando houver cargos homônimos
+      expect(json.projections['Conselheiro']).toBeUndefined();
+
       // Nenhuma mutação executada na rota GET
       const totalCandidatesInDb = await prisma.candidate.count({ where: { officeId: { in: [cargoA.id, cargoB.id] } } });
       expect(totalCandidatesInDb).toBe(2);
@@ -2188,6 +2191,94 @@ describe('PR 6 — Painel Público Universal e Projeções Dinâmicas (Auditoria
       expect(aggB.legendas.length).toBe(1);
       expect(aggB.legendas[0].partyNumber).toBe('20');
       expect(aggB.legendas[0].quantity).toBe(15);
+    });
+
+    it('17.7 A API cria alias por nome em projections APENAS para cargos com nome único, recusando alias para homônimos', async () => {
+      const el = await prisma.election.create({
+        data: {
+          name: 'Eleição com Cargo Único e Homônimos',
+          year: 2026,
+          type: 'MUNICIPAL',
+          status: 'ACTIVE',
+          rounds: {
+            create: { roundNumber: 1, status: 'ACTIVE', coverageStatus: 'REGISTERED' }
+          }
+        },
+        include: { rounds: true }
+      });
+      const rId = el.rounds[0].id;
+
+      // Cargo único
+      const cargoPrefeito = await prisma.office.create({
+        data: { electionId: el.id, code: '11', name: 'Prefeito', type: 'MAJORITARIO', orderNumber: 1 }
+      });
+
+      // Dois cargos homônimos
+      const cargoCons1 = await prisma.office.create({
+        data: { electionId: el.id, code: '81', name: 'Conselheiro', type: 'MAJORITARIO', orderNumber: 2 }
+      });
+      const cargoCons2 = await prisma.office.create({
+        data: { electionId: el.id, code: '82', name: 'Conselheiro', type: 'MAJORITARIO', orderNumber: 3 }
+      });
+
+      await prisma.candidate.create({
+        data: { officeId: cargoPrefeito.id, partyId: party13.id, candidateNumber: '15', name: 'Prefeito Alfa', ballotName: 'PREFEITO ALFA' }
+      });
+      await prisma.candidate.create({
+        data: { officeId: cargoCons1.id, partyId: party13.id, candidateNumber: '10', name: 'Conselheiro 1', ballotName: 'CONSELHEIRO 1' }
+      });
+      await prisma.candidate.create({
+        data: { officeId: cargoCons2.id, partyId: party22.id, candidateNumber: '20', name: 'Conselheiro 2', ballotName: 'CONSELHEIRO 2' }
+      });
+
+      const zone = await prisma.pollingZone.create({
+        data: { municipalityId: muniConcordia.id, zoneNumber: 'ZHOM_ALIAS_S17', expectedBUs: 10 }
+      });
+      const sec = await prisma.pollingSection.create({
+        data: { pollingZoneId: zone.id, sectionNumber: 'SHOM_ALIAS_S17', expectedBUs: 10 }
+      });
+      await prisma.roundCoverage.create({
+        data: { electionRoundId: rId, pollingSectionId: sec.id, expectedBUs: 10 }
+      });
+
+      await prisma.ballotReport.create({
+        data: {
+          deterministicId: 'BU-ALIAS-TEST',
+          electionId: el.id,
+          roundId: rId,
+          status: 'PROCESSADO',
+          isSimulation: false,
+          stateCode: 'SC',
+          cityCode: '80837',
+          zoneCode: 'ZHOM_ALIAS_S17',
+          sectionCode: 'SHOM_ALIAS_S17',
+          urnCode: 'UALIAS1',
+          votes: {
+            create: [
+              { officeId: cargoPrefeito.id, voteType: 'NOMINAL', candidateNumber: '15', quantity: 50 },
+              { officeId: cargoCons1.id, voteType: 'NOMINAL', candidateNumber: '10', quantity: 30 },
+              { officeId: cargoCons2.id, voteType: 'NOMINAL', candidateNumber: '20', quantity: 70 }
+            ]
+          }
+        }
+      });
+
+      const res = await totalsRoute(new Request(`http://localhost/api/totals?election=${el.id}&round=1`));
+      expect(res.status).toBe(200);
+      const json = await res.json();
+
+      // Canônico por ID sempre presente
+      expect(json.projections[cargoPrefeito.id]).toBeDefined();
+      expect(json.projections[cargoCons1.id]).toBeDefined();
+      expect(json.projections[cargoCons2.id]).toBeDefined();
+
+      // Nome único: cria alias por compatibilidade legada
+      expect(json.projections['Prefeito']).toBeDefined();
+      expect(json.projections['Prefeito'].officeId).toBe(cargoPrefeito.id);
+      expect(json.projections['Prefeito'].candidates[0].projectedVotes).toBe(500);
+
+      // Homônimos: JAMAIS cria alias por nome!
+      expect(json.projections['Conselheiro']).toBeUndefined();
     });
   });
 });

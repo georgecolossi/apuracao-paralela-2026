@@ -153,7 +153,7 @@ describe('PR 6 — Painel Público: Testes com Componente React Real Montado', (
     expect(text).toContain('com base em 1 de 30 urnas apuradas');
   });
 
-  it('3. Renderiza dois cargos com o mesmo nome isoladamente por officeId sem misturar votos', async () => {
+  it('3. Dois cargos homônimos com IDs distintos recebem projeções diferentes e isoladas', async () => {
     const mockData = {
       isProvisional: false,
       canonicalCoverageStatus: 'HOMOLOGATED',
@@ -178,6 +178,8 @@ describe('PR 6 — Painel Público: Testes com Componente React Real Montado', (
       ],
       projections: {
         'cargo-uuid-1': {
+          officeId: 'cargo-uuid-1',
+          officeName: 'Conselheiro',
           hasProjection: true,
           status: 'ACTIVE',
           expectedReports: 10,
@@ -185,6 +187,8 @@ describe('PR 6 — Painel Público: Testes com Componente React Real Montado', (
           candidates: [{ candidateNumber: '10', currentVotes: 20, projectedVotes: 40 }]
         },
         'cargo-uuid-2': {
+          officeId: 'cargo-uuid-2',
+          officeName: 'Conselheiro',
           hasProjection: true,
           status: 'ACTIVE',
           expectedReports: 10,
@@ -213,13 +217,224 @@ describe('PR 6 — Painel Público: Testes com Componente React Real Montado', (
       await new Promise(r => setTimeout(r, 100));
     });
 
-    const text = container.textContent || '';
-    // Ambos os candidatos aparecem em seus respectivos cargos
-    expect(text).toContain('CANDIDATO ALFA');
-    expect(text).toContain('CANDIDATO BETA');
-    expect(text).toContain('20');
-    expect(text).toContain('70');
-    expect(text).toContain('40'); // Projeção do cargo 1
-    expect(text).toContain('140'); // Projeção do cargo 2
+    const cards = container.querySelectorAll('.bg-white.rounded-2xl');
+    expect(cards.length).toBe(2);
+
+    // Card 1: Contém projeção 40, não contém 140
+    expect(cards[0].textContent).toContain('CANDIDATO ALFA');
+    expect(cards[0].textContent).toContain('≈ 40');
+    expect(cards[0].textContent).not.toContain('≈ 140');
+
+    // Card 2: Contém projeção 140, não contém 40
+    expect(cards[1].textContent).toContain('CANDIDATO BETA');
+    expect(cards[1].textContent).toContain('≈ 140');
+    expect(cards[1].textContent).not.toContain('≈ 40');
+  });
+
+  it('4. Se o cargo B não tiver projeção por ID, a interface NÃO reutiliza a projeção do cargo A pelo nome', async () => {
+    const mockData = {
+      isProvisional: false,
+      canonicalCoverageStatus: 'HOMOLOGATED',
+      coverageStatusLabel: 'Cobertura Homologada',
+      processedReports: 5,
+      expectedReports: 10,
+      election: {
+        id: 'elec-homonima-sem-proj',
+        name: 'Eleição com Cargos Homônimos',
+        plei: '3221',
+        scope: { municipality: { name: 'Concórdia' }, state: { uf: 'SC' } },
+        rounds: [{ roundNumber: 1, status: 'ACTIVE' }]
+      },
+      round: { roundNumber: 1, status: 'ACTIVE' },
+      offices: [
+        { id: 'cargo-uuid-1', name: 'Conselheiro', type: 'MAJORITARIO', orderNumber: 1 },
+        { id: 'cargo-uuid-2', name: 'Conselheiro', type: 'MAJORITARIO', orderNumber: 2 }
+      ],
+      totals: [
+        { officeId: 'cargo-uuid-1', officeName: 'Conselheiro', candidateNumber: '10', candidateName: 'CANDIDATO ALFA', quantity: 20, voteType: 'NOMINAL' },
+        { officeId: 'cargo-uuid-2', officeName: 'Conselheiro', candidateNumber: '10', candidateName: 'CANDIDATO BETA', quantity: 70, voteType: 'NOMINAL' }
+      ],
+      projections: {
+        // Apenas o cargo 1 possui projeção por ID
+        'cargo-uuid-1': {
+          officeId: 'cargo-uuid-1',
+          officeName: 'Conselheiro',
+          hasProjection: true,
+          status: 'ACTIVE',
+          expectedReports: 10,
+          processedReports: 5,
+          candidates: [{ candidateNumber: '10', currentVotes: 20, projectedVotes: 40 }]
+        },
+        // Mesmo se houver uma chave por nome 'Conselheiro' (alias de A), ela JAMAIS deve ser associada ao cargo 2
+        'Conselheiro': {
+          officeId: 'cargo-uuid-1',
+          officeName: 'Conselheiro',
+          hasProjection: true,
+          status: 'ACTIVE',
+          expectedReports: 10,
+          processedReports: 5,
+          candidates: [{ candidateNumber: '10', currentVotes: 20, projectedVotes: 40 }]
+        }
+      }
+    };
+
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/api/totals')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve(mockData)
+        } as any);
+      }
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(null) } as any);
+    });
+
+    await act(async () => {
+      root.render(<ApuracaoPage />);
+    });
+
+    await act(async () => {
+      await new Promise(r => setTimeout(r, 100));
+    });
+
+    const cards = container.querySelectorAll('.bg-white.rounded-2xl');
+    expect(cards.length).toBe(2);
+
+    // Card 1 (Cargo A): exibe projeção
+    expect(cards[0].textContent).toContain('CANDIDATO ALFA');
+    expect(cards[0].textContent).toContain('Projeção*');
+    expect(cards[0].textContent).toContain('≈ 40');
+
+    // Card 2 (Cargo B): NÃO possui projeção por ID
+    expect(cards[1].textContent).toContain('CANDIDATO BETA');
+    // Deve NÃO exibir Projeção*, NÃO exibir ≈ 40 e NÃO declarar vencedor indevidamente
+    expect(cards[1].textContent).not.toContain('Projeção*');
+    expect(cards[1].textContent).not.toContain('≈ 40');
+    expect(cards[1].textContent).not.toContain('Eleito');
+  });
+
+  it('5. Um nome único sem ID continua funcionando no caminho legado', async () => {
+    const mockData = {
+      isProvisional: false,
+      canonicalCoverageStatus: 'HOMOLOGATED',
+      coverageStatusLabel: 'Cobertura Homologada',
+      processedReports: 5,
+      expectedReports: 10,
+      election: {
+        id: 'elec-legado-nome-unico',
+        name: 'Eleição Legada',
+        plei: '3221',
+        scope: { municipality: { name: 'Concórdia' }, state: { uf: 'SC' } },
+        rounds: [{ roundNumber: 1, status: 'ACTIVE' }]
+      },
+      round: { roundNumber: 1, status: 'ACTIVE' },
+      // Objeto legado SEM id de cargo
+      offices: [
+        { name: 'Presidente', type: 'MAJORITARIO', orderNumber: 1 }
+      ],
+      totals: [
+        { officeName: 'Presidente', candidateNumber: '99', candidateName: 'CANDIDATO UNICO', quantity: 100, voteType: 'NOMINAL' }
+      ],
+      projections: {
+        'Presidente': {
+          officeName: 'Presidente',
+          hasProjection: true,
+          status: 'ACTIVE',
+          expectedReports: 10,
+          processedReports: 5,
+          candidates: [{ candidateNumber: '99', currentVotes: 100, projectedVotes: 200 }]
+        }
+      }
+    };
+
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/api/totals')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve(mockData)
+        } as any);
+      }
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(null) } as any);
+    });
+
+    await act(async () => {
+      root.render(<ApuracaoPage />);
+    });
+
+    await act(async () => {
+      await new Promise(r => setTimeout(r, 100));
+    });
+
+    const cards = container.querySelectorAll('.bg-white.rounded-2xl');
+    expect(cards.length).toBe(1);
+
+    expect(cards[0].textContent).toContain('CANDIDATO UNICO');
+    expect(cards[0].textContent).toContain('Projeção*');
+    expect(cards[0].textContent).toContain('≈ 200'); // Projeção carregada via nome único legado
+  });
+
+  it('6. Dois cargos homônimos sem ID no caminho legado recusam projeção ambígua', async () => {
+    const mockData = {
+      isProvisional: false,
+      canonicalCoverageStatus: 'HOMOLOGATED',
+      coverageStatusLabel: 'Cobertura Homologada',
+      processedReports: 5,
+      expectedReports: 10,
+      election: {
+        id: 'elec-legado-ambiguo',
+        name: 'Eleição Legada Ambígua',
+        plei: '3221',
+        scope: { municipality: { name: 'Concórdia' }, state: { uf: 'SC' } },
+        rounds: [{ roundNumber: 1, status: 'ACTIVE' }]
+      },
+      round: { roundNumber: 1, status: 'ACTIVE' },
+      // Dois cargos homônimos sem ID
+      offices: [
+        { name: 'Conselheiro', type: 'MAJORITARIO', orderNumber: 1 },
+        { name: 'Conselheiro', type: 'MAJORITARIO', orderNumber: 2 }
+      ],
+      totals: [
+        { officeName: 'Conselheiro', candidateNumber: '10', candidateName: 'CANDIDATO ALFA', quantity: 20, voteType: 'NOMINAL' }
+      ],
+      projections: {
+        'Conselheiro': {
+          officeName: 'Conselheiro',
+          hasProjection: true,
+          status: 'ACTIVE',
+          expectedReports: 10,
+          processedReports: 5,
+          candidates: [{ candidateNumber: '10', currentVotes: 20, projectedVotes: 40 }]
+        }
+      }
+    };
+
+    globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/api/totals')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve(mockData)
+        } as any);
+      }
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(null) } as any);
+    });
+
+    await act(async () => {
+      root.render(<ApuracaoPage />);
+    });
+
+    await act(async () => {
+      await new Promise(r => setTimeout(r, 100));
+    });
+
+    const cards = container.querySelectorAll('.bg-white.rounded-2xl');
+    expect(cards.length).toBe(2);
+
+    // Como ambos são homônimos sem ID, nenhum deve exibir Projeção*
+    expect(cards[0].textContent).not.toContain('Projeção*');
+    expect(cards[0].textContent).not.toContain('≈ 40');
+    expect(cards[1].textContent).not.toContain('Projeção*');
+    expect(cards[1].textContent).not.toContain('≈ 40');
   });
 });
