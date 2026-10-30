@@ -1,4 +1,5 @@
 export interface TotalItem {
+  officeId?: string;
   officeName: string;
   candidateNumber?: string | null;
   partyNumber?: string | null;
@@ -46,10 +47,68 @@ export interface LegendaDisplay {
 export function getOfficeDataAggregate(
   pleito: string | null | undefined,
   turno: number | null | undefined,
-  officeName: string,
-  allTotals: TotalItem[]
+  officeIdentifier: string | null | undefined,
+  allTotals: TotalItem[],
+  officeNameFallback?: string
 ) {
-  const officeVotes = allTotals.filter(t => t.officeName === officeName);
+  let officeVotes: TotalItem[] = [];
+  const hasExplicitNameFallback = typeof officeNameFallback === 'string' && officeNameFallback.trim().length > 0;
+  const hasIdentifier = typeof officeIdentifier === 'string' && officeIdentifier.trim().length > 0;
+  let displayOfficeName = (hasExplicitNameFallback ? officeNameFallback : '') || (hasIdentifier ? officeIdentifier! : '');
+
+  if (hasExplicitNameFallback && hasIdentifier && officeIdentifier !== officeNameFallback) {
+    // 1. Quando a chamada fornecer officeId explicitamente (ex: UI universal com officeId e officeName distintos):
+    // Filtra EXCLUSIVAMENTE por officeId. Se não houver votos com esse ID, permanece vazio sem recorrer ao nome!
+    officeVotes = allTotals.filter(t => t.officeId && t.officeId === officeIdentifier);
+    displayOfficeName = officeNameFallback!;
+  } else if (!hasIdentifier) {
+    // 2. Chamadas legadas que realmente não forneçam um ID (officeIdentifier nulo, indefinido ou vazio):
+    // Recorre ao nome fornecido em officeNameFallback, recusando agregação ambígua
+    const targetName = (hasExplicitNameFallback ? officeNameFallback : '') || '';
+    if (targetName) {
+      displayOfficeName = targetName;
+      const matchingItems = allTotals.filter(t => t.officeName === targetName);
+      const distinctOfficeIds = new Set(
+        matchingItems.map(t => t.officeId || t.officeName)
+      );
+      if (distinctOfficeIds.size === 1) {
+        officeVotes = matchingItems;
+      } else {
+        // Múltiplos cargos compartilham o mesmo nome sem identidade inequívoca (ou nenhum encontrado)
+        officeVotes = [];
+      }
+    } else {
+      officeVotes = [];
+    }
+  } else {
+    // 3. Apenas officeIdentifier fornecido (ou officeIdentifier === officeNameFallback):
+    const hasMatchingOfficeId = allTotals.some(t => t.officeId && t.officeId === officeIdentifier);
+    const hasMatchingOfficeName = allTotals.some(t => t.officeName === officeIdentifier);
+
+    if (hasMatchingOfficeId && !hasMatchingOfficeName) {
+      // Inequivocamente um officeId: filtra exclusivamente por esse ID sem fallback
+      officeVotes = allTotals.filter(t => t.officeId && t.officeId === officeIdentifier);
+      displayOfficeName = officeVotes[0]?.officeName || officeIdentifier!;
+    } else if (hasMatchingOfficeName) {
+      // Chamada legada por nome: só aceita se houver correspondência inequívoca
+      const targetName = officeIdentifier!;
+      displayOfficeName = targetName;
+      const matchingItems = allTotals.filter(t => t.officeName === targetName);
+      const distinctOfficeIds = new Set(
+        matchingItems.map(t => t.officeId || t.officeName)
+      );
+      if (distinctOfficeIds.size === 1) {
+        officeVotes = matchingItems;
+      } else {
+        // Múltiplos cargos homônimos sem identificador inequívoco: recusa agregação
+        officeVotes = [];
+      }
+    } else {
+      // Nenhum registro encontrado por officeId ou officeName
+      officeVotes = [];
+      displayOfficeName = officeIdentifier!;
+    }
+  }
   let totalGeral = 0;
   let validosNominais = 0;
   let validosLegenda = 0;
@@ -62,7 +121,7 @@ export function getOfficeDataAggregate(
   for (const v of officeVotes) {
     totalGeral += v.quantity;
     const hasResolvedName = Boolean(v.candidateName && v.candidateName.trim().length > 0);
-    const destiny = classifyVotePresentation(pleito, turno, officeName, v.voteType, v.candidateNumber, hasResolvedName);
+    const destiny = classifyVotePresentation(pleito, turno, displayOfficeName, v.voteType, v.candidateNumber, hasResolvedName);
     switch (destiny) {
       case 'BRANCO':
         brancos += v.quantity;
@@ -108,9 +167,9 @@ export function getOfficeDataAggregate(
         break;
     }
   }
-  const isT2Presidente = (String(turno) === '2' || turno === 2) && officeName === 'Presidente';
+  const isT2Presidente = (String(turno) === '2' || turno === 2) && displayOfficeName === 'Presidente';
   const candidates = Array.from(candidateMap.values())
-    .filter(c => c.quantity > 0 || isT2Presidente)
+    .filter(c => c.quantity > 0 || isT2Presidente || Boolean(c.candidateName && c.candidateName.trim().length > 0))
     .sort((a, b) => {
       const votesDiff = b.quantity - a.quantity;
       if (votesDiff !== 0) return votesDiff;
@@ -121,5 +180,5 @@ export function getOfficeDataAggregate(
   const legendas = Array.from(legendaMap.values())
     .filter(l => l.quantity > 0)
     .sort((a, b) => b.quantity - a.quantity);
-  return { candidates, legendas, brancos, nulos, nulosTecnicos, pendentes, totalValidos: validosNominais + validosLegenda, totalGeral };
+  return { candidates, legendas, brancos, nulos, nulosTecnicos, pendentes, totalValidos: validosNominais + validosLegenda, validosNominais, validosLegenda, totalGeral };
 }

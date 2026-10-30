@@ -21,7 +21,17 @@ export async function GET(req: Request) {
             { slug: electionParam }
           ]
         },
-        include: { rounds: true }
+        include: {
+          rounds: {
+            orderBy: { roundNumber: 'asc' }
+          },
+          scopes: {
+            include: {
+              state: true,
+              municipality: true
+            }
+          }
+        }
       });
       if (!found) {
         return NextResponse.json({ error: 'Eleição informada não encontrada.' }, {
@@ -33,10 +43,26 @@ export async function GET(req: Request) {
     } else {
       const activeElections = await prisma.election.findMany({ 
         where: { status: 'ACTIVE' },
-        include: { rounds: true }
+        include: {
+          rounds: {
+            orderBy: { roundNumber: 'asc' }
+          },
+          scopes: {
+            include: {
+              state: true,
+              municipality: true
+            }
+          }
+        }
       });
       if (activeElections.length === 0) {
-        return NextResponse.json({ processedReports: 0, expectedReports: 0, totals: [] }, {
+        return NextResponse.json({
+          processedReports: 0,
+          expectedReports: 0,
+          totals: [],
+          offices: [],
+          projections: {}
+        }, {
           headers: { 'Cache-Control': CACHE_CONTROL_HEADER }
         });
       }
@@ -66,7 +92,13 @@ export async function GET(req: Request) {
     } else {
       const activeRounds = election.rounds.filter(r => r.status === 'ACTIVE');
       if (activeRounds.length === 0) {
-        return NextResponse.json({ processedReports: 0, expectedReports: 0, totals: [] }, {
+        return NextResponse.json({
+          processedReports: 0,
+          expectedReports: 0,
+          totals: [],
+          offices: [],
+          projections: {}
+        }, {
           headers: { 'Cache-Control': CACHE_CONTROL_HEADER }
         });
       }
@@ -79,7 +111,7 @@ export async function GET(req: Request) {
       targetRound = activeRounds[0];
     }
 
-    // EIXO A: Elegibilidade Positiva Estrita para o turno consultado
+    // Elegibilidade estrita de seções para o turno consultado
     const eligibleCoverages = await prisma.roundCoverage.findMany({
       where: {
         electionRoundId: targetRound.id,
@@ -131,24 +163,50 @@ export async function GET(req: Request) {
 
     const coverageCount = eligibleCoverages.length;
     
+    // Denominador derivado exclusivamente de RoundCoverage.expectedBUs pré-configurados
     const expectedAgg = await prisma.roundCoverage.aggregate({
       where: { 
         electionRoundId: targetRound.id,
-        expectedBUs: { gt: 0 }
+        expectedBUs: { gt: 0 },
+        OR: [
+          { notes: null },
+          { notes: { not: 'DYNAMIC_SECTION' } }
+        ]
       },
       _sum: { expectedBUs: true }
     });
     const expectedBUsCount = expectedAgg._sum.expectedBUs || 0;
 
-    // Definição de status de cobertura:
-    // Round 1: Confirmada se possuir cobertura configurada
-    // Round 2: Confirmada apenas quando possuir malha oficial homologada (>= 190 seções com soma expectedBUs >= 193)
-    // Demais casos em turnos subsequentes operam em regime de cobertura provisória dinâmica
-    const isRound1 = targetRound.roundNumber === 1;
-    const isOfficialT2 = targetRound.roundNumber === 2 && coverageCount >= 190 && expectedBUsCount >= 193;
-    const isProvisional = targetRound.roundNumber >= 2 && !isOfficialT2;
-    const coverageConfigured = isRound1 ? coverageCount > 0 : isOfficialT2;
-    const coverageStatus = isProvisional ? 'PROVISORIA' : 'CONFIRMADA';
+    // Status canônico estrito derivado exclusivamente do que está persistido no banco
+    const canonicalCoverageStatus = targetRound.coverageStatus || 'PROVISIONAL';
+    let isProvisional = false;
+    let coverageConfigured = false;
+    let coverageStatus = 'PROVISORIA';
+    let coverageStatusLabel = 'Cobertura Provisória';
+
+    if (canonicalCoverageStatus === 'HOMOLOGATED') {
+      isProvisional = false;
+      coverageConfigured = coverageCount > 0 || expectedBUsCount > 0;
+      coverageStatus = 'CONFIRMADA';
+      coverageStatusLabel = 'Cobertura Homologada';
+    } else if (canonicalCoverageStatus === 'REGISTERED') {
+      isProvisional = false;
+      coverageConfigured = coverageCount > 0 || expectedBUsCount > 0;
+      coverageStatus = 'CONFIRMADA';
+      coverageStatusLabel = 'Cobertura Cadastrada';
+    } else if (canonicalCoverageStatus === 'UNCONFIGURED') {
+      isProvisional = false;
+      coverageConfigured = false;
+      coverageStatus = 'NAO_CONFIGURADA';
+      coverageStatusLabel = 'Não Configurada';
+    } else {
+      // canonicalCoverageStatus === 'PROVISIONAL'
+      // Permanece ESTRITAMENTE provisória, independentemente da quantidade de seções ou BUs
+      isProvisional = true;
+      coverageConfigured = false;
+      coverageStatus = 'PROVISORIA';
+      coverageStatusLabel = 'Cobertura Provisória';
+    }
 
     const receivedReportsCount = await prisma.ballotReport.count({
       where: {
@@ -170,12 +228,11 @@ export async function GET(req: Request) {
       isSimulation: false
     };
 
-    // Para cobertura confirmada, aplica filtro estrito de elegibilidade por seção
+    // Para cobertura confirmada, aplica filtro estrito de seções elegíveis
     if (!isProvisional && eligibleConditions.length > 0) {
       baseReportFilter.OR = eligibleConditions;
     }
 
-    // Apenas busca totais se a cobertura estiver configurada OU se estiver em regime provisório com relatórios recebidos
     if (coverageConfigured || (isProvisional && receivedReportsCount > 0)) {
       processedReportsCount = await prisma.ballotReport.count({
         where: baseReportFilter
@@ -194,71 +251,134 @@ export async function GET(req: Request) {
       }
     }
 
+    // Busca exclusivamente os cargos e candidatos da eleição consultada
     const offices = await prisma.office.findMany({
-      where: { electionId: election.id }
+      where: { electionId: election.id },
+      include: {
+        candidates: {
+          where: { isActive: true },
+          include: { party: true },
+          orderBy: { candidateNumber: 'asc' }
+        }
+      },
+      orderBy: { orderNumber: 'asc' }
     });
     const officeMap = Object.fromEntries(offices.map(o => [o.id, o.name]));
     
-    // Configura o resolver
+    // Escopo territorial da eleição: NUNCA assumir 'SC' arbitrariamente
+    const primaryScope = election.scopes && election.scopes.length > 0 ? election.scopes[0] : null;
+    const explicitStateAbbr = primaryScope?.state?.abbreviation || election.scopes?.find(s => s.state)?.state?.abbreviation || null;
+
+    // CandidateResolver para resolução de metadados TSE oficiais
     const { CandidateResolver } = await import('@/lib/metadata/CandidateResolver');
     const resolver = new CandidateResolver();
-    await resolver.load(election.year, targetRound.roundNumber);
+    if (election.year && targetRound.roundNumber) {
+      await resolver.load(election.year, targetRound.roundNumber);
+    }
 
     const { OFFICE_NAME_TO_CODE } = await import('@/lib/metadata/voteEnricher');
 
-    const totals = rawTotals.map(t => {
-      const officeName = officeMap[t.officeId] || t.officeId;
-      const officeCode = OFFICE_NAME_TO_CODE[officeName];
+    const totals: any[] = [];
+
+    // 1. Processa votos apurados associando aos candidatos da própria eleição
+    for (const t of rawTotals) {
+      const officeObj = offices.find(o => o.id === t.officeId);
+      const officeName = officeObj?.name || officeMap[t.officeId] || t.officeId;
+      const officeCode = officeObj?.code || OFFICE_NAME_TO_CODE[officeName];
       let metadata: { status: string; candidateName?: string; partyAbbreviation?: string; partyNumber?: string } = { status: 'NOT_FOUND' };
 
-      if (officeCode) {
-        const stateContext = officeCode === '1' ? 'BR' : 'SC';
-        if (t.voteType === 'NOMINAL' && t.candidateNumber) {
-          metadata = resolver.resolveNominal(election.year, targetRound.roundNumber, stateContext, officeCode, t.candidateNumber);
-        } else if (t.voteType === 'LEGENDA' && t.partyNumber) {
-          metadata = resolver.resolveLegenda(election.year, targetRound.roundNumber, stateContext, officeCode, t.partyNumber);
+      // Prioridade absoluta: candidato formalmente cadastrado na eleição
+      const registeredCand = officeObj?.candidates?.find(c => c.candidateNumber === t.candidateNumber);
+      if (registeredCand) {
+        metadata = {
+          status: 'REGISTERED',
+          candidateName: registeredCand.ballotName || registeredCand.name,
+          partyAbbreviation: registeredCand.party?.abbreviation || '',
+          partyNumber: registeredCand.party?.officialIdentifier || (registeredCand.candidateNumber.length >= 2 ? registeredCand.candidateNumber.slice(0, 2) : '')
+        };
+      } else if (officeCode) {
+        // Resolução de metadados externos: somente se houver contexto de UF explícito
+        const stateContext = officeCode === '1' ? 'BR' : explicitStateAbbr;
+        if (stateContext) {
+          if (t.voteType === 'NOMINAL' && t.candidateNumber) {
+            metadata = resolver.resolveNominal(election.year, targetRound.roundNumber, stateContext, officeCode, t.candidateNumber);
+          } else if (t.voteType === 'LEGENDA' && t.partyNumber) {
+            metadata = resolver.resolveLegenda(election.year, targetRound.roundNumber, stateContext, officeCode, t.partyNumber);
+          }
         }
       }
 
-      return {
+      totals.push({
+        officeId: t.officeId,
         officeName,
         candidateNumber: t.candidateNumber,
-        partyNumber: t.partyNumber,
+        partyNumber: t.partyNumber || metadata.partyNumber,
         voteType: t.voteType,
         quantity: t._sum.quantity || 0,
         metadataStatus: metadata.status,
         candidateName: metadata.candidateName,
         partyAbbreviation: metadata.partyAbbreviation
-      };
-    });
-
-    if (targetRound.roundNumber === 2) {
-      const t2Candidates = await prisma.candidateMetadata.findMany({
-        where: {
-          electionYear: election.year,
-          round: 2,
-          officeCode: '1'
-        },
-        orderBy: { candidateNumber: 'asc' }
       });
+    }
 
-      for (const c of t2Candidates) {
-        const exists = totals.some(t => t.officeName === 'Presidente' && t.candidateNumber === c.candidateNumber);
-        if (!exists) {
+    // 2. Garante a inclusão de candidatos cadastrados na própria eleição desde zero votos
+    for (const office of offices) {
+      for (const cand of office.candidates) {
+        const alreadyInTotals = totals.some(
+          t => t.officeId === office.id && t.candidateNumber === cand.candidateNumber && t.voteType === 'NOMINAL'
+        );
+        if (!alreadyInTotals) {
           totals.push({
-            officeName: 'Presidente',
-            candidateNumber: c.candidateNumber,
-            partyNumber: c.partyNumber,
+            officeId: office.id,
+            officeName: office.name,
+            candidateNumber: cand.candidateNumber,
+            partyNumber: cand.party?.officialIdentifier || (cand.candidateNumber.length >= 2 ? cand.candidateNumber.slice(0, 2) : ''),
             voteType: 'NOMINAL',
             quantity: 0,
             metadataStatus: 'OFFICIAL',
-            candidateName: c.ballotName,
-            partyAbbreviation: c.partyAbbreviation
+            candidateName: cand.ballotName || cand.name,
+            partyAbbreviation: cand.party?.abbreviation || ''
           });
         }
       }
     }
 
+    // 3. Compatibilidade histórica estrita com o pleito legado 2026 T2 (plei 3221)
+    // SOMENTE injeta se a eleição for comprovadamente o pleito legado 2026 T2 E o cargo Presidente estiver desprovido de candidatos próprios
+    const isLegacy2026T2 = targetRound.plei === '3221' && election.year === 2026;
+    if (isLegacy2026T2) {
+      const presOffice = offices.find(o => o.code === '1' || o.name === 'Presidente');
+      if (presOffice && presOffice.candidates.length === 0) {
+        const legacyCandidates = await prisma.candidateMetadata.findMany({
+          where: {
+            electionYear: 2026,
+            electionCode: '6258',
+            round: 2,
+            officeCode: '1'
+          },
+          orderBy: { candidateNumber: 'asc' }
+        });
+
+        for (const c of legacyCandidates) {
+          const exists = totals.some(t => t.officeId === presOffice.id && t.candidateNumber === c.candidateNumber && t.voteType === 'NOMINAL');
+          if (!exists) {
+            totals.push({
+              officeId: presOffice.id,
+              officeName: presOffice.name,
+              candidateNumber: c.candidateNumber,
+              partyNumber: c.partyNumber,
+              voteType: 'NOMINAL',
+              quantity: 0,
+              metadataStatus: 'OFFICIAL',
+              candidateName: c.ballotName,
+              partyAbbreviation: c.partyAbbreviation
+            });
+          }
+        }
+      }
+    }
+
+    // Preserva dados de comparecimento dos BUs confirmados
     let attendance: {
       eligible: number;
       turnout: number;
@@ -328,27 +448,151 @@ export async function GET(req: Request) {
       };
     }
 
+    // Projeções Matemáticas por Cargo: Identificadas canonicamente por officeId
+    const projections: Record<string, any> = {};
+
+    // Mapeamento de contagem por nome para garantir compatibilidade legada exclusivamente com correspondência inequívoca
+    const officeNameCounts = new Map<string, number>();
+    for (const off of offices) {
+      if (off.name) {
+        officeNameCounts.set(off.name, (officeNameCounts.get(off.name) || 0) + 1);
+      }
+    }
+
+    for (const office of offices) {
+      let projObj: any;
+
+      if (office.type !== 'MAJORITARIO') {
+        projObj = {
+          officeId: office.id,
+          officeName: office.name,
+          hasProjection: false,
+          status: 'UNAVAILABLE',
+          reason: 'PROPORTIONAL_NOT_ALLOWED',
+          message: 'Projeção matemática indisponível para cargos proporcionais.'
+        };
+      } else if (expectedBUsCount <= 0) {
+        projObj = {
+          officeId: office.id,
+          officeName: office.name,
+          hasProjection: false,
+          status: 'UNAVAILABLE',
+          reason: 'DENOMINATOR_UNAVAILABLE',
+          message: 'Projeção indisponível: cobertura sem total de urnas esperado definido.'
+        };
+      } else if (processedReportsCount === 0) {
+        projObj = {
+          officeId: office.id,
+          officeName: office.name,
+          hasProjection: false,
+          status: 'UNAVAILABLE',
+          reason: 'WAITING_FIRST_BU',
+          message: 'Aguardando confirmação dos primeiros Boletins de Urna.'
+        };
+      } else {
+        // Agrupa estritamente pelo officeId do cargo!
+        const officeNominals = totals.filter(t => t.officeId === office.id && t.voteType === 'NOMINAL');
+        const isCompleted = processedReportsCount >= expectedBUsCount;
+
+        const projectedCandidates = officeNominals.map(c => {
+          const v = c.quantity || 0;
+          const proj = isCompleted ? v : Math.round((v * expectedBUsCount) / processedReportsCount);
+          return {
+            candidateNumber: c.candidateNumber,
+            candidateName: c.candidateName,
+            partyAbbreviation: c.partyAbbreviation,
+            currentVotes: v,
+            projectedVotes: proj
+          };
+        });
+
+        const totalProjValid = projectedCandidates.reduce((acc, c) => acc + c.projectedVotes, 0);
+
+        projObj = {
+          officeId: office.id,
+          officeName: office.name,
+          hasProjection: true,
+          status: isCompleted ? 'COMPLETED' : 'ACTIVE',
+          method: 'LINEAR_PROPORTIONAL',
+          isProvisional,
+          expectedReports: expectedBUsCount,
+          processedReports: processedReportsCount,
+          coveragePercent: Number(((processedReportsCount / expectedBUsCount) * 100).toFixed(2)),
+          projectedValidVotes: totalProjValid,
+          candidates: projectedCandidates.map(c => ({
+            ...c,
+            projectedPercent: totalProjValid > 0 ? ((c.projectedVotes / totalProjValid) * 100).toFixed(2).replace('.', ',') : '0,00'
+          })),
+          disclaimer: 'Estimativa matemática proporcional às urnas apuradas. Não representa resultado oficial do TSE nem declaração definitiva de vencedor.'
+        };
+      }
+
+      // 1. Identificação canônica estrita: sempre por office.id
+      projections[office.id] = projObj;
+
+      // 2. Compatibilidade legada com correspondência inequívoca:
+      // Cria alias por nome SOMENTE se o nome identificar um único cargo na eleição (sem homônimos).
+      // Se houver dois ou mais cargos com o mesmo nome, NENHUM alias por nome é criado.
+      if (office.name && officeNameCounts.get(office.name) === 1) {
+        projections[office.name] = projObj;
+      }
+    }
+
+    // Compatibilidade histórica: apenas na eleição 2026 plei 3221 provisória
+    const estimatedReferenceBUs = (isProvisional && isLegacy2026T2) ? 193 : null;
+
     return NextResponse.json({
       coverageConfigured,
       coverageStatus,
+      canonicalCoverageStatus,
+      coverageStatusLabel,
       isProvisional,
       receivedReports: receivedReportsCount,
       processedReports: processedReportsCount,
-      expectedReports: isProvisional ? 0 : expectedBUsCount,
-      officialExpectedReports: isProvisional ? null : expectedBUsCount,
-      estimatedReferenceBUs: isProvisional ? 193 : null,
+      expectedReports: expectedBUsCount,
+      registeredExpectedReports: expectedBUsCount,
+      officialExpectedReports: (canonicalCoverageStatus === 'HOMOLOGATED' || canonicalCoverageStatus === 'REGISTERED') ? expectedBUsCount : null,
+      estimatedReferenceBUs,
       dynamicallyRegisteredSections: dynamicSectionsCount,
       attendance,
       totals,
+      projections,
+      offices: offices.map(o => ({
+        id: o.id,
+        code: o.code,
+        name: o.name,
+        type: o.type,
+        orderNumber: o.orderNumber
+      })),
       election: {
-        plei: targetRound.plei,
+        id: election.id,
+        slug: election.slug,
+        plei: targetRound.plei || election.plei,
         year: election.year,
         name: election.name,
-        rounds: election.rounds.map(r => ({ roundNumber: r.roundNumber, status: r.status }))
+        type: election.type,
+        scope: primaryScope ? {
+          type: primaryScope.scopeType,
+          key: primaryScope.scopeKey,
+          state: primaryScope.state ? { name: primaryScope.state.name, uf: primaryScope.state.abbreviation } : null,
+          municipality: primaryScope.municipality ? { name: primaryScope.municipality.name, code: primaryScope.municipality.officialCode } : null
+        } : null,
+        rounds: election.rounds.map(r => ({
+          id: r.id,
+          roundNumber: r.roundNumber,
+          status: r.status,
+          coverageStatus: r.coverageStatus
+        }))
       },
       round: {
+        id: targetRound.id,
         roundNumber: targetRound.roundNumber,
-        status: targetRound.status
+        status: targetRound.status,
+        coverageStatus: targetRound.coverageStatus,
+        coverageOrigin: targetRound.coverageOrigin,
+        coverageHomologatedAt: targetRound.coverageHomologatedAt,
+        coverageHomologatedBy: targetRound.coverageHomologatedBy,
+        coverageEvidenceNotes: targetRound.coverageEvidenceNotes
       }
     }, {
       headers: {

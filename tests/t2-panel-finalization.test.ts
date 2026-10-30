@@ -107,7 +107,8 @@ describe('Eleições 2026 — Segundo Turno: Ajustes Finais do Painel Público (
         electionId: election.id,
         roundNumber: 1,
         plei: '3220',
-        status: 'FINISHED'
+        status: 'FINISHED',
+        coverageStatus: 'REGISTERED'
       }
     });
     round1Id = round1.id;

@@ -833,7 +833,9 @@ describe('AUDITORIA TÉCNICA FINAL PRÉ-ELEIÇÃO — T2 2026 (CONCÓRDIA/SC)', 
 
       // Confirma que foram processadas 195 seções (> 193)
       expect(totData.processedReports).toBe(195);
-      expect(totData.coverageStatus).toBe('CONFIRMADA');
+      // Status canônico estrito: mesmo com 195 seções, cobertura não-homologada permanece provisória
+      expect(totData.coverageStatus).toBe('PROVISORIA');
+      expect(totData.isProvisional).toBe(true);
 
       const lula = totData.totals.find((t: any) => t.candidateNumber === '13');
       const flavio = totData.totals.find((t: any) => t.candidateNumber === '22');
