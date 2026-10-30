@@ -68,7 +68,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     await prisma.$transaction(async (tx) => {
       await tx.ballotReport.update({
         where: { id: report.id },
-        data: { status: 'PROCESSADO' }
+        data: {
+          status: 'PROCESSADO',
+          confirmedAt: new Date()
+        }
       });
 
       await tx.auditLog.create({

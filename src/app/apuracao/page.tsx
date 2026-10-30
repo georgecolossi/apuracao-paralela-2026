@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState, useMemo } from 'react';
-import { Activity, Archive, ShieldCheck, AlertCircle, RefreshCw, ChevronDown, ChevronUp, Layers, CheckCircle2 } from 'lucide-react';
+import Link from 'next/link';
+import { Activity, Archive, ShieldCheck, AlertCircle, RefreshCw, ChevronDown, ChevronUp, Layers, CheckCircle2, Radio } from 'lucide-react';
 import { getOfficeDataAggregate } from '@/lib/presentation/apuracaoHelper';
 
 function OfficeResultCard({
@@ -588,25 +589,36 @@ export default function ApuracaoDashboard() {
             </p>
           </div>
 
-          {/* Seletor Dinâmico de Turnos */}
-          <div className="flex gap-2 bg-slate-800 p-1 rounded-lg border border-slate-700 self-start md:self-auto">
-            {rounds.map((r: any) => (
-              <button 
-                key={r.roundNumber}
-                onClick={() => setRound(r.roundNumber)} 
-                className={`px-4 py-1.5 rounded-md font-black text-xs transition-colors uppercase tracking-widest flex items-center gap-1.5 ${
-                  round === r.roundNumber ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                <span>{r.roundNumber}º Turno</span>
-                {r.status === 'ACTIVE' && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" title="Turno Ativo" />
-                )}
-                {r.status === 'FINISHED' && (
-                  <span title="Turno Encerrado"><CheckCircle2 className="w-3 h-3 text-slate-400" /></span>
-                )}
-              </button>
-            ))}
+          {/* Seletor Dinâmico de Turnos + Navegação Imprensa */}
+          <div className="flex items-center gap-2 flex-wrap self-start md:self-auto">
+            <div className="flex gap-2 bg-slate-800 p-1 rounded-lg border border-slate-700">
+              {rounds.map((r: any) => (
+                <button 
+                  key={r.roundNumber}
+                  onClick={() => setRound(r.roundNumber)} 
+                  className={`px-4 py-1.5 rounded-md font-black text-xs transition-colors uppercase tracking-widest flex items-center gap-1.5 ${
+                    round === r.roundNumber ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <span>{r.roundNumber}º Turno</span>
+                  {r.status === 'ACTIVE' && (
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" title="Turno Ativo" />
+                  )}
+                  {r.status === 'FINISHED' && (
+                    <span title="Turno Encerrado"><CheckCircle2 className="w-3 h-3 text-slate-400" /></span>
+                  )}
+                </button>
+              ))}
+            </div>
+
+            <Link
+              href="/imprensa"
+              className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-indigo-300 hover:text-white rounded-lg border border-slate-700 text-xs font-black uppercase tracking-wider transition-colors shadow-sm"
+              title="Acessar feed de últimas urnas apuradas e locução para rádio"
+            >
+              <Radio className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+              <span>Últimas Urnas</span>
+            </Link>
           </div>
         </div>
       </header>
