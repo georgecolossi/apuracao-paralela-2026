@@ -38,8 +38,10 @@ O **PR 7** entrega o módulo público **"Últimas Urnas Apuradas — Imprensa e 
 ### 2.2. Paginação Estável por Keyset Cursor (`urnaCursor.ts`)
 
 - **Estrutura Base64URL:** O cursor codifica exclusivamente o payload `{ e, r, z, s, c, t, i }` em formato `base64url`. Trata-se de um token estruturado com validação estrita de schema e context binding, e não de um token assinado ou criptograficamente selado.
-- **Avaliação de Risco e Ausência de HMAC:** Como o endpoint `/api/urnas` é público e exclusivamente de leitura, os filtros de segurança essenciais são garantidos pelo servidor na cláusula `WHERE` do Prisma (`electionId = activeElection`, `roundId = activeRound`, `status = 'PROCESSADO'`, `isSimulation = false`). Manipular os campos escalares `c`, `t` ou `i` do cursor altera unicamente os limites da paginação (`confirmedAt < c OR ...`), sem qualquer possibilidade de acessar dados de outras eleições, boletins não homologados, relatórios de simulação ou executar injeção SQL. Portanto, a ausência de HMAC/assinatura é uma decisão técnica fundamentada que elimina overhead de gerenciamento de chaves secretas sem criar brechas de segurança.
-- **Context Binding:** A validação confere se a eleição (`e`), turno (`r`), filtro de zona (`z`) e seção (`s`) coincidem estritamente com os parâmetros da requisição atual. Em caso de divergência, a requisição é rejeitada com HTTP 400 (`CURSOR_CONTEXT_MISMATCH`).
+- **Filtros de Segurança e Seleção de Eleições:** Como o endpoint `/api/urnas` é público e exclusivamente de leitura, os filtros de segurança essenciais são garantidos pelo servidor na cláusula `WHERE` do Prisma (`electionId = resolvedElection.id`, `roundId = resolvedRound.id`, `status = 'PROCESSADO'`, `isSimulation = false`). A resolução de contexto opera da seguinte forma:
+  - *Comportamento Padrão (Sem Parâmetros):* Seleciona a eleição ativa (`status = 'ACTIVE'`) e o turno ativo (`status = 'ACTIVE'`). Caso haja múltiplas ativas ou nenhuma, retorna código apropriado sem erro 500.
+  - *Seleção Explícita de Eleição e Turno:* Em harmonia com a arquitetura multi-eleição do projeto (idêntica a `/api/totals` e `/apuracao`), o chamador pode especificar `?election=<id_ou_slug>` e/ou `?round=<1_ou_2>`, permitindo consultar eleições ativas ou concluídas/históricas (`status = 'FINISHED'` ou `ARCHIVED`). A exposição pública de BUs processados de eleições anteriores é intencional e decorre do compromisso de transparência e auditoria cívica permanente da plataforma.
+- **Avaliação de Risco e Ausência de HMAC:** Como o endpoint valida o cursor contra o contexto da requisição atual (*Context Binding*), o cliente não consegue reutilizar um cursor emitido para outra eleição ou turno (`parsed.e !== currentContext.electionId || parsed.r !== currentContext.roundId` provoca rejeição imediata com HTTP 400 `CURSOR_CONTEXT_MISMATCH`). Manipular os campos escalares `c`, `t` ou `i` altera unicamente as balizas da paginação keyset (`confirmedAt < c OR ...`), sem qualquer possibilidade de acessar dados de outras eleições, boletins não homologados (`PENDENTE_CONFIRMACAO`), relatórios de simulação (`isSimulation = true`) ou executar injeção SQL (assegurada pelo Prisma). A ausência de HMAC/assinatura é, portanto, uma decisão técnica fundamentada que dispensa gestão e rotação de chaves sem comprometer a segurança.
 - **Validação Estrutural Estrita:** Tokens com chaves extras, tamanho superior a 512 bytes, formato Base64URL irregular, timestamps ISO-8601 malformados ou códigos territoriais não canônicos são rejeitados com HTTP 400 sob política *fail-closed*.
 - **Semântica Concorrente do Keyset:**
   - *Inserções Concorrentes:* Novos boletins que ingressam no topo do feed com `confirmedAt` mais recente não provocam deslocamento de página (*offset drift*) nem causam repetição de itens para leitores paginando com cursor anterior.
@@ -88,12 +90,12 @@ Em `src/app/api/urnas/route.ts`, as tríades territoriais `(cityCode, zoneCode, 
 | `src/app/imprensa/page.tsx` | Criado | Página pública `/imprensa` com header, navegação e footer. |
 | `src/app/apuracao/page.tsx` | Modificado | Adicionado botão de navegação direta para `/imprensa` no header. |
 | `tests/pr7-radio-script.test.ts` | Criado | Testes unitários do gerador de rádio, validadores e cursor (17 testes). |
-| `tests/pr7-urnas-feed.test.ts` | Criado | Matriz completa de integração PAG-01 a PAG-30 e cache headers (31 testes). |
+| `tests/pr7-urnas-feed.test.ts` | Criado | Matriz completa de integração PAG-01 a PAG-36 e cache headers (37 testes). |
 | `tests/pr7-press-component.test.tsx` | Criado | Testes com componentes React reais montados em Happy-DOM (7 testes). |
 
 ---
 
-## 4. Matriz de Testes da Paginação por Keyset (PAG-01 a PAG-30)
+## 4. Matriz de Testes da Paginação por Keyset (PAG-01 a PAG-36)
 
 | Código | Descrição do Caso de Teste | Status |
 | :---: | :--- | :---: |
@@ -132,6 +134,7 @@ Em `src/app/api/urnas/route.ts`, as tríades territoriais `(cityCode, zoneCode, 
 | **PAG-33** | Parâmetro `?limit=0` ou negativo é rejeitado com HTTP 400 (`PARAMETRO_INVALIDO`). | **Aprovado** |
 | **PAG-34** | Compatibilidade territorial: busca por zona/seção localiza variantes com e sem zeros à esquerda (`9`, `09`, `0009` / `42`, `0042`). | **Aprovado** |
 | **PAG-35** | Compatibilidade territorial no detalhe `/api/urnas/[id]`: resolve município e seção para dados importados com variantes de padding. | **Aprovado** |
+| **PAG-36** | Permite consultar BUs de eleição e turno concluídos (`status = 'FINISHED'`) quando explicitamente solicitados, mantendo isolamento estrito. | **Aprovado** |
 
 ---
 

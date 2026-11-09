@@ -971,6 +971,90 @@ describe('PR 7 — Feed de Últimas Urnas e Paginação por Keyset Cursor (PAG-0
     await prisma.ballotReport.delete({ where: { id: repDetailVariant.id } });
   });
 
+  // PAG-36: Consulta pública de eleição e turno concluídos/históricos (status = 'FINISHED')
+  it('PAG-36: Permite consultar BUs de eleição e turno concluídos (FINISHED) quando explicitamente solicitados, mantendo isolamento', async () => {
+    // 1. Cria uma eleição finalizada com turno finalizado
+    const electionHist = await prisma.election.create({
+      data: {
+        name: 'Eleição Histórica 2024',
+        year: 2024,
+        type: 'MUNICIPAL',
+        status: 'FINISHED',
+        slug: 'eleicao-historica-2024',
+        rounds: {
+          create: { roundNumber: 1, status: 'FINISHED', coverageStatus: 'HOMOLOGATED' }
+        }
+      },
+      include: { rounds: true }
+    });
+    const roundHist = electionHist.rounds[0];
+
+    // 2. Cria um BU homologado (PROCESSADO) nessa eleição histórica
+    const repHist = await prisma.ballotReport.create({
+      data: {
+        deterministicId: 'det-hist-concluded',
+        electionId: electionHist.id,
+        roundId: roundHist.id,
+        stateCode: 'SC',
+        cityCode: '80837',
+        zoneCode: '9',
+        sectionCode: '42',
+        urnCode: '6661',
+        status: 'PROCESSADO',
+        isSimulation: false,
+        confirmedAt: new Date('2024-10-06T18:00:00.000Z'),
+        createdAt: new Date('2024-10-06T18:00:00.000Z')
+      }
+    });
+
+    // 3. Consulta padrão (sem ?election) retorna apenas a eleição ativa (não vaza o histórico)
+    const reqDefault = new Request('http://localhost:3000/api/urnas?round=1');
+    const resDefault = await urnasFeedRoute(reqDefault);
+    expect(resDefault.status).toBe(200);
+    const jsonDefault = await resDefault.json();
+    expect(jsonDefault.items.map((i: any) => i.id)).not.toContain(repHist.id);
+
+    // 4. Consulta explícita por slug (?election=eleicao-historica-2024&round=1) retorna o BU histórico
+    const reqExplicit = new Request(`http://localhost:3000/api/urnas?election=eleicao-historica-2024&round=1`);
+    const resExplicit = await urnasFeedRoute(reqExplicit);
+    expect(resExplicit.status).toBe(200);
+    const jsonExplicit = await resExplicit.json();
+    expect(jsonExplicit.context.election.name).toBe('Eleição Histórica 2024');
+    expect(jsonExplicit.items.map((i: any) => i.id)).toContain(repHist.id);
+
+    // 5. Consulta de detalhe /api/urnas/[id] do BU histórico é pública e acessível
+    const reqDetail = new Request(`http://localhost:3000/api/urnas/${repHist.id}`);
+    const resDetail = await urnaDetailRoute(reqDetail, { params: Promise.resolve({ id: repHist.id }) });
+    expect(resDetail.status).toBe(200);
+    const jsonDetail = await resDetail.json();
+    expect(jsonDetail.id).toBe(repHist.id);
+    expect(jsonDetail.context.election.name).toBe('Eleição Histórica 2024');
+
+    // 6. Context binding: cursor gerado para a eleição histórica não pode ser reutilizado na eleição ativa
+    const cursorHist = encodeUrnaCursor(
+      repHist.confirmedAt,
+      repHist.createdAt,
+      repHist.id,
+      {
+        electionId: electionHist.id,
+        roundId: roundHist.id,
+        zoneFilter: null,
+        sectionFilter: null
+      }
+    );
+
+    const reqMismatch = new Request(`http://localhost:3000/api/urnas?round=1&cursor=${cursorHist}`);
+    const resMismatch = await urnasFeedRoute(reqMismatch);
+    expect(resMismatch.status).toBe(400);
+    const jsonMismatch = await resMismatch.json();
+    expect(jsonMismatch.error).toBe('CURSOR_CONTEXT_MISMATCH');
+
+    // Limpeza
+    await prisma.ballotReport.delete({ where: { id: repHist.id } });
+    await prisma.electionRound.delete({ where: { id: roundHist.id } });
+    await prisma.election.delete({ where: { id: electionHist.id } });
+  });
+
   // Bônus: Verificação de Cabeçalhos HTTP de Cache
   it('Retorna cabeçalho Cache-Control adequado para feed público', async () => {
     const req = new Request('http://localhost:3000/api/urnas?round=1');
