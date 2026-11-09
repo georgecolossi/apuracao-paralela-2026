@@ -49,7 +49,8 @@ function isValidCanonicalIsoDate(str: string): boolean {
 }
 
 /**
- * Codificação determinística do cursor de paginação.
+ * Codificação determinística do cursor de paginação em formato Base64URL.
+ * O cursor encapsula escalares de ordenação e contexto da consulta.
  */
 export function encodeUrnaCursor(
   confirmedAt: Date | null,
@@ -71,7 +72,8 @@ export function encodeUrnaCursor(
 }
 
 /**
- * Validação rigorosa e decodificação do cursor contra o contexto da requisição atual.
+ * Validação estrutural rigorosa e decodificação do cursor contra o contexto da requisição atual.
+ * Implementa context binding (e, r, z, s) e validação de limites/tipos.
  */
 export function validateAndDecodeCursor(
   cursorToken: string,
@@ -106,7 +108,7 @@ export function validateAndDecodeCursor(
     };
   }
 
-  // 2. Rejeição de Propriedades Inesperadas (Object Sealing)
+  // 2. Validação Estrutural Estrita de Propriedades (Rejeição de propriedades extras ou ausentes)
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     return {
       valid: false,

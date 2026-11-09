@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { generateRadioScript } from '@/lib/presentation/radioScriptGenerator';
 import { UrnaDetailDTO, OfficeVotesDTO, CandidateVoteDTO, PartyVoteDTO } from '@/lib/presentation/pressDto';
+import { getTerritoryVariants } from '@/lib/presentation/territoryValidator';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -56,8 +57,8 @@ export async function GET(
     }
 
     // Resolução Territorial Estrita por Tríade (cityCode + zoneCode + sectionCode)
-    const sVariants = Array.from(new Set([report.sectionCode, report.sectionCode.padStart(4, '0'), String(parseInt(report.sectionCode, 10) || report.sectionCode)]));
-    const zVariants = Array.from(new Set([report.zoneCode, report.zoneCode.padStart(4, '0'), String(parseInt(report.zoneCode, 10) || report.zoneCode)]));
+    const sVariants = getTerritoryVariants(report.sectionCode);
+    const zVariants = getTerritoryVariants(report.zoneCode);
 
     const sectionInDB = await prisma.pollingSection.findFirst({
       where: {

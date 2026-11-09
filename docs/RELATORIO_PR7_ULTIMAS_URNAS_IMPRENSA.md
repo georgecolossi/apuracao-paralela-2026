@@ -37,25 +37,31 @@ O **PR 7** entrega o módulo público **"Últimas Urnas Apuradas — Imprensa e 
 
 ### 2.2. Paginação Estável por Keyset Cursor (`urnaCursor.ts`)
 
-- **Payload Selado:** O cursor codifica exclusivamente o payload `{ e, r, z, s, c, t, i }` em formato `base64url`.
-- **Context Binding:** A validação confere se a eleição (`e`), turno (`r`), filtro de zona (`z`) e seção (`s`) coincidem com a consulta ativa. Caso divirjam, a requisição é rejeitada com HTTP 400 (`CURSOR_CONTEXT_MISMATCH`).
-- **Validação Estrita:** Cursors com chaves extras, tamanho superior a 512 bytes, ISOs inválidos ou caracteres não canônicos são sumariamente rejeitados sob política *fail-closed*.
-- **Continuação Condicional:**
-  - Se o cursor possui `confirmedAt != null`: busca registros onde `(confirmedAt < c) OR (confirmedAt = c AND (createdAt < t OR (createdAt = t AND id < i)))`.
-  - Se o cursor possui `confirmedAt = null`: busca registros com `confirmedAt IS NULL` onde `(createdAt < t OR (createdAt = t AND id < i))`.
-- **Estabilidade Concorrente:** Inserções ou remoções de registros não deslocam a leitura nem causam repetição/omissão de itens, pois a paginação compara valores escalares e não posições relativas (`OFFSET`).
+- **Estrutura Base64URL:** O cursor codifica exclusivamente o payload `{ e, r, z, s, c, t, i }` em formato `base64url`. Trata-se de um token estruturado com validação estrita de schema e context binding, e não de um token assinado ou criptograficamente selado.
+- **Avaliação de Risco e Ausência de HMAC:** Como o endpoint `/api/urnas` é público e exclusivamente de leitura, os filtros de segurança essenciais são garantidos pelo servidor na cláusula `WHERE` do Prisma (`electionId = activeElection`, `roundId = activeRound`, `status = 'PROCESSADO'`, `isSimulation = false`). Manipular os campos escalares `c`, `t` ou `i` do cursor altera unicamente os limites da paginação (`confirmedAt < c OR ...`), sem qualquer possibilidade de acessar dados de outras eleições, boletins não homologados, relatórios de simulação ou executar injeção SQL. Portanto, a ausência de HMAC/assinatura é uma decisão técnica fundamentada que elimina overhead de gerenciamento de chaves secretas sem criar brechas de segurança.
+- **Context Binding:** A validação confere se a eleição (`e`), turno (`r`), filtro de zona (`z`) e seção (`s`) coincidem estritamente com os parâmetros da requisição atual. Em caso de divergência, a requisição é rejeitada com HTTP 400 (`CURSOR_CONTEXT_MISMATCH`).
+- **Validação Estrutural Estrita:** Tokens com chaves extras, tamanho superior a 512 bytes, formato Base64URL irregular, timestamps ISO-8601 malformados ou códigos territoriais não canônicos são rejeitados com HTTP 400 sob política *fail-closed*.
+- **Semântica Concorrente do Keyset:**
+  - *Inserções Concorrentes:* Novos boletins que ingressam no topo do feed com `confirmedAt` mais recente não provocam deslocamento de página (*offset drift*) nem causam repetição de itens para leitores paginando com cursor anterior.
+  - *Resiliência de Continuação:* A busca subsequente compara valores escalares (`confirmedAt`, `createdAt`, `id`) e prossegue corretamente mesmo se o registro referenciado pelo cursor tiver sido excluído.
+  - *Comportamento Real:* Registros excluídos ou desclassificados do status `PROCESSADO` após a emissão do cursor naturalmente não constarão nas páginas seguintes, refletindo o estado atualizado do banco de dados sem falha estrutural do mecanismo de paginação.
 
-### 2.3. Validação Territorial Estrita (`territoryValidator.ts`)
+### 2.3. Validação Territorial Estrita e Compatibilidade de Formatos (`territoryValidator.ts`)
 
-- **Sem tolerância a espaços:** Rejeita strings com espaços ou vazias sem aplicar `trim()` como mecanismo de aceitação permissiva.
-- **Normalização Canônica:** Aceita de 1 a 4 dígitos numéricos ASCII (`/^\d{1,4}$/`), normalizando `0009` para `9` e garantindo equivalência entre representações com zeros à esquerda.
-- Rejeita valores fora de 1 a 9999, caracteres não numéricos e zero absoluto (`0`, `00`).
+- **Sem tolerância a espaços:** Rejeita strings com espaços ou vazias (`?zone= `, `?zone=`) sem aplicar `trim()` como mecanismo de aceitação permissiva.
+- **Normalização Canônica:** Aceita de 1 a 4 dígitos numéricos ASCII (`/^\d{1,4}$/`), normalizando `0009` para `9` e rejeitando zeros absolutos (`0`, `00`).
+- **Compatibilidade Territorial Ampla (`getTerritoryVariants`):** Gera todas as variantes com e sem zeros à esquerda (ex.: `['9', '09', '009', '0009']` ou `['42', '042', '0042']`), garantindo interoperabilidade entre formatos de importação históricos e oficiais do TSE nas consultas de feed e detalhe.
 
-### 2.4. Resolução Territorial Otimizada (Evitando N+1)
+### 2.4. Validação Rigorosa de Parâmetros de Consulta (`route.ts`)
 
-Em `src/app/api/urnas/route.ts`, as tríades territoriais `(cityCode, zoneCode, sectionCode)` dos boletins da página são agrupadas e resolvidas em lote via `findMany` com cláusula `OR` composta, mapeando os nomes dos municípios e locais de votação em memória (`sectionLookup`) em uma única consulta ao banco de dados.
+- **Turno (`round`):** Validação estrita por regex `/^[1-2]$/`, rejeitando entradas parcialmente numéricas (`1abc`, `2x`) com HTTP 400 (`TURNO_INVALIDO`).
+- **Limite (`limit`):** Validação estrita por regex `/^\d+$/`, exigindo inteiro positivo $\ge 1$ (padrão 20, máximo 50). Entradas como `20x`, `0` ou valores negativos são rejeitadas com HTTP 400 (`PARAMETRO_INVALIDO`).
 
-### 2.5. Privacidade e Proteção de Dados (DTOs Públicos)
+### 2.5. Resolução Territorial Otimizada (Evitando N+1)
+
+Em `src/app/api/urnas/route.ts`, as tríades territoriais `(cityCode, zoneCode, sectionCode)` dos boletins da página são agrupadas e resolvidas em lote via `findMany` com cláusula `OR` composta por variantes de padding, mapeando municípios e locais de votação em memória (`sectionLookup`) em uma única consulta ao banco de dados.
+
+### 2.6. Privacidade e Proteção de Dados (DTOs Públicos)
 
 - As APIs públicas (`GET /api/urnas` e `GET /api/urnas/[id]`) não expõem campos operacionais ou sensíveis:
   - `operatorId` removido;
@@ -97,8 +103,8 @@ Em `src/app/api/urnas/route.ts`, as tríades territoriais `(cityCode, zoneCode, 
 | **PAG-04** | Continuação da paginação dentro do bloco histórico respeita `createdAt DESC, id DESC`. | **Aprovado** |
 | **PAG-05** | Ao atingir o final dos registros, `hasMore = false` e `nextCursor = null`. | **Aprovado** |
 | **PAG-06** | Desempate determinístico por `id DESC` quando timestamps coincidem exatamente. | **Aprovado** |
-| **PAG-07** | Inserção concorrente não desloca a continuação e evita itens repetidos no keyset. | **Aprovado** |
-| **PAG-08** | Remoção concorrente do registro apontado pelo cursor não causa erro na próxima página. | **Aprovado** |
+| **PAG-07** | Inserção concorrente no topo não causa deslocamento de offset (*offset drift*) nem repetição de itens. | **Aprovado** |
+| **PAG-08** | Remoção concorrente do registro do cursor não quebra a continuação keyset por valores escalares. | **Aprovado** |
 | **PAG-09** | Isolamento de eleições: boletins de outras eleições não aparecem no feed da eleição ativa. | **Aprovado** |
 | **PAG-10** | Isolamento de turnos: registros do 2º turno não aparecem na consulta do 1º turno e vice-versa. | **Aprovado** |
 | **PAG-11** | Filtro por Zona retorna apenas urnas da zona especificada. | **Aprovado** |
@@ -120,7 +126,12 @@ Em `src/app/api/urnas/route.ts`, as tríades territoriais `(cityCode, zoneCode, 
 | **PAG-27** | Parâmetro `?zone=0` (zero) é rejeitado com HTTP 400. | **Aprovado** |
 | **PAG-28** | Cursor com zona não canônica (ex: `"09"` com zero à esquerda) é rejeitado no decode. | **Aprovado** |
 | **PAG-29** | Cursor com tamanho superior a 512 bytes é rejeitado com HTTP 400. | **Aprovado** |
-| **PAG-30** | Cursor com chaves desconhecidas injetadas é rejeitado sob política de Object Sealing. | **Aprovado** |
+| **PAG-30** | Cursor com chaves extras não previstas é rejeitado sob validação estrutural estrita. | **Aprovado** |
+| **PAG-31** | Parâmetro `?round=1abc` ou `?round=2x` parcialmente numérico é rejeitado com HTTP 400 (`TURNO_INVALIDO`). | **Aprovado** |
+| **PAG-32** | Parâmetro `?limit=20x` parcialmente numérico é rejeitado com HTTP 400 (`PARAMETRO_INVALIDO`). | **Aprovado** |
+| **PAG-33** | Parâmetro `?limit=0` ou negativo é rejeitado com HTTP 400 (`PARAMETRO_INVALIDO`). | **Aprovado** |
+| **PAG-34** | Compatibilidade territorial: busca por zona/seção localiza variantes com e sem zeros à esquerda (`9`, `09`, `0009` / `42`, `0042`). | **Aprovado** |
+| **PAG-35** | Compatibilidade territorial no detalhe `/api/urnas/[id]`: resolve município e seção para dados importados com variantes de padding. | **Aprovado** |
 
 ---
 

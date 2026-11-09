@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { validateTerritoryCode } from '@/lib/presentation/territoryValidator';
+import { validateTerritoryCode, getTerritoryVariants } from '@/lib/presentation/territoryValidator';
 import { validateAndDecodeCursor, encodeUrnaCursor, CursorContext } from '@/lib/presentation/urnaCursor';
 import { UrnaFeedItemDTO, UrnaFeedResponse } from '@/lib/presentation/pressDto';
 import { Prisma } from '@prisma/client';
@@ -71,14 +71,14 @@ export async function GET(req: Request) {
 
     // 2. Resolução de Turno (Sem HTTP 500)
     let targetRound;
-    if (roundParam) {
-      const rNum = parseInt(roundParam, 10);
-      if (isNaN(rNum) || rNum < 1 || rNum > 2) {
+    if (roundParam !== null && roundParam !== undefined) {
+      if (!/^[1-2]$/.test(roundParam)) {
         return NextResponse.json({
           error: 'TURNO_INVALIDO',
           message: "O parâmetro 'round' deve ser 1 ou 2."
         }, { status: 400, headers: { 'Cache-Control': CACHE_HEADER } });
       }
+      const rNum = parseInt(roundParam, 10);
       targetRound = election.rounds.find(r => r.roundNumber === rNum);
       if (!targetRound) {
         return NextResponse.json({
@@ -135,11 +135,21 @@ export async function GET(req: Request) {
 
     // 4. Limite de Registros por Página (Mínimo 1, Máximo 50, Padrão 20)
     let limit = 20;
-    if (limitRaw) {
-      const parsedLimit = parseInt(limitRaw, 10);
-      if (!isNaN(parsedLimit) && parsedLimit >= 1) {
-        limit = Math.min(50, parsedLimit);
+    if (limitRaw !== null && limitRaw !== undefined) {
+      if (!/^\d+$/.test(limitRaw)) {
+        return NextResponse.json({
+          error: 'PARAMETRO_INVALIDO',
+          message: "O parâmetro 'limit' deve ser um número inteiro positivo (mínimo 1, máximo 50)."
+        }, { status: 400, headers: { 'Cache-Control': CACHE_HEADER } });
       }
+      const parsedLimit = parseInt(limitRaw, 10);
+      if (parsedLimit < 1) {
+        return NextResponse.json({
+          error: 'PARAMETRO_INVALIDO',
+          message: "O parâmetro 'limit' deve ser um número inteiro positivo (mínimo 1, máximo 50)."
+        }, { status: 400, headers: { 'Cache-Control': CACHE_HEADER } });
+      }
+      limit = Math.min(50, parsedLimit);
     }
 
     // 5. Validação e Decodificação do Cursor (Query Binding)
@@ -172,13 +182,13 @@ export async function GET(req: Request) {
 
     if (canonicalZone) {
       whereClause.zoneCode = {
-        in: [canonicalZone, canonicalZone.padStart(4, '0')]
+        in: getTerritoryVariants(canonicalZone)
       };
     }
 
     if (canonicalSection) {
       whereClause.sectionCode = {
-        in: [canonicalSection, canonicalSection.padStart(4, '0')]
+        in: getTerritoryVariants(canonicalSection)
       };
     }
 
@@ -276,8 +286,8 @@ export async function GET(req: Request) {
     if (triplets.length > 0) {
       const orClauses = triplets.map(t => {
         const [c, z, s] = t.split('|');
-        const sVariants = Array.from(new Set([s, s.padStart(4, '0'), String(parseInt(s, 10) || s)]));
-        const zVariants = Array.from(new Set([z, z.padStart(4, '0'), String(parseInt(z, 10) || z)]));
+        const sVariants = getTerritoryVariants(s);
+        const zVariants = getTerritoryVariants(z);
         return {
           sectionNumber: { in: sVariants },
           zone: {

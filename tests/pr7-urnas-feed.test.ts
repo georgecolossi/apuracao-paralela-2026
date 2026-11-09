@@ -421,14 +421,14 @@ describe('PR 7 — Feed de Últimas Urnas e Paginação por Keyset Cursor (PAG-0
     await prisma.ballotReport.deleteMany({ where: { id: { in: [rA.id, rB.id] } } });
   });
 
-  // PAG-07: Inserção concorrente não quebra a paginação
-  it('PAG-07: Inserção concorrente não desloca a continuação pelo keyset cursor', async () => {
+  // PAG-07: Inserção concorrente não desloca a paginação por offset drift
+  it('PAG-07: Inserção concorrente no topo não causa deslocamento de offset nem repetição de itens', async () => {
     const req1 = new Request('http://localhost:3000/api/urnas?round=1&limit=2');
     const res1 = await urnasFeedRoute(req1);
     const json1 = await res1.json();
     const cursor = json1.pagination.nextCursor;
 
-    // Simula inserção concorrente de um novo BU ainda mais recente
+    // Simula inserção concorrente de um novo BU ainda mais recente no topo do feed
     const concurrentRep = await prisma.ballotReport.create({
       data: {
         deterministicId: 'det-concurrent-new',
@@ -445,12 +445,12 @@ describe('PR 7 — Feed de Últimas Urnas e Paginação por Keyset Cursor (PAG-0
       }
     });
 
-    // Busca página 2 com o cursor gerado ANTES da inserção
+    // Busca página 2 com o cursor gerado ANTES da inserção concorrente
     const req2 = new Request(`http://localhost:3000/api/urnas?round=1&limit=2&cursor=${cursor}`);
     const res2 = await urnasFeedRoute(req2);
     const json2 = await res2.json();
 
-    // A página 2 continua exatamente de onde parou (não repete itens nem é deslocada pelo novo item)
+    // A página 2 continua exatamente pelos valores escalares (não repete itens nem sofre deslocamento de offset)
     expect(json2.items[0].id).toBe(confirmedReportIds[0]);
     expect(json2.items.map((i: any) => i.id)).not.toContain(concurrentRep.id);
 
@@ -458,7 +458,7 @@ describe('PR 7 — Feed de Últimas Urnas e Paginação por Keyset Cursor (PAG-0
   });
 
   // PAG-08: Remoção concorrente do registro apontado pelo cursor
-  it('PAG-08: Remoção concorrente do registro do cursor não causa erro 500 no keyset', async () => {
+  it('PAG-08: Remoção concorrente do registro do cursor não quebra a continuação keyset por valores escalares', async () => {
     const tempRep = await prisma.ballotReport.create({
       data: {
         deterministicId: 'det-temp-delete',
@@ -488,17 +488,19 @@ describe('PR 7 — Feed de Últimas Urnas e Paginação por Keyset Cursor (PAG-0
       }
     );
 
-    // Deleta o registro do banco
+    // Deleta o registro do banco antes da consulta da página seguinte
     await prisma.ballotReport.delete({ where: { id: tempRep.id } });
 
-    // Consulta com o cursor que apontava para o registro deletado
+    // Consulta com o cursor que continha os escalares do registro deletado
     const req = new Request(`http://localhost:3000/api/urnas?round=1&limit=2&cursor=${cursor}`);
     const res = await urnasFeedRoute(req);
     expect(res.status).toBe(200);
 
     const json = await res.json();
-    // Keyset continua baseado nos valores escalares (confirmedAt, createdAt, id) sem falhar
+    // A continuação se baseia em valores escalares (confirmedAt, createdAt, id) e não falha com erro 500.
+    // O registro removido naturalmente não aparece nos resultados.
     expect(json.items[0].id).toBe(confirmedReportIds[0]); // rep 1 (17:01:00)
+    expect(json.items.map((i: any) => i.id)).not.toContain(tempRep.id);
   });
 
   // PAG-09: Isolamento de eleições
@@ -864,6 +866,109 @@ describe('PR 7 — Feed de Últimas Urnas e Paginação por Keyset Cursor (PAG-0
     const req = new Request(`http://localhost:3000/api/urnas?round=1&cursor=${injectedCursor}`);
     const res = await urnasFeedRoute(req);
     expect(res.status).toBe(400);
+  });
+
+  // PAG-31: Validação de parâmetro round com sufixo ou caracteres inválidos
+  it('PAG-31: Parâmetro ?round=1abc é rejeitado com HTTP 400 (TURNO_INVALIDO)', async () => {
+    const req1 = new Request('http://localhost:3000/api/urnas?round=1abc');
+    const res1 = await urnasFeedRoute(req1);
+    expect(res1.status).toBe(400);
+    const json1 = await res1.json();
+    expect(json1.error).toBe('TURNO_INVALIDO');
+
+    const req2 = new Request('http://localhost:3000/api/urnas?round=2x');
+    const res2 = await urnasFeedRoute(req2);
+    expect(res2.status).toBe(400);
+    const json2 = await res2.json();
+    expect(json2.error).toBe('TURNO_INVALIDO');
+  });
+
+  // PAG-32: Validação de parâmetro limit com sufixo ou caracteres inválidos
+  it('PAG-32: Parâmetro ?limit=20x é rejeitado com HTTP 400 (PARAMETRO_INVALIDO)', async () => {
+    const req = new Request('http://localhost:3000/api/urnas?round=1&limit=20x');
+    const res = await urnasFeedRoute(req);
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.error).toBe('PARAMETRO_INVALIDO');
+  });
+
+  // PAG-33: Validação de parâmetro limit igual a zero ou negativo
+  it('PAG-33: Parâmetro ?limit=0 é rejeitado com HTTP 400 (PARAMETRO_INVALIDO)', async () => {
+    const req1 = new Request('http://localhost:3000/api/urnas?round=1&limit=0');
+    const res1 = await urnasFeedRoute(req1);
+    expect(res1.status).toBe(400);
+    const json1 = await res1.json();
+    expect(json1.error).toBe('PARAMETRO_INVALIDO');
+
+    const req2 = new Request('http://localhost:3000/api/urnas?round=1&limit=-5');
+    const res2 = await urnasFeedRoute(req2);
+    expect(res2.status).toBe(400);
+    const json2 = await res2.json();
+    expect(json2.error).toBe('PARAMETRO_INVALIDO');
+  });
+
+  // PAG-34: Compatibilidade territorial - variantes de zeros à esquerda (9, 09, 009, 0009 / 42, 042, 0042)
+  it('PAG-34: Compatibilidade territorial - busca por zona/seção localiza variantes com e sem zeros à esquerda', async () => {
+    const repVariants = await prisma.ballotReport.create({
+      data: {
+        deterministicId: 'det-variant-test',
+        electionId: electionA.id,
+        roundId: roundA1.id,
+        stateCode: 'SC',
+        cityCode: '80837',
+        zoneCode: '09',       // gravado com 2 dígitos
+        sectionCode: '0042',  // gravado com 4 dígitos
+        urnCode: '7777',
+        status: 'PROCESSADO',
+        confirmedAt: new Date('2026-10-30T21:00:00.000Z'),
+        createdAt: new Date('2026-10-30T21:00:00.000Z')
+      }
+    });
+
+    // 1. Busca usando códigos canônicos sem zeros (?zone=9&section=42)
+    const req1 = new Request('http://localhost:3000/api/urnas?round=1&zone=9&section=42');
+    const res1 = await urnasFeedRoute(req1);
+    expect(res1.status).toBe(200);
+    const json1 = await res1.json();
+    expect(json1.items.map((i: any) => i.id)).toContain(repVariants.id);
+
+    // 2. Busca usando códigos formatados com 4 dígitos (?zone=0009&section=0042)
+    const req2 = new Request('http://localhost:3000/api/urnas?round=1&zone=0009&section=0042');
+    const res2 = await urnasFeedRoute(req2);
+    expect(res2.status).toBe(200);
+    const json2 = await res2.json();
+    expect(json2.items.map((i: any) => i.id)).toContain(repVariants.id);
+
+    await prisma.ballotReport.delete({ where: { id: repVariants.id } });
+  });
+
+  // PAG-35: Compatibilidade territorial no endpoint de detalhe /api/urnas/[id]
+  it('PAG-35: Compatibilidade territorial no detalhe - resolve município e local com variantes de padding', async () => {
+    const repDetailVariant = await prisma.ballotReport.create({
+      data: {
+        deterministicId: 'det-detail-variant',
+        electionId: electionA.id,
+        roundId: roundA1.id,
+        stateCode: 'SC',
+        cityCode: '80837',
+        zoneCode: '009',      // 3 dígitos
+        sectionCode: '042',   // 3 dígitos
+        urnCode: '7778',
+        status: 'PROCESSADO',
+        confirmedAt: new Date('2026-10-30T21:05:00.000Z'),
+        createdAt: new Date('2026-10-30T21:05:00.000Z')
+      }
+    });
+
+    const req = new Request(`http://localhost:3000/api/urnas/${repDetailVariant.id}`);
+    const res = await urnaDetailRoute(req, { params: Promise.resolve({ id: repDetailVariant.id }) });
+    expect(res.status).toBe(200);
+    const json = await res.json();
+
+    expect(json.territory.cityName).toBe('Concórdia');
+    expect(json.territory.locationName).toBe('Escola Deodoro');
+
+    await prisma.ballotReport.delete({ where: { id: repDetailVariant.id } });
   });
 
   // Bônus: Verificação de Cabeçalhos HTTP de Cache

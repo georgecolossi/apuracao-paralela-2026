@@ -39,3 +39,21 @@ export function validateTerritoryCode(
   // 3. Normalização canônica para equivalência entre '9' e '0009'
   return { valid: true, canonicalValue: String(num) };
 }
+
+/**
+ * Retorna todas as variantes de representação numérica (1 a 4 dígitos com zeros à esquerda)
+ * para compatibilidade de busca com bancos de dados onde zonas e seções podem ter sido
+ * importadas em diferentes formatos (ex: '9', '09', '009', '0009' ou '42', '042', '0042').
+ */
+export function getTerritoryVariants(canonicalCode: string): string[] {
+  const num = parseInt(canonicalCode, 10);
+  if (isNaN(num) || num < 1 || num > 9999) {
+    return [canonicalCode];
+  }
+  const s1 = String(num);
+  const s2 = s1.padStart(2, '0');
+  const s3 = s1.padStart(3, '0');
+  const s4 = s1.padStart(4, '0');
+  return Array.from(new Set([s1, s2, s3, s4]));
+}
+
