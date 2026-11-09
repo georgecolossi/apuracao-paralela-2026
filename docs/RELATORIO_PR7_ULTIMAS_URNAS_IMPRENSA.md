@@ -7,7 +7,7 @@
 **Branch de Destino Autorizada:** `feature/v2-universal`  
 **Base Commit:** `9fb0b44abf8a2e64b667a4876854c0d87dcb92c3`  
 **Commit inicial de implementação:** `e768db0`  
-**HEAD atual da branch:** `2c15024`  
+**Commit de referência da implementação funcional (antes dos ajustes documentais):** `2c15024`  
 
 ---
 
