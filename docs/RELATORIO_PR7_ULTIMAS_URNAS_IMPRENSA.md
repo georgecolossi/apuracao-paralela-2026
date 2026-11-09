@@ -1,7 +1,7 @@
 # Relatório de Implementação — PR 7
 ## Últimas Urnas Apuradas — Imprensa e Rádio
 
-**Data:** 30 de Outubro de 2026  
+**Data:** 30 de Outubro de 2026 (Revisado e Sincronizado em 09 de Novembro de 2026)  
 **Repositório:** `georgecolossi/apuracao-paralela-2026`  
 **Branch de Origem (PR 7):** `feature/v2-pr7-press-radio`  
 **Branch de Destino Autorizada:** `feature/v2-universal`  
@@ -164,23 +164,34 @@ npm run typecheck
 # (Concluído com código de saída 0 - zero erros de tipo)
 ```
 
-### 5.4. Execução da Suíte Completa de Testes
+### 5.4. Testes Específicos do PR 7 (61 Testes Aprovados)
+```powershell
+node scripts/run-tests.mjs pr7
+# Saída:
+# Test Files  3 passed (3)
+# Tests       61 passed (61)
+# - tests/pr7-urnas-feed.test.ts: 37 testes (PAG-01 a PAG-36 + cache headers)
+# - tests/pr7-radio-script.test.ts: 17 testes (gerador de roteiro, validações e cursor)
+# - tests/pr7-press-component.test.tsx: 7 testes (componentes React reais montados)
+```
+
+### 5.5. Execução da Suíte Completa de Testes
 ```powershell
 node scripts/run-tests.mjs --no-file-parallelism
 # Saída:
 # Test Files  60 passed (60)
-# Tests       718 passed | 1 skipped (719)
-# Duration    143.44s
+# Tests       724 passed | 1 skipped (725)
+# Duration    173.36s
 # Result: 10/10 fixtures oficiais processadas com integridade.
 ```
 
-### 5.5. Build de Produção Next.js
+### 5.6. Build de Produção Next.js
 ```powershell
 npm run build
 # Saída:
 # ▲ Next.js 16.3.7 (Turbopack)
-# ✓ Compiled successfully in 7.3s
-# Finished TypeScript in 15.6s
+# ✓ Compiled successfully in 6.2s
+# Finished TypeScript in 5.0s
 # Generating static pages using 7 workers (23/23)
 # Rotas geradas: 23 rotas (incluindo /imprensa, /api/urnas e /api/urnas/[id])
 ```
