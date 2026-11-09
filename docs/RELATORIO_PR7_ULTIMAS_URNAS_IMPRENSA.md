@@ -6,7 +6,8 @@
 **Branch de Origem (PR 7):** `feature/v2-pr7-press-radio`  
 **Branch de Destino Autorizada:** `feature/v2-universal`  
 **Base Commit:** `9fb0b44abf8a2e64b667a4876854c0d87dcb92c3`  
-**Commit de Implementação (HEAD):** `e768db0`  
+**Commit inicial de implementação:** `e768db0`  
+**HEAD atual da branch:** `2c15024`  
 
 ---
 
