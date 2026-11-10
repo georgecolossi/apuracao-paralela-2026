@@ -1,9 +1,9 @@
 import { test, expect } from '@playwright/test';
+import { createE2EPrismaClient } from './helpers/e2eSupport';
 
 test.describe('APPLICATION E2E / SIMULATION', () => {
   test.beforeAll(async () => {
-    const { PrismaClient } = await import('@prisma/client');
-    const prisma = new PrismaClient();
+    const prisma = await createE2EPrismaClient();
     await prisma.ballotVote.deleteMany({});
     await prisma.ballotReportPart.deleteMany({});
     await prisma.ballotReport.deleteMany({});
@@ -115,10 +115,15 @@ test.describe('APPLICATION E2E / SIMULATION', () => {
     await page.click('button:has-text("Confirmar e Totalizar")');
     await expect(page).toHaveURL('/admin/scanner', { timeout: 15000 });
 
-    // 4. Checa Apuração Pública: simulação NÃO deve vazar para totais oficiais
+    // 4. Checa Apuração Pública e Sala de Imprensa: simulação NÃO deve vazar para APIs públicas
     const totalsRes = await page.request.get('/api/totals');
     const totalsData = await totalsRes.json();
     expect(totalsData.totals).toHaveLength(0);
+
+    const urnasRes = await page.request.get('/api/urnas');
+    expect(urnasRes.status()).toBe(200);
+    const urnasData = await urnasRes.json();
+    expect(urnasData.items).toHaveLength(0);
 
     await page.goto('/apuracao');
     await expect(page.locator('body')).not.toContainText('CANDIDATO 10');

@@ -1,17 +1,17 @@
 import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
+import { OFFICIAL_PHASE_O_PRES_T2_PAYLOAD, createE2EPrismaClient } from './helpers/e2eSupport';
 
 test.describe('PR 9 — Homologação E2E Completa v2.0.0', () => {
-  const fixturePath = path.join(
+  const simulatedFixturePath = path.join(
     __dirname,
     '../tests/fixtures/tse-2026/official/examples/Pres-T2_s02202ac0139200090013-imgbu/decoded/qrbu-01-of-01.txt'
   );
 
   async function resetIsolatedDatabaseForV2() {
-    const { PrismaClient } = await import('@prisma/client');
     const bcrypt = await import('bcryptjs');
-    const prisma = new PrismaClient();
+    const prisma = await createE2EPrismaClient();
 
     await prisma.ballotVote.deleteMany({});
     await prisma.ballotReportPart.deleteMany({});
@@ -143,7 +143,8 @@ test.describe('PR 9 — Homologação E2E Completa v2.0.0', () => {
   }) => {
     test.setTimeout(90_000);
     await resetIsolatedDatabaseForV2();
-    const officialPayload = fs.readFileSync(fixturePath, 'utf8').trim();
+    const officialPayload = OFFICIAL_PHASE_O_PRES_T2_PAYLOAD;
+    const simulatedPhaseSPayload = fs.readFileSync(simulatedFixturePath, 'utf8').trim();
 
     // 1. Inicialização, rotas públicas e estado fail-closed de /api/setup
     await page.goto('/');
@@ -301,9 +302,8 @@ test.describe('PR 9 — Homologação E2E Completa v2.0.0', () => {
     });
     expect(activateRes.status()).toBe(200);
 
-    // Ativa o 2º Turno para alinhar com a fixture Pres-T2 (TURN:2, PLEI:2202)
-    const { PrismaClient } = await import('@prisma/client');
-    const prisma = new PrismaClient();
+    // Ativa o 2º Turno para alinhar com o QRBU oficial FASE:O (TURN:2, PLEI:2202)
+    const prisma = await createE2EPrismaClient();
     const rounds = await prisma.electionRound.findMany({
       where: { electionId: activeElectionId },
       orderBy: { roundNumber: 'asc' }
@@ -338,7 +338,7 @@ test.describe('PR 9 — Homologação E2E Completa v2.0.0', () => {
     await page.click('button:has-text("Processar Texto Manual")');
     await expect(page.locator('body')).toContainText(/integridade|SHA-512|Falha|inválido|CRYPTOGRAPHIC/i);
 
-    // 5.2 QRBU malformado (sintaxe inválida -> 400)
+    // 5.2 QRBU malformado (sintaxe inválida -> 400) e FASE:S rejeitado como oficial (400 SIMULATED_QRBU_REJECTED)
     const invalidFmtRes = await page.request.post('/api/scan', {
       headers: { 'x-csrf-token': adminCsrf },
       data: {
@@ -349,7 +349,18 @@ test.describe('PR 9 — Homologação E2E Completa v2.0.0', () => {
     });
     expect(invalidFmtRes.status()).toBe(400);
 
-    // 5.3 Reinicia sessão do scanner após rejeição e ingere QRBU oficial válido pela UI -> abre conferência
+    const rejectedFaseSRes = await page.request.post('/api/scan', {
+      headers: { 'x-csrf-token': adminCsrf },
+      data: {
+        content: simulatedPhaseSPayload,
+        isSimulation: false,
+        sessionId: `E2E-FASES-REJECT-${Date.now()}`
+      }
+    });
+    expect(rejectedFaseSRes.status()).toBe(400);
+    expect((await rejectedFaseSRes.json()).error).toBe('SIMULATED_QRBU_REJECTED');
+
+    // 5.3 Reinicia sessão do scanner após rejeição e ingere QRBU FASE:O válido pela UI -> abre conferência
     await page.click('button[title="Reiniciar Sessão de Leitura"]');
     await manualBox.fill(officialPayload);
     await page.click('button:has-text("Processar Texto Manual")');
@@ -451,8 +462,7 @@ test.describe('PR 9 — Homologação E2E Completa v2.0.0', () => {
   });
 
   test('Isolamento de simulação e proteção CSRF fail-closed em mutações autenticadas', async ({ page }) => {
-    const { PrismaClient } = await import('@prisma/client');
-    const prisma = new PrismaClient();
+    const prisma = await createE2EPrismaClient();
 
     await prisma.ballotVote.deleteMany({});
     await prisma.ballotReportPart.deleteMany({});

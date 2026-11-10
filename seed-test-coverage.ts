@@ -1,3 +1,9 @@
+if (process.env.DATABASE_URL !== 'file:./e2e.db') {
+  throw new Error(
+    `[E2E_ISOLATION_ERROR] seed-test-coverage.ts exige DATABASE_URL="file:./e2e.db", mas recebeu "${process.env.DATABASE_URL ?? 'undefined'}".`
+  );
+}
+
 import { prisma } from './src/lib/db';
 
 async function seedCoverage() {

@@ -1,19 +1,12 @@
 import { test, expect } from '@playwright/test';
-import fs from 'fs';
-import path from 'path';
+import { OFFICIAL_PHASE_O_PRES_T2_PAYLOAD, createE2EPrismaClient } from './helpers/e2eSupport';
 
 test.describe('E2E ADMINISTRATIVO / COBERTURA GEOGRÁFICA', () => {
   const sessionId = `E2E-COV-${Date.now()}`;
-  let officialPayload = '';
+  const officialPayload = OFFICIAL_PHASE_O_PRES_T2_PAYLOAD;
 
   test.beforeAll(async () => {
-    const examplesDir = path.join(__dirname, '../tests/fixtures/tse-2026/official/examples');
-    officialPayload = fs
-      .readFileSync(path.join(examplesDir, 'Pres-T2_s02202ac0139200090013-imgbu', 'decoded', 'qrbu-01-of-01.txt'), 'utf8')
-      .trim();
-
-    const { PrismaClient } = await import('@prisma/client');
-    const prisma = new PrismaClient();
+    const prisma = await createE2EPrismaClient();
 
     await prisma.ballotVote.deleteMany({});
     await prisma.ballotReportPart.deleteMany({});
@@ -85,8 +78,7 @@ test.describe('E2E ADMINISTRATIVO / COBERTURA GEOGRÁFICA', () => {
     const data = await scanRes.json();
     expect(data.error).toBe('OUT_OF_COVERAGE');
 
-    const { PrismaClient } = await import('@prisma/client');
-    const prisma = new PrismaClient();
+    const prisma = await createE2EPrismaClient();
 
     const reportCount = await prisma.ballotReport.count({
       where: { cityCode: '01392' }
@@ -102,8 +94,7 @@ test.describe('E2E ADMINISTRATIVO / COBERTURA GEOGRÁFICA', () => {
   });
 
   test('B) Aceitar BU dentro da cobertura (PollingZone cadastrada -> 200)', async ({ page }) => {
-    const { PrismaClient } = await import('@prisma/client');
-    const prisma = new PrismaClient();
+    const prisma = await createE2EPrismaClient();
     const muniAC = await prisma.municipality.findUniqueOrThrow({ where: { officialCode: '01392' } });
     await prisma.municipality.update({ where: { id: muniAC.id }, data: { isCoverage: true } });
     await prisma.pollingZone.upsert({

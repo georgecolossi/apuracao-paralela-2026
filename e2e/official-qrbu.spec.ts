@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { Tse2026BallotReportParser } from '../src/lib/parser/Tse2026BallotReportParser';
 import { BallotReportData } from '../src/lib/parser';
+import { convertQrbuPartsToOfficialPhaseO, createE2EPrismaClient } from './helpers/e2eSupport';
 
 test.describe('E2E OFFICIAL FIXTURE', () => {
   const examplesDir = path.join(__dirname, '../tests/fixtures/tse-2026/official/examples');
@@ -23,17 +24,19 @@ test.describe('E2E OFFICIAL FIXTURE', () => {
       .filter(f => /^qrbu-\d+-of-\d+\.txt$/.test(f))
       .sort();
 
-    const partsPayloads = files.map(file => {
+    const simulatedFixtureParts = files.map(file => {
       return fs.readFileSync(path.join(decodedDir, file), 'utf8').trim();
     });
+    const partsPayloads = convertQrbuPartsToOfficialPhaseO(simulatedFixtureParts);
 
     const setupParser = new Tse2026BallotReportParser();
     const full = setupParser.reconstruct(partsPayloads) as string;
     const parsed = setupParser.parseReport(full, partsPayloads) as BallotReportData;
     expect(parsed.electionId).toBeDefined();
+    expect(parsed.fase).toBe('O');
+    expect(parsed.hashStatus).toBe('VERIFIED');
 
-    const { PrismaClient } = await import('@prisma/client');
-    const prisma = new PrismaClient();
+    const prisma = await createE2EPrismaClient();
 
     await prisma.ballotVote.deleteMany({});
     await prisma.ballotReportPart.deleteMany({});
@@ -113,6 +116,18 @@ test.describe('E2E OFFICIAL FIXTURE', () => {
 
     const csrfRes = await page.request.get('/api/csrf-token');
     const { csrfToken } = await csrfRes.json();
+
+    // 3.1 Garante que o exemplo público com FASE:S NÃO é aceito como oficial com flag desabilitada
+    const rejectedSimulatedRes = await page.request.post('/api/scan', {
+      headers: { 'x-csrf-token': csrfToken },
+      data: {
+        content: simulatedFixtureParts[0],
+        isSimulation: false,
+        sessionId: `E2E-FASE-S-REJECT-${Date.now()}`
+      }
+    });
+    expect(rejectedSimulatedRes.status()).toBe(400);
+    expect((await rejectedSimulatedRes.json()).error).toBe('SIMULATED_QRBU_REJECTED');
 
     const sessionId = `E2E-OFFICIAL-${Date.now()}`;
 

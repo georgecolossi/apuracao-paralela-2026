@@ -1,11 +1,11 @@
 import { test, expect } from '@playwright/test';
 import fs from 'fs';
 import path from 'path';
+import { createE2EPrismaClient } from './helpers/e2eSupport';
 
 test.describe('TSE 2026 SYNTHETIC FIXTURE E2E', () => {
   test.beforeAll(async () => {
-    const { PrismaClient } = await import('@prisma/client');
-    const prisma = new PrismaClient();
+    const prisma = await createE2EPrismaClient();
     await prisma.ballotVote.deleteMany({});
     await prisma.ballotReportPart.deleteMany({});
     await prisma.ballotReport.deleteMany({});

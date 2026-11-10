@@ -1,10 +1,10 @@
 import { test, expect } from '@playwright/test';
 import { randomUUID } from 'crypto';
+import { createE2EPrismaClient } from './helpers/e2eSupport';
 
 test('Fluxo de login, logout e sessão inativa', async ({ page }) => {
   const sessionId = randomUUID();
-  const { PrismaClient } = await import('@prisma/client');
-  const prisma = new PrismaClient();
+  const prisma = await createE2EPrismaClient();
   const bcrypt = await import('bcryptjs');
   const passwordHash = await bcrypt.hash('admin123', 10);
   

@@ -1,13 +1,13 @@
 import { test, expect } from '@playwright/test';
+import { createE2EPrismaClient } from './helpers/e2eSupport';
 
 test.describe('E2E ADMINISTRATIVO / SEGURANÇA DO RESET', () => {
   const resetApiUrl = '/api/admin/reset';
   let activeRoundId = '';
 
   test.beforeAll(async () => {
-    const { PrismaClient } = await import('@prisma/client');
     const bcrypt = await import('bcryptjs');
-    const prisma = new PrismaClient();
+    const prisma = await createE2EPrismaClient();
 
     await prisma.ballotVote.deleteMany({});
     await prisma.ballotReportPart.deleteMany({});

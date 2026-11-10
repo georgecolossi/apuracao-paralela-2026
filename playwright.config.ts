@@ -1,5 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
 
+// Garante que o runner e os workers E2E utilizem exclusivamente o banco isolado e2e.db.
+process.env.DATABASE_URL = 'file:./e2e.db';
+
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,
@@ -24,8 +27,7 @@ export default defineConfig({
       DATABASE_URL: 'file:./e2e.db',
       JWT_SECRET: process.env.JWT_SECRET || 'e2e-isolated-test-jwt-secret-key-min-32-chars',
       ALLOW_OPERATIONAL_RESET: 'true',
-      // Habilitado exclusivamente no runner E2E isolado para exercitar fixtures publicas do TSE (FASE:S)
-      ALLOW_SIMULATED_FASE: 'true',
+      ALLOW_SIMULATED_FASE: 'false',
       TSE_FETCH_TIMEOUT_MS: '2000'
     }
   },
