@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import path from 'node:path';
-import { OFFICIAL_PHASE_O_PRES_T2_PAYLOAD, createE2EPrismaClient } from './helpers/e2eSupport';
+import { SYNTHETIC_PHASE_O_PRES_T2_PAYLOAD, createE2EPrismaClient } from './helpers/e2eSupport';
 
 test.describe('PR 9 — Homologação E2E Completa v2.0.0', () => {
   const simulatedFixturePath = path.join(
@@ -143,7 +143,9 @@ test.describe('PR 9 — Homologação E2E Completa v2.0.0', () => {
   }) => {
     test.setTimeout(90_000);
     await resetIsolatedDatabaseForV2();
-    const officialPayload = OFFICIAL_PHASE_O_PRES_T2_PAYLOAD;
+    // Payload sintético de teste em formato QRBU FASE:O, com SHA-512 válido.
+    // Não corresponde a um BU genuinamente emitido pelo TSE e não representa uma assinatura digital oficial.
+    const syntheticPhaseOPayload = SYNTHETIC_PHASE_O_PRES_T2_PAYLOAD;
     const simulatedPhaseSPayload = fs.readFileSync(simulatedFixturePath, 'utf8').trim();
 
     // 1. Inicialização, rotas públicas e estado fail-closed de /api/setup
@@ -302,7 +304,7 @@ test.describe('PR 9 — Homologação E2E Completa v2.0.0', () => {
     });
     expect(activateRes.status()).toBe(200);
 
-    // Ativa o 2º Turno para alinhar com o QRBU oficial FASE:O (TURN:2, PLEI:2202)
+    // Ativa o 2º Turno para alinhar com o payload sintético de teste FASE:O (TURN:2, PLEI:2202)
     const prisma = await createE2EPrismaClient();
     const rounds = await prisma.electionRound.findMany({
       where: { electionId: activeElectionId },
@@ -333,7 +335,7 @@ test.describe('PR 9 — Homologação E2E Completa v2.0.0', () => {
     await expect(manualBox).toBeVisible();
 
     // 5.1 QRBU inválido / corrompido (hash adulterado)
-    const tamperedPayload = officialPayload.replace(/HASH:[0-9A-F]{4}/, 'HASH:FFFF');
+    const tamperedPayload = syntheticPhaseOPayload.replace(/HASH:[0-9A-F]{4}/, 'HASH:FFFF');
     await manualBox.fill(tamperedPayload);
     await page.click('button:has-text("Processar Texto Manual")');
     await expect(page.locator('body')).toContainText(/integridade|SHA-512|Falha|inválido|CRYPTOGRAPHIC/i);
@@ -360,20 +362,20 @@ test.describe('PR 9 — Homologação E2E Completa v2.0.0', () => {
     expect(rejectedFaseSRes.status()).toBe(400);
     expect((await rejectedFaseSRes.json()).error).toBe('SIMULATED_QRBU_REJECTED');
 
-    // 5.3 Reinicia sessão do scanner após rejeição e ingere QRBU FASE:O válido pela UI -> abre conferência
+    // 5.3 Reinicia sessão do scanner após rejeição e ingere payload sintético FASE:O (SHA-512 válido) pela UI -> abre conferência
     await page.click('button[title="Reiniciar Sessão de Leitura"]');
-    await manualBox.fill(officialPayload);
+    await manualBox.fill(syntheticPhaseOPayload);
     await page.click('button:has-text("Processar Texto Manual")');
 
     await expect(page).toHaveURL(/\/admin\/conferir\//, { timeout: 15000 });
     await expect(page.locator('body')).toContainText('HASH VERIFICADO');
     await expect(page.locator('body')).toContainText('1392');
 
-    // 6. Rejeição de duplicidade ao reenviar o mesmo QRBU oficial
+    // 6. Rejeição de duplicidade ao reenviar o mesmo payload FASE:O
     const dupRes = await page.request.post('/api/scan', {
       headers: { 'x-csrf-token': adminCsrf },
       data: {
-        content: officialPayload,
+        content: syntheticPhaseOPayload,
         isSimulation: false,
         sessionId: `E2E-DUP-${Date.now()}`
       }

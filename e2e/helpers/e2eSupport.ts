@@ -31,8 +31,8 @@ export async function createE2EPrismaClient(): Promise<PrismaClient> {
 }
 
 /**
- * Calcula o digest SHA-512 hexadecimal em maiúsculas conforme o algoritmo oficial do TSE
- * implementado em `Tse2026HashValidator`.
+ * Calcula o digest SHA-512 hexadecimal em maiúsculas conforme o algoritmo de integridade de conteúdo
+ * do QRBU implementado em `Tse2026HashValidator` (não envolve assinatura digital assimétrica).
  */
 export function computeTseQrbuSha512(rawParts: string[]): string {
   const sortedParts = [...rawParts].sort((a, b) => {
@@ -56,9 +56,13 @@ export function computeTseQrbuSha512(rawParts: string[]): string {
 }
 
 /**
- * Assina um payload QRBU único com o campo `HASH:` válido segundo `Tse2026HashValidator`.
+ * Gera um payload sintético de teste em formato QRBU único e recalcula o campo `HASH:` (SHA-512).
+ * Valida apenas a integridade estrutural e de conteúdo via SHA-512; não cria nem valida assinatura digital oficial.
  */
-export function signSinglePartQrbu(bodyWithoutHashPrefix: string, suffixAfterHash = ''): string {
+export function buildPhaseOPayloadWithValidHash(
+  bodyWithoutHashPrefix: string,
+  suffixAfterHash = ''
+): string {
   const unsignedPart = `QRBU:1:1 ${bodyWithoutHashPrefix.trim()}`;
   const hash = computeTseQrbuSha512([unsignedPart]);
   const suffix = suffixAfterHash ? ` ${suffixAfterHash.trim()}` : '';
@@ -66,10 +70,11 @@ export function signSinglePartQrbu(bodyWithoutHashPrefix: string, suffixAfterHas
 }
 
 /**
- * Converte partes QRBU (ex: fixtures `FASE:S` publicadas pelo TSE) para `FASE:O` em memória
- * recalculando o SHA-512 válido correspondente sem modificar arquivos em disco.
+ * Gera em memória variantes sintéticas de teste em formato QRBU FASE:O com SHA-512 recalculado
+ * a partir de partes existentes (sem alterar os arquivos originais FASE:S do TSE em disco).
+ * Não representa um BU genuinamente emitido pelo TSE nem assinatura digital oficial.
  */
-export function convertQrbuPartsToOfficialPhaseO(rawParts: string[]): string[] {
+export function buildSyntheticPhaseOPartsWithValidHash(rawParts: string[]): string[] {
   const updated = rawParts.map((part) => part.replace(/\bFASE:[ST]\b/, 'FASE:O'));
   const sortedIndices = updated
     .map((part, idx) => ({
@@ -85,9 +90,9 @@ export function convertQrbuPartsToOfficialPhaseO(rawParts: string[]): string[] {
 }
 
 /**
- * Fixture QRBU oficial válida (`FASE:O`, VRQR 6.0, TURN:2, PLEI:2202, MUNI:1392)
- * com SHA-512 válido gerado pelo algoritmo canônico do TSE.
+ * Payload sintético de teste em formato QRBU FASE:O, com SHA-512 válido.
+ * Não corresponde a um BU genuinamente emitido pelo TSE e não representa uma assinatura digital oficial.
  */
-export const OFFICIAL_PHASE_O_PRES_T2_PAYLOAD = signSinglePartQrbu(
+export const SYNTHETIC_PHASE_O_PRES_T2_PAYLOAD = buildPhaseOPayloadWithValidHash(
   'VRQR:6.0 ORIG:VOTA ORLC:LEG PROC:2002 DTPL:20261025 PLEI:2202 TURN:2 FASE:O UNFE:AC MUNI:1392 ZONA:9 SECA:13 AGRE:14.15 IDUE:2250280 IDCA:146113540341669047216787 HIQT:1 HICA:1:146113540341669047216787 VERS:10.20.0.0 LOCA:15 APTO:26 APTS:26 APTT:0 COMP:4 FALT:22 HBBM:3 HBBG:1 HBSB:0 DTAB:20261025 HRAB:171506 DTFC:20261025 HRFC:171951 IDEL:2212 CARG:1 TIPO:0 VERC:202608131512 92:2 APTA:26 APTS:26 APTT:0 NOMI:2 BRAN:1 NULO:1 TOTC:4'
 );

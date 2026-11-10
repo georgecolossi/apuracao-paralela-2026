@@ -1,9 +1,10 @@
 import { test, expect } from '@playwright/test';
-import { OFFICIAL_PHASE_O_PRES_T2_PAYLOAD, createE2EPrismaClient } from './helpers/e2eSupport';
+import { SYNTHETIC_PHASE_O_PRES_T2_PAYLOAD, createE2EPrismaClient } from './helpers/e2eSupport';
 
 test.describe('E2E ADMINISTRATIVO / COBERTURA GEOGRÁFICA', () => {
   const sessionId = `E2E-COV-${Date.now()}`;
-  const officialPayload = OFFICIAL_PHASE_O_PRES_T2_PAYLOAD;
+  // Payload sintético de teste em formato QRBU FASE:O, com SHA-512 válido (não é BU oficial do TSE).
+  const syntheticPhaseOPayload = SYNTHETIC_PHASE_O_PRES_T2_PAYLOAD;
 
   test.beforeAll(async () => {
     const prisma = await createE2EPrismaClient();
@@ -71,7 +72,7 @@ test.describe('E2E ADMINISTRATIVO / COBERTURA GEOGRÁFICA', () => {
 
     const scanRes = await page.request.post('/api/scan', {
       headers: { 'x-csrf-token': csrfToken },
-      data: { content: officialPayload, isSimulation: false, sessionId: sessionId + '-OUT' }
+      data: { content: syntheticPhaseOPayload, isSimulation: false, sessionId: sessionId + '-OUT' }
     });
 
     expect(scanRes.status()).toBe(403);
@@ -115,7 +116,7 @@ test.describe('E2E ADMINISTRATIVO / COBERTURA GEOGRÁFICA', () => {
 
     const scanRes = await page.request.post('/api/scan', {
       headers: { 'x-csrf-token': csrfToken },
-      data: { content: officialPayload, isSimulation: false, sessionId: sessionId + '-IN' }
+      data: { content: syntheticPhaseOPayload, isSimulation: false, sessionId: sessionId + '-IN' }
     });
 
     expect(scanRes.status()).toBe(200);

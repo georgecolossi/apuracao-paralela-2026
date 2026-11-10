@@ -1,10 +1,11 @@
 import { test, expect } from '@playwright/test';
 import { Tse2026BallotReportParser } from '../src/lib/parser/Tse2026BallotReportParser';
-import { OFFICIAL_PHASE_O_PRES_T2_PAYLOAD, createE2EPrismaClient } from './helpers/e2eSupport';
+import { SYNTHETIC_PHASE_O_PRES_T2_PAYLOAD, createE2EPrismaClient } from './helpers/e2eSupport';
 
 test.describe('E2E ADMINISTRATIVO / RESET DA APURAÇÃO', () => {
   const sessionId = `E2E-RESET-${Date.now()}`;
-  const officialPayload = OFFICIAL_PHASE_O_PRES_T2_PAYLOAD;
+  // Payload sintético de teste em formato QRBU FASE:O, com SHA-512 válido (não é BU oficial do TSE).
+  const syntheticPhaseOPayload = SYNTHETIC_PHASE_O_PRES_T2_PAYLOAD;
 
   test.beforeAll(async () => {
     const prisma = await createE2EPrismaClient();
@@ -79,10 +80,10 @@ test.describe('E2E ADMINISTRATIVO / RESET DA APURAÇÃO', () => {
     const csrfRes = await page.request.get('/api/csrf-token');
     const { csrfToken } = await csrfRes.json();
 
-    // 2. Enviar payload oficial de Turno 2
+    // 2. Enviar payload sintético FASE:O de Turno 2
     const initialScanRes = await page.request.post('/api/scan', {
       headers: { 'x-csrf-token': csrfToken },
-      data: { content: officialPayload, isSimulation: false, sessionId: sessionId + '-A' }
+      data: { content: syntheticPhaseOPayload, isSimulation: false, sessionId: sessionId + '-A' }
     });
     expect([200, 409]).toContain(initialScanRes.status());
 
@@ -105,7 +106,7 @@ test.describe('E2E ADMINISTRATIVO / RESET DA APURAÇÃO', () => {
     // 5. Processar o mesmo BU novamente (Deve funcionar porque o BD foi zerado)
     const newScanRes = await page.request.post('/api/scan', {
       headers: { 'x-csrf-token': csrfToken },
-      data: { content: officialPayload, isSimulation: false, sessionId: sessionId + '-B' }
+      data: { content: syntheticPhaseOPayload, isSimulation: false, sessionId: sessionId + '-B' }
     });
     const newScanData = await newScanRes.json();
     expect(newScanRes.status()).toBe(200);
@@ -122,8 +123,8 @@ test.describe('E2E ADMINISTRATIVO / RESET DA APURAÇÃO', () => {
     const finalTotals = await finalTotalsRes.json();
     
     const parser = new Tse2026BallotReportParser();
-    const parsed = parser.parseReport(officialPayload, [officialPayload]);
-    if ('code' in parsed) throw new Error('Failed to parse official payload');
+    const parsed = parser.parseReport(syntheticPhaseOPayload, [syntheticPhaseOPayload]);
+    if ('code' in parsed) throw new Error('Failed to parse synthetic FASE:O payload');
     const expectedAgg: Record<string, number> = {};
     for (const v of parsed.votes) {
       const key = `${v.officeName}|${v.candidateNumber || null}|${v.partyNumber || null}|${v.type}`;
@@ -163,7 +164,7 @@ test.describe('E2E ADMINISTRATIVO / RESET DA APURAÇÃO', () => {
     // 6. Testar Duplicidade
     const dupScanRes = await page.request.post('/api/scan', {
       headers: { 'x-csrf-token': csrfToken },
-      data: { content: officialPayload, isSimulation: false, sessionId: sessionId + '-C' }
+      data: { content: syntheticPhaseOPayload, isSimulation: false, sessionId: sessionId + '-C' }
     });
     expect(dupScanRes.status()).toBe(409);
     const dupScanData = await dupScanRes.json();

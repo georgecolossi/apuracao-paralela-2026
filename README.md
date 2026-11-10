@@ -25,7 +25,10 @@ O **Apuração Paralela 2.0** é uma aplicação web independente, com código-f
 Originado na experiência cívica de acompanhamento eleitoral em Concórdia/SC (v1.0), o projeto foi reestruturado na versão **2.0** para operar como **plataforma universal multi-eleição**, configurável pelo Setup Wizard administrativo para pleitos **Municipais**, **Estaduais**, **Nacionais** ou **Consultas Populares**, com suporte simultâneo a múltiplos cargos, turnos independentes e acompanhamento em estúdio para imprensa e rádios.
 
 > [!IMPORTANT]
-> **Aviso de Isenção Institucional:** Esta plataforma é uma iniciativa cívica independente com código-fonte público para fins de transparência técnica. **Não possui qualquer vínculo institucional, técnico ou operacional com o Tribunal Superior Eleitoral (TSE) ou com Tribunais Regionais Eleitorais (TREs)** e **não substitui os resultados oficiais da Justiça Eleitoral**. A validação SHA-512 garante integridade do conteúdo lido no QR Code em relação ao impresso na urna, mas não realiza verificação criptográfica PKI/ICP-Brasil da assinatura digital da urna.
+> **Aviso de Isenção Institucional:** Esta plataforma é uma iniciativa cívica independente com código-fonte público para fins de transparência técnica. **Não possui qualquer vínculo institucional, técnico ou operacional com o Tribunal Superior Eleitoral (TSE) ou com Tribunais Regionais Eleitorais (TREs)** e **não substitui os resultados oficiais da Justiça Eleitoral**. É essencial distinguir três níveis de verificação:
+> 1. **Integridade de conteúdo (SHA-512):** verificada matematicamente sobre o texto do QRBU em relação ao hash informado no envelope;
+> 2. **Assinatura digital (`ASSI:` / PKI/ICP-Brasil):** **não** é verificada offline pela plataforma (`sigStatus` permanece `'UNCHECKED'`);
+> 3. **Autenticidade/origem de um BU oficial:** os testes automatizados E2E `FASE:O` usam payloads sintéticos de teste com SHA-512 válido, não comprovando assinatura digital oficial nem emissão genuína pelo TSE.
 
 ---
 

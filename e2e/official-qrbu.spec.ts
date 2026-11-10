@@ -3,12 +3,12 @@ import fs from 'fs';
 import path from 'path';
 import { Tse2026BallotReportParser } from '../src/lib/parser/Tse2026BallotReportParser';
 import { BallotReportData } from '../src/lib/parser';
-import { convertQrbuPartsToOfficialPhaseO, createE2EPrismaClient } from './helpers/e2eSupport';
+import { buildSyntheticPhaseOPartsWithValidHash, createE2EPrismaClient } from './helpers/e2eSupport';
 
-test.describe('E2E OFFICIAL FIXTURE', () => {
+test.describe('E2E FIXTURE ESTRUTURA TSE 2026', () => {
   const examplesDir = path.join(__dirname, '../tests/fixtures/tse-2026/official/examples');
 
-  test('Fluxo completo usando payload OFICIAL TSE 2026', async ({ page }) => {
+  test('Rejeita FASE:S original e conclui fluxo usando variante sintética FASE:O com SHA-512 válido', async ({ page }) => {
     let examples: string[] = [];
     if (fs.existsSync(examplesDir)) {
       examples = fs.readdirSync(examplesDir).filter(dir =>
@@ -24,10 +24,12 @@ test.describe('E2E OFFICIAL FIXTURE', () => {
       .filter(f => /^qrbu-\d+-of-\d+\.txt$/.test(f))
       .sort();
 
+    // Fixture pública original FASE:S preservada intacta em disco (testada para rejeição).
     const simulatedFixtureParts = files.map(file => {
       return fs.readFileSync(path.join(decodedDir, file), 'utf8').trim();
     });
-    const partsPayloads = convertQrbuPartsToOfficialPhaseO(simulatedFixtureParts);
+    // Variante sintética de teste em formato QRBU FASE:O com SHA-512 válido (não é BU oficial nem comprova assinatura digital).
+    const partsPayloads = buildSyntheticPhaseOPartsWithValidHash(simulatedFixtureParts);
 
     const setupParser = new Tse2026BallotReportParser();
     const full = setupParser.reconstruct(partsPayloads) as string;
@@ -79,7 +81,7 @@ test.describe('E2E OFFICIAL FIXTURE', () => {
     await prisma.election.create({
       data: {
         plei: parsed.electionId,
-        name: `Eleição Oficial Teste ${parsed.electionId}`,
+        name: `Eleição Teste Formato TSE ${parsed.electionId}`,
         year: 2026,
         type: 'GENERAL',
         status: 'ACTIVE',
@@ -129,7 +131,7 @@ test.describe('E2E OFFICIAL FIXTURE', () => {
     expect(rejectedSimulatedRes.status()).toBe(400);
     expect((await rejectedSimulatedRes.json()).error).toBe('SIMULATED_QRBU_REJECTED');
 
-    const sessionId = `E2E-OFFICIAL-${Date.now()}`;
+    const sessionId = `E2E-PHASEO-${Date.now()}`;
 
     // 4. Scan Parts
     let reportId = '';
@@ -163,7 +165,7 @@ test.describe('E2E OFFICIAL FIXTURE', () => {
 
     // 7. Confirma que apareceu no Painel Público Dinâmico
     await page.goto(`/apuracao?round=${parsed.roundNumber}`);
-    await expect(page.locator('body')).toContainText(`Eleição Oficial Teste ${parsed.electionId}`);
+    await expect(page.locator('body')).toContainText(`Eleição Teste Formato TSE ${parsed.electionId}`);
     await expect(page.locator('body')).toContainText('Presidente');
 
     // 7.1 Verificar agregação comparando com parsed.votes
