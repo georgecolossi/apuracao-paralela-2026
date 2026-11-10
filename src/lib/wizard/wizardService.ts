@@ -8,7 +8,9 @@ import {
   ElectionInvariantError,
   VALID_BRAZILIAN_UFS,
   buildTseSyncConfigKey,
-  validateTseSourceUrl
+  TseDnsLookupFn,
+  validateTseSourceUrl,
+  resolveAndValidateTseSourceUrl
 } from '@/lib/validation/electionContext';
 import { validateAdminConfirmation, getConfirmationAliases } from '@/lib/normalization';
 import { validatePasswordStrength } from '@/lib/validation/password';
@@ -288,7 +290,11 @@ export async function getWizardMetadata(electionId?: string) {
  * Salva ou atualiza uma eleição via assistente em transação atômica.
  * Atende às diretrizes de isolamento, integridade global e não-homologação precipitada de cobertura.
  */
-export async function saveElectionWizard(userId: string, payload: WizardPayload) {
+export async function saveElectionWizard(
+  userId: string,
+  payload: WizardPayload,
+  options?: { dnsLookup?: TseDnsLookupFn }
+) {
   // 1. Validações preliminares
   if (!payload.name || typeof payload.name !== 'string' || payload.name.trim().length < 3) {
     throw new WizardValidationError('INVALID_NAME', 'O nome da eleição deve ter pelo menos 3 caracteres.');
@@ -302,6 +308,25 @@ export async function saveElectionWizard(userId: string, payload: WizardPayload)
   const validTypes = ['GENERAL', 'MUNICIPAL', 'SUPPLEMENTARY', 'CONSULTA'];
   if (!validTypes.includes(payload.type)) {
     throw new WizardValidationError('INVALID_TYPE', `Tipo de eleição inválido. Deve ser: ${validTypes.join(', ')}.`);
+  }
+
+  // Validação anti-SSRF (incluindo resolução DNS) fora da transação para evitar bloqueio de escrita no SQLite
+  const preValidatedSourceUrls = new Map<string, string>();
+  if (Array.isArray(payload.tseConfigs)) {
+    for (const cfg of payload.tseConfigs) {
+      if (cfg.sourceUrl && cfg.sourceUrl.trim()) {
+        const trimmedUrl = cfg.sourceUrl.trim();
+        if (!preValidatedSourceUrls.has(trimmedUrl)) {
+          const urlCheck = await resolveAndValidateTseSourceUrl(trimmedUrl, {
+            dnsLookup: options?.dnsLookup
+          });
+          if (!urlCheck.valid) {
+            throw new WizardValidationError('INVALID_TSE_SOURCE_URL', urlCheck.reason);
+          }
+          preValidatedSourceUrls.set(trimmedUrl, urlCheck.normalized);
+        }
+      }
+    }
   }
 
   // 2. Transação Atômica com Prisma
@@ -1161,11 +1186,16 @@ export async function saveElectionWizard(userId: string, payload: WizardPayload)
 
         let cleanSourceUrl: string | null = null;
         if (cfg.sourceUrl && cfg.sourceUrl.trim()) {
-          const urlCheck = validateTseSourceUrl(cfg.sourceUrl);
-          if (!urlCheck.valid) {
-            throw new WizardValidationError('INVALID_TSE_SOURCE_URL', urlCheck.reason);
+          const preValidated = preValidatedSourceUrls.get(cfg.sourceUrl.trim());
+          if (preValidated) {
+            cleanSourceUrl = preValidated;
+          } else {
+            const urlCheck = validateTseSourceUrl(cfg.sourceUrl);
+            if (!urlCheck.valid) {
+              throw new WizardValidationError('INVALID_TSE_SOURCE_URL', urlCheck.reason);
+            }
+            cleanSourceUrl = urlCheck.normalized;
           }
-          cleanSourceUrl = urlCheck.normalized;
         }
 
         const effectiveUfForKey = rawUf || (scopeType === 'NACIONAL' ? 'BR' : null);

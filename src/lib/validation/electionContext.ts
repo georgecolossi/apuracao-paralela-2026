@@ -2,6 +2,10 @@
  * Validação de Invariantes Contextuais Multi-Eleição e Regras de Negócio (PR 1)
  */
 
+import dns from 'node:dns';
+import http from 'node:http';
+import https from 'node:https';
+
 export const VALID_BRAZILIAN_UFS = new Set([
   'AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO',
   'MA', 'MT', 'MS', 'MG', 'PA', 'PB', 'PR', 'PE', 'PI',
@@ -749,23 +753,449 @@ export function buildTseSyncConfigKey(params: {
   return `R${r}:OFFICE-${off}:${scope}:${uf}:${mun}`;
 }
 
-function isBlockedPrivateOrMetadataHost(hostname: string): boolean {
-  const lower = hostname.toLowerCase();
-  if (lower === '169.254.169.254' || lower === '0.0.0.0' || lower === 'metadata.google.internal') {
+export interface TseDnsRecord {
+  address: string;
+  family: 4 | 6;
+}
+
+export type TseDnsLookupFn = (
+  hostname: string,
+  options: { all: true; verbatim?: boolean }
+) => Promise<Array<{ address: string; family: number }>>;
+
+export interface TseSourceUrlValidationOptions {
+  /**
+   * Permissao estrita para servidores HTTP de loopback em testes automatizados.
+   * Estritamente ignorada quando NODE_ENV === 'production'.
+   */
+  allowTestLoopbackHttp?: boolean;
+  /** Injetavel para testes unitarios de resolucao DNS / rebinding. */
+  dnsLookup?: TseDnsLookupFn;
+}
+
+export type TseUrlValidationResult =
+  | {
+      valid: true;
+      normalized: string;
+      hostname: string;
+      isIpLiteral: boolean;
+      isTestLoopback: boolean;
+      canonicalIp?: TseDnsRecord;
+    }
+  | {
+      valid: false;
+      reason: string;
+    };
+
+export type TseResolvedUrlValidationResult =
+  | {
+      valid: true;
+      normalized: string;
+      hostname: string;
+      isIpLiteral: boolean;
+      isTestLoopback: boolean;
+      resolvedAddresses: TseDnsRecord[];
+    }
+  | {
+      valid: false;
+      errorType: 'SSRF_BLOCKED' | 'DNS_ERROR';
+      reason: string;
+    };
+
+const BLOCKED_INTERNAL_EXACT_HOSTS = new Set([
+  'localhost',
+  'localhost.localdomain',
+  'ip6-localhost',
+  'ip6-loopback',
+  'metadata',
+  'metadata.google.internal',
+  'metadata.goog',
+  'instance-data',
+  'host.docker.internal',
+  'gateway.docker.internal',
+  'kubernetes.default',
+  'kubernetes.default.svc'
+]);
+
+const BLOCKED_INTERNAL_SUFFIXES = [
+  '.localhost',
+  '.localhost.localdomain',
+  '.local',
+  '.internal',
+  '.localdomain',
+  '.home.arpa',
+  '.arpa'
+];
+
+function isTestLoopbackRuntimeAllowed(options?: TseSourceUrlValidationOptions): boolean {
+  if (process.env.NODE_ENV === 'production') {
+    return false;
+  }
+  return (
+    options?.allowTestLoopbackHttp === true &&
+    process.env.NODE_ENV === 'test' &&
+    process.env.VITEST === 'true'
+  );
+}
+
+/**
+ * Normaliza o hostname removendo colchetes IPv6, ponto final FQDN e caixa alta.
+ */
+export function normalizeHostnameForSsrf(hostname: string): string {
+  let clean = hostname.trim();
+  if (clean.startsWith('[') && clean.endsWith(']')) {
+    clean = clean.slice(1, -1);
+  }
+  clean = clean.replace(/\.+$/, '');
+  return clean.toLowerCase();
+}
+
+function parseIPv4Part(part: string): number | null {
+  if (!part) return null;
+  if (/^0[xX][0-9a-fA-F]+$/.test(part)) {
+    const val = Number.parseInt(part.slice(2), 16);
+    return Number.isSafeInteger(val) && val >= 0 ? val : null;
+  }
+  if (/^0[0-7]*$/.test(part)) {
+    const val = Number.parseInt(part, 8);
+    return Number.isSafeInteger(val) && val >= 0 ? val : null;
+  }
+  if (/^[1-9]\d*$/.test(part)) {
+    const val = Number.parseInt(part, 10);
+    return Number.isSafeInteger(val) && val >= 0 ? val : null;
+  }
+  return null;
+}
+
+/**
+ * Normaliza representacoes IPv4 (decimal, octal, hexadecimal, abreviada 1-3 partes ou padrao 4 octetos)
+ * para inteiro sem sinal de 32 bits.
+ */
+export function parseAndNormalizeIPv4(rawIp: string): number | null {
+  const clean = normalizeHostnameForSsrf(rawIp);
+  if (!clean || clean.includes(':') || clean.includes('%') || /\s/.test(clean)) {
+    return null;
+  }
+
+  const parts = clean.split('.');
+  if (parts.length < 1 || parts.length > 4) {
+    return null;
+  }
+
+  const parsedParts: number[] = [];
+  for (const part of parts) {
+    const num = parseIPv4Part(part);
+    if (num === null) return null;
+    parsedParts.push(num);
+  }
+
+  if (parsedParts.length === 1) {
+    const [a] = parsedParts;
+    return a <= 0xffffffff ? a >>> 0 : null;
+  }
+  if (parsedParts.length === 2) {
+    const [a, b] = parsedParts;
+    if (a > 0xff || b > 0xffffff) return null;
+    return ((a << 24) | b) >>> 0;
+  }
+  if (parsedParts.length === 3) {
+    const [a, b, c] = parsedParts;
+    if (a > 0xff || b > 0xff || c > 0xffff) return null;
+    return ((a << 24) | (b << 16) | c) >>> 0;
+  }
+
+  const [a, b, c, d] = parsedParts;
+  if (a > 0xff || b > 0xff || c > 0xff || d > 0xff) return null;
+  return ((a << 24) | (b << 16) | (c << 8) | d) >>> 0;
+}
+
+function parseStrictDecimalDottedIPv4(raw: string): number | null {
+  const parts = raw.split('.');
+  if (parts.length !== 4) return null;
+  const nums: number[] = [];
+  for (const part of parts) {
+    if (!/^\d{1,3}$/.test(part)) return null;
+    const val = Number.parseInt(part, 10);
+    if (val < 0 || val > 255) return null;
+    nums.push(val);
+  }
+  return ((nums[0] << 24) | (nums[1] << 16) | (nums[2] << 8) | nums[3]) >>> 0;
+}
+
+/**
+ * Formata um IPv4 de 32 bits sem sinal para notacao pontilhada canonica.
+ */
+export function formatIPv4Uint32(ipInt: number): string {
+  return [
+    (ipInt >>> 24) & 0xff,
+    (ipInt >>> 16) & 0xff,
+    (ipInt >>> 8) & 0xff,
+    ipInt & 0xff
+  ].join('.');
+}
+
+function isPublicIPv4Uint32(ipInt: number): boolean {
+  const a = (ipInt >>> 24) & 0xff;
+  const b = (ipInt >>> 16) & 0xff;
+  const c = (ipInt >>> 8) & 0xff;
+
+  if (a === 0) return false; // 0.0.0.0/8 (unspecified / this network)
+  if (a === 10) return false; // 10.0.0.0/8 (private RFC 1918)
+  if (a === 100 && b >= 64 && b <= 127) return false; // 100.64.0.0/10 (CGNAT RFC 6598)
+  if (a === 127) return false; // 127.0.0.0/8 (loopback)
+  if (a === 169 && b === 254) return false; // 169.254.0.0/16 (link-local & cloud metadata)
+  if (a === 172 && b >= 16 && b <= 31) return false; // 172.16.0.0/12 (private RFC 1918)
+  if (a === 192 && b === 0 && c === 0) return false; // 192.0.0.0/24 (IETF protocol assignments)
+  if (a === 192 && b === 0 && c === 2) return false; // 192.0.2.0/24 (TEST-NET-1)
+  if (a === 192 && b === 88 && c === 99) return false; // 192.88.99.0/24 (6to4 relay deprecated)
+  if (a === 192 && b === 168) return false; // 192.168.0.0/16 (private RFC 1918)
+  if (a === 198 && (b === 18 || b === 19)) return false; // 198.18.0.0/15 (benchmarking)
+  if (a === 198 && b === 51 && c === 100) return false; // 198.51.100.0/24 (TEST-NET-2)
+  if (a === 203 && b === 0 && c === 113) return false; // 203.0.113.0/24 (TEST-NET-3)
+  if (a >= 224) return false; // 224.0.0.0/4 (multicast) & 240.0.0.0/4 (reserved/broadcast)
+
+  return true;
+}
+
+/**
+ * Converte um endereco IPv6 (comprimido, completo ou com IPv4 embutido) em 8 hextetos de 16 bits.
+ * Rejeita zone IDs (%) ou sintaxe invalida retornando null.
+ */
+export function parseIPv6ToHextets(rawIp: string): number[] | null {
+  const clean = normalizeHostnameForSsrf(rawIp);
+  if (!clean || !clean.includes(':') || clean.includes('%') || /\s/.test(clean)) {
+    return null;
+  }
+
+  const doubleColonIndex = clean.indexOf('::');
+  if (doubleColonIndex !== -1 && clean.indexOf('::', doubleColonIndex + 2) !== -1) {
+    return null;
+  }
+
+  let leftGroups: string[] = [];
+  let rightGroups: string[] = [];
+
+  if (doubleColonIndex !== -1) {
+    const leftPart = clean.slice(0, doubleColonIndex);
+    const rightPart = clean.slice(doubleColonIndex + 2);
+    leftGroups = leftPart ? leftPart.split(':') : [];
+    rightGroups = rightPart ? rightPart.split(':') : [];
+  } else {
+    leftGroups = clean.split(':');
+  }
+
+  // Trata sufixo IPv4 embutido (ex: ::ffff:127.0.0.1)
+  const targetGroups = doubleColonIndex !== -1 ? rightGroups : leftGroups;
+  if (targetGroups.length > 0 && targetGroups[targetGroups.length - 1].includes('.')) {
+    const ipv4Token = targetGroups.pop()!;
+    const embeddedIpv4 = parseStrictDecimalDottedIPv4(ipv4Token);
+    if (embeddedIpv4 === null) return null;
+    targetGroups.push(((embeddedIpv4 >>> 16) & 0xffff).toString(16));
+    targetGroups.push((embeddedIpv4 & 0xffff).toString(16));
+  }
+
+  if (doubleColonIndex === -1) {
+    if (leftGroups.length !== 8) return null;
+  } else {
+    if (leftGroups.length + rightGroups.length >= 8) return null;
+  }
+
+  const parseHextet = (g: string): number | null => {
+    if (!/^[0-9a-fA-F]{1,4}$/.test(g)) return null;
+    return Number.parseInt(g, 16);
+  };
+
+  const leftNums = leftGroups.map(parseHextet);
+  const rightNums = rightGroups.map(parseHextet);
+  if (leftNums.some(n => n === null) || rightNums.some(n => n === null)) {
+    return null;
+  }
+
+  if (doubleColonIndex === -1) {
+    return leftNums as number[];
+  }
+
+  const zeroCount = 8 - leftNums.length - rightNums.length;
+  return [
+    ...(leftNums as number[]),
+    ...Array(zeroCount).fill(0),
+    ...(rightNums as number[])
+  ];
+}
+
+function formatIPv6FromHextets(h: number[]): string {
+  return h.map(v => v.toString(16).padStart(4, '0')).join(':');
+}
+
+function isPublicIPv6Hextets(h: number[]): boolean {
+  if (h.length !== 8) return false;
+
+  const isZeroPrefix5 = h[0] === 0 && h[1] === 0 && h[2] === 0 && h[3] === 0 && h[4] === 0;
+
+  // ::ffff:0:0/96 (IPv4-mapped IPv6): valida o IPv4 embutido
+  if (isZeroPrefix5 && h[5] === 0xffff) {
+    const mappedIpv4 = ((h[6] << 16) | h[7]) >>> 0;
+    return isPublicIPv4Uint32(mappedIpv4);
+  }
+
+  // ::/128 (unspecified), ::1/128 (loopback) e ::a.b.c.d (IPv4-compatible depreciado)
+  if (isZeroPrefix5 && h[5] === 0) {
+    return false;
+  }
+
+  // fc00::/7 (Unique Local Address, incluindo fd00:ec2::254)
+  if ((h[0] & 0xfe00) === 0xfc00) {
+    return false;
+  }
+
+  // fe80::/10 (Link-Local) e fec0::/10 (Site-Local depreciado)
+  if ((h[0] & 0xffc0) === 0xfe80 || (h[0] & 0xffc0) === 0xfec0) {
+    return false;
+  }
+
+  // ff00::/8 (Multicast)
+  if ((h[0] & 0xff00) === 0xff00) {
+    return false;
+  }
+
+  // Apenas Global Unicast 2000::/3 e publicamente roteavel na Internet
+  if (h[0] < 0x2000 || h[0] > 0x3fff) {
+    return false;
+  }
+
+  // Bloqueia subfaixas especiais reservadas dentro de 2000::/3
+  if (h[0] === 0x2001) {
+    if (h[1] === 0x0000) return false; // 2001::/32 Teredo
+    if (h[1] === 0x0002 && h[2] === 0x0000) return false; // 2001:2::/48 Benchmarking
+    if ((h[1] & 0xfff0) === 0x0010 || (h[1] & 0xfff0) === 0x0020) return false; // ORCHID / ORCHIDv2
+    if (h[1] === 0x0db8) return false; // 2001:db8::/32 Documentation
+  }
+  if (h[0] === 0x2002) {
+    return false; // 2002::/16 6to4 depreciado (RFC 7526)
+  }
+  if (h[0] === 0x3fff && (h[1] & 0xf000) === 0x0000) {
+    return false; // 3fff::/20 Documentation (RFC 9637)
+  }
+
+  return true;
+}
+
+/**
+ * Normaliza e verifica se um endereco IP (IPv4 em qualquer representacao ou IPv6) e estritamente publico.
+ * Opera em modo fail-closed.
+ */
+export function isPublicIpAddress(rawIp: string): boolean {
+  const clean = rawIp.trim();
+  if (!clean || clean.includes('%')) {
+    return false;
+  }
+
+  const ipv4Int = parseAndNormalizeIPv4(clean);
+  if (ipv4Int !== null) {
+    return isPublicIPv4Uint32(ipv4Int);
+  }
+
+  const ipv6Hextets = parseIPv6ToHextets(clean);
+  if (ipv6Hextets !== null) {
+    return isPublicIPv6Hextets(ipv6Hextets);
+  }
+
+  return false;
+}
+
+function normalizeIpRecord(rawIp: string): TseDnsRecord | null {
+  if (!rawIp || rawIp.includes('%')) return null;
+
+  const ipv4Int = parseAndNormalizeIPv4(rawIp);
+  if (ipv4Int !== null) {
+    return { address: formatIPv4Uint32(ipv4Int), family: 4 };
+  }
+
+  const ipv6Hextets = parseIPv6ToHextets(rawIp);
+  if (ipv6Hextets !== null) {
+    return { address: formatIPv6FromHextets(ipv6Hextets), family: 6 };
+  }
+
+  return null;
+}
+
+function isLoopbackHostOrIp(cleanHost: string): boolean {
+  if (
+    cleanHost === 'localhost' ||
+    cleanHost.endsWith('.localhost') ||
+    cleanHost === 'localhost.localdomain'
+  ) {
     return true;
   }
-  if (/^10\./.test(lower) || /^192\.168\./.test(lower) || /^172\.(1[6-9]|2\d|3[01])\./.test(lower)) {
+
+  const ipv4Int = parseAndNormalizeIPv4(cleanHost);
+  if (ipv4Int !== null) {
+    return ((ipv4Int >>> 24) & 0xff) === 127;
+  }
+
+  const ipv6Hextets = parseIPv6ToHextets(cleanHost);
+  if (ipv6Hextets !== null) {
+    const isLoopbackV6 =
+      ipv6Hextets[0] === 0 &&
+      ipv6Hextets[1] === 0 &&
+      ipv6Hextets[2] === 0 &&
+      ipv6Hextets[3] === 0 &&
+      ipv6Hextets[4] === 0 &&
+      ipv6Hextets[5] === 0 &&
+      ipv6Hextets[6] === 0 &&
+      ipv6Hextets[7] === 1;
+    if (isLoopbackV6) return true;
+
+    const isMappedLoopback =
+      ipv6Hextets[0] === 0 &&
+      ipv6Hextets[1] === 0 &&
+      ipv6Hextets[2] === 0 &&
+      ipv6Hextets[3] === 0 &&
+      ipv6Hextets[4] === 0 &&
+      ipv6Hextets[5] === 0xffff &&
+      ((ipv6Hextets[6] >>> 8) & 0xff) === 127;
+    if (isMappedLoopback) return true;
+  }
+
+  return false;
+}
+
+function isBlockedInternalHostname(cleanHost: string): boolean {
+  if (
+    !cleanHost ||
+    /\s/.test(cleanHost) ||
+    cleanHost.includes('%') ||
+    cleanHost.includes('{') ||
+    cleanHost.includes('}')
+  ) {
+    return true;
+  }
+  if (BLOCKED_INTERNAL_EXACT_HOSTS.has(cleanHost)) {
+    return true;
+  }
+  if (BLOCKED_INTERNAL_SUFFIXES.some(suffix => cleanHost.endsWith(suffix))) {
+    return true;
+  }
+  // Hostnames de rotulo unico (sem ponto, ex: "metadata", "redis") nao sao dominios publicos
+  if (!cleanHost.includes('.')) {
     return true;
   }
   return false;
 }
 
 /**
- * Valida URL de origem externa para integração TSE contra esquemas inseguros e SSRF em hosts privados/metadata.
+ * Valida URL de origem externa para integracao TSE contra esquemas inseguros e SSRF
+ * em IPs privados/reservados (IPv4 e IPv6, incluindo representacoes alternativas) e hosts internos.
+ * Em producao, nunca permite HTTP nem localhost.
  */
 export function validateTseSourceUrl(
-  rawUrl: string
-): { valid: true; normalized: string } | { valid: false; reason: string } {
+  rawUrl: string,
+  options?: TseSourceUrlValidationOptions
+): TseUrlValidationResult {
+  if (!rawUrl || typeof rawUrl !== 'string') {
+    return { valid: false, reason: 'URL de origem externa malformada.' };
+  }
+
   const trimmed = rawUrl.trim();
   let parsed: URL;
   try {
@@ -774,14 +1204,363 @@ export function validateTseSourceUrl(
     return { valid: false, reason: 'URL de origem externa malformada.' };
   }
 
-  const isLocalHost = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
-  if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && isLocalHost)) {
-    return { valid: false, reason: 'Protocolo da URL de origem externa não é permitido.' };
+  if (parsed.username || parsed.password) {
+    return { valid: false, reason: 'Credenciais embutidas na URL externa não são permitidas.' };
   }
 
-  if (!parsed.hostname || (!isLocalHost && isBlockedPrivateOrMetadataHost(parsed.hostname))) {
+  if (parsed.port === '0') {
+    return { valid: false, reason: 'Porta de destino da URL externa inválida.' };
+  }
+
+  const rawHost = parsed.hostname;
+  if (!rawHost || rawHost.includes('%') || rawHost.includes('{') || rawHost.includes('}')) {
     return { valid: false, reason: 'Host de destino da URL externa não é permitido.' };
   }
 
-  return { valid: true, normalized: trimmed };
+  const cleanHost = normalizeHostnameForSsrf(rawHost);
+  if (!cleanHost) {
+    return { valid: false, reason: 'Host de destino da URL externa não é permitido.' };
+  }
+
+  const allowLoopback = isTestLoopbackRuntimeAllowed(options) && isLoopbackHostOrIp(cleanHost);
+
+  if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && allowLoopback)) {
+    return { valid: false, reason: 'Protocolo da URL de origem externa não é permitido.' };
+  }
+
+  if (allowLoopback) {
+    return {
+      valid: true,
+      normalized: trimmed,
+      hostname: cleanHost,
+      isIpLiteral: normalizeIpRecord(cleanHost) !== null,
+      isTestLoopback: true,
+      canonicalIp: { address: '127.0.0.1', family: 4 }
+    };
+  }
+
+  const ipRecord = normalizeIpRecord(cleanHost);
+  if (ipRecord !== null) {
+    if (!isPublicIpAddress(cleanHost)) {
+      return { valid: false, reason: 'Host de destino da URL externa não é permitido.' };
+    }
+    return {
+      valid: true,
+      normalized: trimmed,
+      hostname: cleanHost,
+      isIpLiteral: true,
+      isTestLoopback: false,
+      canonicalIp: ipRecord
+    };
+  }
+
+  if (isBlockedInternalHostname(cleanHost)) {
+    return { valid: false, reason: 'Host de destino da URL externa não é permitido.' };
+  }
+
+  return {
+    valid: true,
+    normalized: trimmed,
+    hostname: cleanHost,
+    isIpLiteral: false,
+    isTestLoopback: false
+  };
+}
+
+/**
+ * Valida a URL e resolve todos os registros DNS (A/AAAA), bloqueando em modo fail-closed
+ * qualquer destino cujo DNS resolva total ou parcialmente para enderecos nao publicos.
+ */
+export async function resolveAndValidateTseSourceUrl(
+  rawUrl: string,
+  options?: TseSourceUrlValidationOptions
+): Promise<TseResolvedUrlValidationResult> {
+  const lexical = validateTseSourceUrl(rawUrl, options);
+  if (!lexical.valid) {
+    return {
+      valid: false,
+      errorType: 'SSRF_BLOCKED',
+      reason: lexical.reason
+    };
+  }
+
+  if (lexical.isTestLoopback) {
+    return {
+      valid: true,
+      normalized: lexical.normalized,
+      hostname: lexical.hostname,
+      isIpLiteral: lexical.isIpLiteral,
+      isTestLoopback: true,
+      resolvedAddresses: [{ address: '127.0.0.1', family: 4 }]
+    };
+  }
+
+  if (lexical.isIpLiteral && lexical.canonicalIp) {
+    return {
+      valid: true,
+      normalized: lexical.normalized,
+      hostname: lexical.hostname,
+      isIpLiteral: true,
+      isTestLoopback: false,
+      resolvedAddresses: [lexical.canonicalIp]
+    };
+  }
+
+  const lookupFn: TseDnsLookupFn =
+    options?.dnsLookup ?? ((host, opts) => dns.promises.lookup(host, opts));
+
+  let records: Array<{ address: string; family: number }>;
+  try {
+    records = await lookupFn(lexical.hostname, { all: true, verbatim: true });
+  } catch {
+    return {
+      valid: false,
+      errorType: 'DNS_ERROR',
+      reason: 'Não foi possível resolver o host DNS da URL externa.'
+    };
+  }
+
+  if (!Array.isArray(records) || records.length === 0) {
+    return {
+      valid: false,
+      errorType: 'DNS_ERROR',
+      reason: 'O host DNS da URL externa não retornou endereços válidos.'
+    };
+  }
+
+  const validatedAddresses: TseDnsRecord[] = [];
+  for (const record of records) {
+    if (!record || typeof record.address !== 'string' || !isPublicIpAddress(record.address)) {
+      return {
+        valid: false,
+        errorType: 'SSRF_BLOCKED',
+        reason: 'O host da URL externa resolve para um endereço IP não público.'
+      };
+    }
+
+    const normalized = normalizeIpRecord(record.address);
+    if (!normalized) {
+      return {
+        valid: false,
+        errorType: 'SSRF_BLOCKED',
+        reason: 'O host da URL externa resolve para um endereço IP não público.'
+      };
+    }
+
+    validatedAddresses.push(normalized);
+  }
+
+  return {
+    valid: true,
+    normalized: lexical.normalized,
+    hostname: lexical.hostname,
+    isIpLiteral: false,
+    isTestLoopback: false,
+    resolvedAddresses: validatedAddresses
+  };
+}
+
+/**
+ * Cria funcao customizada de lookup DNS com fixacao dos IPs previamente validados,
+ * impedindo nova consulta DNS no momento da conexao TCP (protecao contra DNS rebinding).
+ */
+export function createPinnedDnsLookup(
+  expectedHostname: string,
+  validatedAddresses: TseDnsRecord[],
+  options?: { allowTestLoopbackHttp?: boolean }
+) {
+  const allowLoopback = isTestLoopbackRuntimeAllowed(options);
+  const cleanExpectedHost = normalizeHostnameForSsrf(expectedHostname);
+
+  const safeAddresses = validatedAddresses.filter(rec => {
+    if (allowLoopback && (rec.address === '127.0.0.1' || rec.address === '::1')) {
+      return true;
+    }
+    return isPublicIpAddress(rec.address);
+  });
+
+  if (safeAddresses.length === 0) {
+    return (
+      _hostname: string,
+      opts: any,
+      cb?: (err: NodeJS.ErrnoException | null, address?: any, family?: number) => void
+    ) => {
+      const callback = typeof opts === 'function' ? opts : cb!;
+      callback(new Error('PINNED_DNS_NO_PUBLIC_ADDRESS'));
+    };
+  }
+
+  // Prioriza IPv4 na ordem preservada caso ambos existam, mantendo todos os IPs validados
+  const ordered = [
+    ...safeAddresses.filter(a => a.family === 4),
+    ...safeAddresses.filter(a => a.family === 6)
+  ];
+
+  return (
+    hostname: string,
+    opts: any,
+    cb?: (err: NodeJS.ErrnoException | null, address?: any, family?: number) => void
+  ) => {
+    const callback = typeof opts === 'function' ? opts : cb!;
+    if (normalizeHostnameForSsrf(hostname) !== cleanExpectedHost) {
+      callback(new Error('PINNED_DNS_HOSTNAME_MISMATCH'));
+      return;
+    }
+
+    const familyFilter = typeof opts === 'object' && opts !== null ? opts.family : undefined;
+    const filtered =
+      familyFilter === 4 || familyFilter === 6
+        ? ordered.filter(a => a.family === familyFilter)
+        : ordered;
+    const candidates = filtered.length > 0 ? filtered : ordered;
+
+    if (typeof opts === 'object' && opts !== null && opts.all) {
+      callback(
+        null,
+        candidates.map(c => ({ address: c.address, family: c.family }))
+      );
+      return;
+    }
+
+    callback(null, candidates[0].address, candidates[0].family);
+  };
+}
+
+const MAX_TSE_RESPONSE_BYTES = 10 * 1024 * 1024;
+
+/**
+ * Executa GET HTTPS/HTTP fixando o IP validado no socket (anti-DNS-rebinding),
+ * bloqueando redirecionamentos HTTP (3xx) e respeitando timeout/AbortSignal.
+ */
+export async function executePinnedHttpGetJson(
+  urlString: string,
+  resolved: Extract<TseResolvedUrlValidationResult, { valid: true }>,
+  options?: {
+    timeoutMs?: number;
+    signal?: AbortSignal;
+    allowTestLoopbackHttp?: boolean;
+    maxBytes?: number;
+  }
+): Promise<{ ok: boolean; status: number; isRedirect?: boolean; json: () => Promise<any> }> {
+  const urlObj = new URL(urlString);
+  const allowLoopback = isTestLoopbackRuntimeAllowed(options) && resolved.isTestLoopback;
+
+  if (urlObj.protocol !== 'https:' && !(urlObj.protocol === 'http:' && allowLoopback)) {
+    throw new Error('UNSAFE_PROTOCOL_BLOCKED');
+  }
+
+  const maxBytes = options?.maxBytes ?? MAX_TSE_RESPONSE_BYTES;
+  const pinnedLookup = createPinnedDnsLookup(resolved.hostname, resolved.resolvedAddresses, {
+    allowTestLoopbackHttp: allowLoopback
+  });
+
+  return new Promise((resolve, reject) => {
+    if (options?.signal?.aborted) {
+      reject(new Error('TSE_FETCH_ABORTED'));
+      return;
+    }
+
+    let settled = false;
+    const cleanupAndReject = (err: Error) => {
+      if (settled) return;
+      settled = true;
+      options?.signal?.removeEventListener('abort', onAbort);
+      reject(err);
+    };
+
+    const transport = urlObj.protocol === 'http:' ? http : https;
+    const requestOptions: https.RequestOptions = {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json'
+      },
+      lookup: pinnedLookup as unknown as NonNullable<https.RequestOptions['lookup']>,
+      timeout: options?.timeoutMs,
+      ...(urlObj.protocol === 'https:'
+        ? {
+            servername: urlObj.hostname,
+            rejectUnauthorized: true
+          }
+        : {})
+    };
+
+    const req = transport.request(urlObj, requestOptions, res => {
+      const statusCode = res.statusCode ?? 0;
+
+      // Bloqueia redirecionamentos para impedir salto para hosts internos via Location
+      if (statusCode >= 300 && statusCode < 400) {
+        res.resume();
+        settled = true;
+        options?.signal?.removeEventListener('abort', onAbort);
+        resolve({
+          ok: false,
+          status: statusCode,
+          isRedirect: true,
+          json: async () => {
+            throw new Error('REDIRECT_BLOCKED');
+          }
+        });
+        return;
+      }
+
+      if (statusCode < 200 || statusCode >= 300) {
+        res.resume();
+        settled = true;
+        options?.signal?.removeEventListener('abort', onAbort);
+        resolve({
+          ok: false,
+          status: statusCode,
+          json: async () => {
+            throw new Error(`HTTP_${statusCode}`);
+          }
+        });
+        return;
+      }
+
+      const chunks: Buffer[] = [];
+      let totalLength = 0;
+
+      res.on('data', (chunk: Buffer | string) => {
+        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        totalLength += buf.length;
+        if (totalLength > maxBytes) {
+          req.destroy(new Error('RESPONSE_TOO_LARGE'));
+          return;
+        }
+        chunks.push(buf);
+      });
+
+      res.on('end', () => {
+        if (settled) return;
+        settled = true;
+        options?.signal?.removeEventListener('abort', onAbort);
+        const bodyText = Buffer.concat(chunks).toString('utf8');
+        resolve({
+          ok: true,
+          status: statusCode,
+          json: async () => JSON.parse(bodyText)
+        });
+      });
+
+      res.on('error', err => {
+        cleanupAndReject(err instanceof Error ? err : new Error(String(err)));
+      });
+    });
+
+    const onAbort = () => {
+      req.destroy(new Error('TSE_FETCH_ABORTED'));
+    };
+
+    options?.signal?.addEventListener('abort', onAbort, { once: true });
+
+    req.on('timeout', () => {
+      req.destroy(new Error('TSE_FETCH_TIMEOUT'));
+    });
+
+    req.on('error', err => {
+      cleanupAndReject(err instanceof Error ? err : new Error(String(err)));
+    });
+
+    req.end();
+  });
 }

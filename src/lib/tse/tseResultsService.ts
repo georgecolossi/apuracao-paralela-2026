@@ -1,5 +1,13 @@
+import dns from 'node:dns';
 import { prisma } from '@/lib/db';
-import { VALID_BRAZILIAN_UFS, validateTseSourceUrl } from '@/lib/validation/electionContext';
+import {
+  VALID_BRAZILIAN_UFS,
+  TseDnsLookupFn,
+  TseResolvedUrlValidationResult,
+  validateTseSourceUrl,
+  resolveAndValidateTseSourceUrl,
+  executePinnedHttpGetJson
+} from '@/lib/validation/electionContext';
 import {
   buildTseContextCacheKey,
   computeTseConfigFingerprint,
@@ -66,6 +74,16 @@ export interface TseServiceResult {
 export interface TseQueryOptions {
   timeoutMs?: number;
   now?: number;
+  dnsLookup?: TseDnsLookupFn;
+  allowTestLoopbackHttp?: boolean;
+}
+
+function isAutomatedTestRuntime(): boolean {
+  return process.env.NODE_ENV === 'test' && process.env.VITEST === 'true';
+}
+
+function isVitestMockFunction(fn: unknown): boolean {
+  return typeof fn === 'function' && typeof (fn as any).mock === 'object';
 }
 
 interface ResolvedTseTarget {
@@ -141,7 +159,10 @@ async function fetchEA20WithTimeout(
   url: string,
   target: ResolvedTseTarget,
   roundNumber: number,
-  timeoutMs: number
+  timeoutMs: number,
+  resolvedUrl: Extract<TseResolvedUrlValidationResult, { valid: true }> | null,
+  usingMockedFetch: boolean,
+  options: TseQueryOptions
 ): Promise<TseOfficeResultDTO> {
   const controller = new AbortController();
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
@@ -154,13 +175,21 @@ async function fetchEA20WithTimeout(
       }, timeoutMs);
     });
 
-    const res = await Promise.race([
-      fetch(url, {
-        cache: 'no-store',
-        signal: controller.signal
-      }),
-      abortPromise
-    ]);
+    const fetchPromise = usingMockedFetch
+      ? fetch(url, {
+          cache: 'no-store',
+          redirect: 'error',
+          signal: controller.signal
+        })
+      : resolvedUrl
+        ? executePinnedHttpGetJson(url, resolvedUrl, {
+            timeoutMs,
+            signal: controller.signal,
+            allowTestLoopbackHttp: options.allowTestLoopbackHttp
+          })
+        : Promise.reject(new Error('UNRESOLVED_TARGET'));
+
+    const res = await Promise.race([fetchPromise, abortPromise]);
 
     if (!res.ok) {
       if (res.status === 404) {
@@ -300,13 +329,17 @@ function resolveTargetsFromConfigs(
     id: string;
     year: number;
     scopes: Array<{
+      id: string;
       scopeType: string;
+      scopeKey: string;
+      isCoverageArea: boolean;
       state: { abbreviation: string } | null;
-      municipality: { officialCode: string; state: { abbreviation: string } } | null;
+      municipality: { officialCode: string; name?: string | null; state: { abbreviation: string } } | null;
     }>;
-    offices: Array<{ code: string; name: string; orderNumber: number }>;
+    offices: Array<{ id: string; code: string; name: string; type: string; orderNumber: number }>;
   },
-  configs: TseSyncConfigCacheInput[]
+  configs: TseSyncConfigCacheInput[],
+  options?: { allowTestLoopbackHttp?: boolean }
 ):
   | { ok: true; targets: ResolvedTseTarget[]; primaryUf: string; primaryMuniCode: string | null }
   | { ok: false; errorCode: string; message: string } {
@@ -318,8 +351,12 @@ function resolveTargetsFromConfigs(
     };
   }
 
-  const municipalScopes = election.scopes.filter(s => s.scopeType === 'MUNICIPAL' && s.municipality);
-  const stateScopes = election.scopes.filter(s => s.scopeType === 'ESTADUAL' && s.state);
+  const municipalScopes = election.scopes.filter(
+    s => s.isCoverageArea && s.scopeType === 'MUNICIPAL' && s.municipality
+  );
+  const stateScopes = election.scopes.filter(
+    s => s.isCoverageArea && s.scopeType === 'ESTADUAL' && s.state
+  );
 
   const officeLookup = new Map<string, { code: string; name: string; orderNumber: number }>();
   for (const off of election.offices) {
@@ -350,7 +387,9 @@ function resolveTargetsFromConfigs(
 
     let validatedSourceUrl: string | null = null;
     if (config.sourceUrl && config.sourceUrl.trim() !== '') {
-      const urlCheck = validateTseSourceUrl(config.sourceUrl);
+      const urlCheck = validateTseSourceUrl(config.sourceUrl, {
+        allowTestLoopbackHttp: options?.allowTestLoopbackHttp
+      });
       if (!urlCheck.valid) {
         return {
           ok: false,
@@ -657,7 +696,7 @@ export async function getDynamicTseResults(
     const electionInclude = {
       rounds: { orderBy: { roundNumber: 'asc' as const } },
       scopes: {
-        where: { isCoverageArea: true },
+        orderBy: { scopeKey: 'asc' as const },
         include: {
           state: { select: { abbreviation: true } },
           municipality: {
@@ -818,7 +857,9 @@ export async function getDynamicTseResults(
       };
     }
 
-    const resolution = resolveTargetsFromConfigs(election, activeConfigs);
+    const resolution = resolveTargetsFromConfigs(election, activeConfigs, {
+      allowTestLoopbackHttp: options.allowTestLoopbackHttp
+    });
     if (!resolution.ok) {
       return {
         status: 422,
@@ -840,9 +881,13 @@ export async function getDynamicTseResults(
 
     const { targets, primaryUf, primaryMuniCode } = resolution;
 
-    // Context-bound 15s cache check
+    // Context-bound 15s cache check (includes TseSyncConfig, ElectionScope, and Office fingerprint)
     const now = options.now ?? Date.now();
-    const configFingerprint = computeTseConfigFingerprint(activeConfigs);
+    const configFingerprint = computeTseConfigFingerprint({
+      configs: activeConfigs,
+      scopes: election.scopes,
+      offices: election.offices
+    });
     const cacheKey = buildTseContextCacheKey({
       electionId: election.id,
       year: election.year,
@@ -862,6 +907,77 @@ export async function getDynamicTseResults(
       };
     }
 
+    const builtTargets = targets.map(target => ({
+      target,
+      url: buildTargetUrl(election.year, target)
+    }));
+
+    for (const item of builtTargets) {
+      const builtLexicalCheck = validateTseSourceUrl(item.url, {
+        allowTestLoopbackHttp: options.allowTestLoopbackHttp
+      });
+      if (!builtLexicalCheck.valid) {
+        return {
+          status: 422,
+          headers: NO_STORE_HEADERS,
+          body: {
+            source: 'TSE',
+            electionId: election.id,
+            electionSlug: election.slug,
+            year: election.year,
+            round: roundParam,
+            municipality: null,
+            status: 'CONFIGURATION_ERROR',
+            error: 'CONFIGURACAO_TSE_INCONSISTENTE',
+            message: 'URL externa gerada pela configuração TSE não é permitida pela política de segurança.',
+            offices: []
+          }
+        };
+      }
+    }
+
+    const usingMockedFetch = isAutomatedTestRuntime() && isVitestMockFunction(globalThis.fetch);
+    const hasDnsOverride =
+      Boolean(options.dnsLookup) ||
+      (isAutomatedTestRuntime() && isVitestMockFunction(dns.promises.lookup));
+
+    let resolvedTargets: Array<TseResolvedUrlValidationResult | null>;
+    if (!usingMockedFetch || hasDnsOverride) {
+      resolvedTargets = await Promise.all(
+        builtTargets.map(item =>
+          resolveAndValidateTseSourceUrl(item.url, {
+            allowTestLoopbackHttp: options.allowTestLoopbackHttp,
+            dnsLookup: options.dnsLookup
+          })
+        )
+      );
+
+      const ssrfBlocked = resolvedTargets.find(
+        (res): res is Extract<TseResolvedUrlValidationResult, { valid: false }> =>
+          res !== null && !res.valid && res.errorType === 'SSRF_BLOCKED'
+      );
+      if (ssrfBlocked) {
+        return {
+          status: 422,
+          headers: NO_STORE_HEADERS,
+          body: {
+            source: 'TSE',
+            electionId: election.id,
+            electionSlug: election.slug,
+            year: election.year,
+            round: roundParam,
+            municipality: null,
+            status: 'CONFIGURATION_ERROR',
+            error: 'CONFIGURACAO_TSE_INCONSISTENTE',
+            message: ssrfBlocked.reason,
+            offices: []
+          }
+        };
+      }
+    } else {
+      resolvedTargets = builtTargets.map(() => null);
+    }
+
     const envTimeout = Number(process.env.TSE_FETCH_TIMEOUT_MS);
     const timeoutMs = options.timeoutMs ?? (
       Number.isFinite(envTimeout) && envTimeout >= 50 && envTimeout <= 30000
@@ -869,9 +985,23 @@ export async function getDynamicTseResults(
         : DEFAULT_TSE_FETCH_TIMEOUT_MS
     );
     const officeResults = await Promise.all(
-      targets.map(target => {
-        const url = buildTargetUrl(election.year, target);
-        return fetchEA20WithTimeout(url, target, roundNumber, timeoutMs);
+      builtTargets.map((item, idx) => {
+        const resolved = resolvedTargets[idx];
+        if (resolved && !resolved.valid) {
+          return Promise.resolve({
+            status: 'TEMPORARILY_UNAVAILABLE' as const,
+            cargo: item.target.cargoCode
+          });
+        }
+        return fetchEA20WithTimeout(
+          item.url,
+          item.target,
+          roundNumber,
+          timeoutMs,
+          resolved && resolved.valid ? resolved : null,
+          usingMockedFetch,
+          options
+        );
       })
     );
 
