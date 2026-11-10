@@ -1,12 +1,26 @@
+import http from 'node:http';
+import dns from 'node:dns';
 import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
 import { prisma } from '../src/lib/db';
-import { buildTseSyncConfigKey } from '../src/lib/validation/electionContext';
-import { clearTseResultsCache } from '../src/lib/tse/tseResultsCache';
+import {
+  buildTseSyncConfigKey,
+  createPinnedDnsLookup,
+  isPublicIpAddress,
+  parseAndNormalizeIPv4,
+  resolveAndValidateTseSourceUrl,
+  validateTseSourceUrl
+} from '../src/lib/validation/electionContext';
+import {
+  clearTseResultsCache,
+  computeTseConfigFingerprint,
+  isCacheableTseResponse
+} from '../src/lib/tse/tseResultsCache';
 import { getDynamicTseResults } from '../src/lib/tse/tseResultsService';
 import { GET as getTseResultsRoute } from '../src/app/api/tse-results/route';
 import { saveElectionWizard, activateElectionWizard, getWizardMetadata, validateAndParseTseImport } from '../src/lib/wizard/wizardService';
 
 describe('PR 8 — Adaptador Dinâmico de Integração com o TSE (Universal & Cache 15s)', () => {
+  const originalFetch = globalThis.fetch;
   let adminUser: any;
 
   async function cleanupDatabase() {
@@ -64,6 +78,7 @@ describe('PR 8 — Adaptador Dinâmico de Integração com o TSE (Universal & Ca
   }
 
   beforeEach(async () => {
+    globalThis.fetch = originalFetch;
     vi.restoreAllMocks();
     vi.useRealTimers();
     clearTseResultsCache();
@@ -81,6 +96,8 @@ describe('PR 8 — Adaptador Dinâmico de Integração com o TSE (Universal & Ca
   });
 
   afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.unstubAllEnvs();
     vi.useRealTimers();
   });
 
@@ -1013,7 +1030,7 @@ describe('PR 8 — Adaptador Dinâmico de Integração com o TSE (Universal & Ca
           scopeType: 'MUNICIPAL',
           uf: 'SC',
           muniTseCode: '81051',
-          sourceUrl: 'https://mirror-interno.tse.local/secret-token-path',
+          sourceUrl: 'https://mirror-interno.parceiro-tse.example/secret-token-path',
           status: 'ACTIVE',
           isActive: true
         }
@@ -1128,6 +1145,678 @@ describe('PR 8 — Adaptador Dinâmico de Integração com o TSE (Universal & Ca
       const resAfter = await (await getTseResultsRoute(new Request('http://localhost/api/tse-results?round=1'))).json();
       expect(resAfter.offices[0].progress.processed).toBe(99);
       expect(fetchSpy).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('6. Correções Pós-Auditoria (P1 Anti-SSRF/DNS Rebinding, P2 Fingerprint Completo e Política Parcial)', () => {
+    it('6.1 (P1) Bloqueia integralmente IPv4 loopback, privado, link-local/metadata, unspecified, CGNAT, multicast, reservado e representações alternativas', () => {
+      const blockedIpv4Urls = [
+        // Loopback 127.0.0.0/8 completo
+        'https://127.0.0.1/ea20.json',
+        'https://127.0.1.1/ea20.json',
+        'https://127.255.255.254/ea20.json',
+        // Privados RFC 1918
+        'https://10.0.0.1/ea20.json',
+        'https://172.16.0.1/ea20.json',
+        'https://172.31.255.254/ea20.json',
+        'https://192.168.1.10/ea20.json',
+        // Link-local / Cloud Metadata
+        'https://169.254.169.254/latest/meta-data',
+        'https://169.254.0.1/ea20.json',
+        // Unspecified / This network / CGNAT / Multicast / Broadcast / TEST-NETs
+        'https://0.0.0.0/ea20.json',
+        'https://0.1.2.3/ea20.json',
+        'https://100.64.0.1/ea20.json',
+        'https://100.127.255.254/ea20.json',
+        'https://224.0.0.1/ea20.json',
+        'https://239.255.255.255/ea20.json',
+        'https://240.0.0.1/ea20.json',
+        'https://255.255.255.255/ea20.json',
+        'https://192.0.2.1/ea20.json',
+        'https://198.51.100.1/ea20.json',
+        'https://203.0.113.1/ea20.json',
+        'https://198.18.0.1/ea20.json',
+        // Representações alternativas (decimal, hex, octal, abreviada)
+        'https://2130706433/ea20.json',
+        'https://0x7f000001/ea20.json',
+        'https://0177.0.0.1/ea20.json',
+        'https://127.1/ea20.json',
+        'https://2852039166/ea20.json',
+        'https://0xa9fea9fe/latest/meta-data',
+        'https://0251.0376.0251.0376/ea20.json',
+        'https://0/ea20.json'
+      ];
+
+      for (const badUrl of blockedIpv4Urls) {
+        expect(validateTseSourceUrl(badUrl).valid, `Esperava bloqueio para ${badUrl}`).toBe(false);
+      }
+
+      // Validação direta de normalização de IPs alternativos
+      expect(parseAndNormalizeIPv4('0177.0.0.1')).toBe((127 << 24) | 1);
+      expect(parseAndNormalizeIPv4('0x7f000001')).toBe((127 << 24) | 1);
+      expect(parseAndNormalizeIPv4('2130706433')).toBe((127 << 24) | 1);
+      expect(parseAndNormalizeIPv4('127.1')).toBe((127 << 24) | 1);
+      expect(isPublicIpAddress('0177.0.0.1')).toBe(false);
+      expect(isPublicIpAddress('2130706433')).toBe(false);
+      expect(isPublicIpAddress('0xa9fea9fe')).toBe(false);
+      expect(isPublicIpAddress('200.160.2.3')).toBe(true);
+      expect(isPublicIpAddress('23.196.224.226')).toBe(true);
+    });
+
+    it('6.2 (P1) Bloqueia IPv6 não público (loopback, unspecified, link-local, ULA, multicast, documentação e IPv4-mapeado) e aceita IPv6 público', () => {
+      const blockedIpv6Urls = [
+        'https://[::1]/ea20.json',
+        'https://[0000:0000:0000:0000:0000:0000:0000:0001]/ea20.json',
+        'https://[::]/ea20.json',
+        'https://[fe80::1]/ea20.json',
+        'https://[fc00::1]/ea20.json',
+        'https://[fd00:ec2::254]/latest/meta-data',
+        'https://[ff02::1]/ea20.json',
+        'https://[2001:db8::1]/ea20.json',
+        'https://[3fff::1]/ea20.json',
+        'https://[100::1]/ea20.json',
+        'https://[2002:7f00:1::1]/ea20.json',
+        'https://[::ffff:127.0.0.1]/ea20.json',
+        'https://[::ffff:7f00:1]/ea20.json',
+        'https://[::ffff:169.254.169.254]/ea20.json',
+        'https://[::ffff:a9fe:a9fe]/ea20.json',
+        'https://[::ffff:10.0.0.1]/ea20.json',
+        'https://[::ffff:0.0.0.0]/ea20.json'
+      ];
+
+      for (const badUrl of blockedIpv6Urls) {
+        expect(validateTseSourceUrl(badUrl).valid, `Esperava bloqueio IPv6 para ${badUrl}`).toBe(false);
+      }
+
+      expect(isPublicIpAddress('fe80::1%eth0')).toBe(false);
+      expect(isPublicIpAddress('2606:4700:4700::1111')).toBe(true);
+      expect(isPublicIpAddress('2600:1419:3e00:3::214:b643')).toBe(true);
+
+      expect(validateTseSourceUrl('https://[2606:4700:4700::1111]/oficial/ea20.json').valid).toBe(true);
+      expect(validateTseSourceUrl('https://23.196.224.226/oficial/ea20.json').valid).toBe(true);
+    });
+
+    it('6.3 (P1) Bloqueia HTTP/localhost em produção sem qualquer bypass e rejeita hostnames internos/metadata', () => {
+      // Mesmo em ambiente de teste, URL localhost sem opt-in explícito é rejeitada
+      expect(validateTseSourceUrl('http://localhost:3000/ea20.json').valid).toBe(false);
+      expect(validateTseSourceUrl('https://localhost/ea20.json').valid).toBe(false);
+      expect(validateTseSourceUrl('https://localhost./ea20.json').valid).toBe(false);
+      expect(validateTseSourceUrl('https://sub.localhost/ea20.json').valid).toBe(false);
+      expect(validateTseSourceUrl('http://127.0.0.1:8080/ea20.json').valid).toBe(false);
+      expect(validateTseSourceUrl('https://metadata.google.internal/computeMetadata/v1').valid).toBe(false);
+      expect(validateTseSourceUrl('https://metadata/latest').valid).toBe(false);
+      expect(validateTseSourceUrl('https://mirror-interno.tse.local/ea20.json').valid).toBe(false);
+      expect(validateTseSourceUrl('https://servico.internal/ea20.json').valid).toBe(false);
+      expect(validateTseSourceUrl('https://user:pass@resultados.tse.jus.br/ea20.json').valid).toBe(false);
+
+      // Em produção, mesmo passando allowTestLoopbackHttp: true não existe bypass
+      vi.stubEnv('NODE_ENV', 'production');
+      expect(validateTseSourceUrl('http://localhost:3000/ea20.json', { allowTestLoopbackHttp: true }).valid).toBe(false);
+      expect(validateTseSourceUrl('http://127.0.0.1:8080/ea20.json', { allowTestLoopbackHttp: true }).valid).toBe(false);
+      expect(validateTseSourceUrl('https://localhost/ea20.json', { allowTestLoopbackHttp: true }).valid).toBe(false);
+      expect(validateTseSourceUrl('http://[::1]:3000/ea20.json', { allowTestLoopbackHttp: true }).valid).toBe(false);
+      expect(validateTseSourceUrl('https://resultados.tse.jus.br/oficial').valid).toBe(true);
+    });
+
+    it('6.4 (P1) Resolve DNS validando todos os registros (bloqueando DNS privado e multi-registro misto) e integrando ao Wizard e Endpoint', async () => {
+      // Subcaso A: DNS privado único
+      const privateDns = await resolveAndValidateTseSourceUrl('https://evil-private.example/ea20.json', {
+        dnsLookup: async () => [{ address: '10.20.30.40', family: 4 }]
+      });
+      expect(privateDns.valid).toBe(false);
+
+      // Subcaso B: DNS com múltiplos registros (um público e outro privado/loopback/IPv6 ULA) -> fail-closed
+      const mixedDns4 = await resolveAndValidateTseSourceUrl('https://evil-mixed4.example/ea20.json', {
+        dnsLookup: async () => [
+          { address: '23.196.224.226', family: 4 },
+          { address: '169.254.169.254', family: 4 }
+        ]
+      });
+      expect(mixedDns4.valid).toBe(false);
+
+      const mixedDns6 = await resolveAndValidateTseSourceUrl('https://evil-mixed6.example/ea20.json', {
+        dnsLookup: async () => [
+          { address: '2606:4700:4700::1111', family: 6 },
+          { address: 'fd00:ec2::254', family: 6 }
+        ]
+      });
+      expect(mixedDns6.valid).toBe(false);
+
+      // Subcaso C: Destino público válido com múltiplos registros (IPv4 + IPv6)
+      const validPublicDns = await resolveAndValidateTseSourceUrl('https://resultados-publicos.example/ea20.json', {
+        dnsLookup: async () => [
+          { address: '23.196.224.226', family: 4 },
+          { address: '2600:1419:3e00:3::214:b643', family: 6 }
+        ]
+      });
+      expect(validPublicDns.valid).toBe(true);
+      if (validPublicDns.valid) {
+        expect(validPublicDns.resolvedAddresses).toHaveLength(2);
+      }
+
+      // Subcaso D: Setup Wizard rejeita sourceUrl cujo DNS aponta para IP interno antes de persistir
+      await expect(
+        saveElectionWizard(
+          adminUser.id,
+          {
+            name: 'Eleição Wizard DNS Privado',
+            year: 2026,
+            type: 'MUNICIPAL',
+            tseConfigs: [
+              {
+                roundNumber: 1,
+                officeCode: '11',
+                officialElectionCode: '620',
+                scopeType: 'MUNICIPAL',
+                uf: 'SP',
+                muniTseCode: '62910',
+                sourceUrl: 'https://ssrf-wizard-dns.example/ea20.json'
+              }
+            ]
+          },
+          { dnsLookup: async () => [{ address: '192.168.0.50', family: 4 }] }
+        )
+      ).rejects.toThrow();
+
+      // Subcaso E: Endpoint /api/tse-results bloqueia com 422 quando DNS resolve registro misto sem chamar fetch
+      const ele = await prisma.election.create({
+        data: {
+          name: 'Eleição DNS Mixed',
+          slug: 'eleicao-dns-mixed',
+          year: 2026,
+          status: 'ACTIVE',
+          rounds: { create: { roundNumber: 1, status: 'ACTIVE' } }
+        }
+      });
+
+      await prisma.tseSyncConfig.create({
+        data: {
+          electionId: ele.id,
+          roundNumber: 1,
+          configKey: 'R1:OFFICE-11:MUNICIPAL:SP:62910',
+          officeCode: '11',
+          officialElectionCode: '620',
+          scopeType: 'MUNICIPAL',
+          uf: 'SP',
+          muniTseCode: '62910',
+          sourceUrl: 'https://dns-mixed.parceiro.example',
+          status: 'ACTIVE',
+          isActive: true
+        }
+      });
+
+      const fetchSpy = vi.fn();
+      globalThis.fetch = fetchSpy as any;
+
+      const resBlocked = await getDynamicTseResults(new Request('http://localhost/api/tse-results?round=1'), {
+        dnsLookup: async () => [
+          { address: '23.196.224.226', family: 4 },
+          { address: '127.0.0.1', family: 4 }
+        ]
+      });
+
+      expect(resBlocked.status).toBe(422);
+      expect(resBlocked.body.error).toBe('CONFIGURACAO_TSE_INCONSISTENTE');
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('6.5 (P1) Protege contra DNS rebinding fixando IPs validados no socket, bloqueia redirecionamentos 3xx e bloqueia servidor HTTP local em produção', async () => {
+      // 1. Verifica fixação de DNS no socket (createPinnedDnsLookup) sem re-resolver durante o fetch
+      let lookupCalls = 0;
+      const rebindingDns = async () => {
+        lookupCalls += 1;
+        if (lookupCalls === 1) {
+          return [{ address: '23.196.224.226', family: 4 }];
+        }
+        return [{ address: '127.0.0.1', family: 4 }];
+      };
+
+      const firstResolution = await resolveAndValidateTseSourceUrl('https://rebind-test.example/ea20.json', {
+        dnsLookup: rebindingDns
+      });
+      expect(firstResolution.valid).toBe(true);
+      if (firstResolution.valid) {
+        const pinnedLookup = createPinnedDnsLookup(firstResolution.hostname, firstResolution.resolvedAddresses);
+        const resolvedDuringSocket = await new Promise<any>((resolve, reject) => {
+          pinnedLookup('rebind-test.example', { all: true }, (err, addrs) => {
+            if (err) reject(err);
+            else resolve(addrs);
+          });
+        });
+        expect(resolvedDuringSocket).toEqual([{ address: '23.196.224.226', family: 4 }]);
+        // Lookup externo ocorreu apenas 1 vez antes da conexão, não durante a conexão
+        expect(lookupCalls).toBe(1);
+      }
+
+      // Na consulta seguinte após o rebinding para 127.0.0.1, o acesso é bloqueado
+      const secondResolution = await resolveAndValidateTseSourceUrl('https://rebind-test.example/ea20.json', {
+        dnsLookup: rebindingDns
+      });
+      expect(secondResolution.valid).toBe(false);
+      expect(lookupCalls).toBe(2);
+
+      // 2. Servidor HTTP efêmero real em 127.0.0.1 para validar transporte fixado + bloqueio de redirect + bloqueio em produção
+      let serverHits = 0;
+      const server = http.createServer((req, res) => {
+        serverHits += 1;
+        if (req.url?.startsWith('/redirect-ssrf')) {
+          res.writeHead(302, { Location: 'http://169.254.169.254/latest/meta-data' });
+          res.end();
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify(
+            makeEa20Payload({ ele: '620', t: '1', cdabr: '62910', cargoCd: '11', cargoName: 'Prefeito Loopback' })
+          )
+        );
+      });
+
+      await new Promise<void>(resolve => server.listen(0, '127.0.0.1', () => resolve()));
+      const addr = server.address() as { port: number };
+      const localUrl = `http://127.0.0.1:${addr.port}/ea20.json`;
+      const redirectUrl = `http://127.0.0.1:${addr.port}/redirect-ssrf.json`;
+
+      try {
+        const ele = await prisma.election.create({
+          data: {
+            name: 'Eleição Transporte Pinned',
+            slug: 'transporte-pinned',
+            year: 2024,
+            status: 'ACTIVE',
+            rounds: { create: { roundNumber: 1, status: 'ACTIVE' } }
+          }
+        });
+
+        const cfg = await prisma.tseSyncConfig.create({
+          data: {
+            electionId: ele.id,
+            roundNumber: 1,
+            configKey: 'R1:OFFICE-11:MUNICIPAL:SP:62910',
+            officeCode: '11',
+            officialElectionCode: '620',
+            scopeType: 'MUNICIPAL',
+            uf: 'SP',
+            muniTseCode: '62910',
+            sourceUrl: localUrl,
+            status: 'ACTIVE',
+            isActive: true
+          }
+        });
+
+        // A) Sem opt-in de teste: bloqueado com 422 sem tocar no servidor
+        const resNoOptIn = await getDynamicTseResults(new Request('http://localhost/api/tse-results?round=1'));
+        expect(resNoOptIn.status).toBe(422);
+        expect(serverHits).toBe(0);
+
+        // B) Em produção, até com allowTestLoopbackHttp: true continua bloqueado com 422 sem tocar no servidor
+        vi.stubEnv('NODE_ENV', 'production');
+        const resProd = await getDynamicTseResults(new Request('http://localhost/api/tse-results?round=1'), {
+          allowTestLoopbackHttp: true
+        });
+        expect(resProd.status).toBe(422);
+        expect(serverHits).toBe(0);
+        vi.unstubAllEnvs();
+
+        // C) No ambiente de teste com opt-in explícito: executa via transporte socket fixado real (global.fetch NÃO mockado)
+        const resTestOk = await getDynamicTseResults(new Request('http://localhost/api/tse-results?round=1'), {
+          allowTestLoopbackHttp: true
+        });
+        expect(resTestOk.status).toBe(200);
+        expect(resTestOk.body.status).toBe('AVAILABLE');
+        expect(resTestOk.body.offices[0].cargoName).toBe('Prefeito Loopback');
+        expect(serverHits).toBe(1);
+
+        // D) Redirecionamento 302 -> 169.254.169.254 é bloqueado no transporte sem seguir Location
+        clearTseResultsCache();
+        await prisma.tseSyncConfig.update({ where: { id: cfg.id }, data: { sourceUrl: redirectUrl } });
+        const resRedirectBlocked = await getDynamicTseResults(
+          new Request('http://localhost/api/tse-results?round=1'),
+          { allowTestLoopbackHttp: true }
+        );
+        expect(resRedirectBlocked.status).toBe(503);
+        expect(resRedirectBlocked.body.status).toBe('TEMPORARILY_UNAVAILABLE');
+        expect(serverHits).toBe(2);
+      } finally {
+        await new Promise<void>(resolve => server.close(() => resolve()));
+      }
+    });
+
+    it('6.6 (P2) Fingerprint completo invalida cache dentro dos 15s quando Office (nome, código, ordenação, cadastro) ou ElectionScope mudam, mantendo isolamento', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-10-04T18:00:00.000Z'));
+
+      const stateSP = await prisma.state.create({ data: { abbreviation: 'SP', name: 'São Paulo' } });
+      const muniA = await prisma.municipality.create({
+        data: { officialCode: '62910', name: 'Campinas', stateId: stateSP.id, isCoverage: true }
+      });
+
+      const ele1 = await prisma.election.create({
+        data: {
+          name: 'Eleição Fingerprint 1',
+          slug: 'ele-fp-1',
+          year: 2024,
+          type: 'MUNICIPAL',
+          status: 'ACTIVE',
+          rounds: {
+            create: [
+              { roundNumber: 1, status: 'ACTIVE' },
+              { roundNumber: 2, status: 'ACTIVE' }
+            ]
+          },
+          scopes: {
+            create: {
+              scopeType: 'MUNICIPAL',
+              scopeKey: 'MUNICIPAL:SP:62910',
+              stateId: stateSP.id,
+              municipalityId: muniA.id,
+              isCoverageArea: true
+            }
+          },
+          offices: {
+            create: [
+              { code: '11', name: 'Prefeito Inicial', type: 'MAJORITARIO', orderNumber: 1 },
+              { code: '13', name: 'Vereador Inicial', type: 'PROPORCIONAL', orderNumber: 2 }
+            ]
+          }
+        },
+        include: { offices: true, scopes: true }
+      });
+
+      await prisma.tseSyncConfig.createMany({
+        data: [
+          {
+            electionId: ele1.id,
+            roundNumber: 1,
+            configKey: 'R1:OFFICE-ALL:MUNICIPAL:SP:62910',
+            officeCode: null,
+            officialElectionCode: '620',
+            scopeType: 'MUNICIPAL',
+            uf: 'SP',
+            muniTseCode: '62910',
+            status: 'ACTIVE',
+            isActive: true
+          },
+          {
+            electionId: ele1.id,
+            roundNumber: 2,
+            configKey: 'R2:OFFICE-11:MUNICIPAL:SP:62910',
+            officeCode: '11',
+            officialElectionCode: '621',
+            scopeType: 'MUNICIPAL',
+            uf: 'SP',
+            muniTseCode: '62910',
+            status: 'ACTIVE',
+            isActive: true
+          }
+        ]
+      });
+
+      let fetchCalls = 0;
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+        fetchCalls += 1;
+        const isR2 = url.includes('e000621');
+        const cargoMatch = url.match(/-c0*(\d+)-/);
+        const cargoCd = cargoMatch ? cargoMatch[1] : '11';
+        return {
+          ok: true,
+          json: async () =>
+            makeEa20Payload({
+              ele: isR2 ? '621' : '620',
+              t: isR2 ? '2' : '1',
+              cdabr: '62910',
+              cargoCd,
+              cargoName: `Cargo ${cargoCd}`
+            })
+        } as any;
+      }) as any;
+
+      // 1. Popula cache de R1 (2 cargos) e R2 (1 cargo)
+      const r1First = await (await getTseResultsRoute(new Request('http://localhost/api/tse-results?round=1'))).json();
+      expect(r1First.offices.map((o: any) => o.cargo)).toEqual(['11', '13']);
+      expect(r1First.offices[0].cargoName).toBe('Prefeito Inicial');
+      expect(fetchCalls).toBe(2);
+
+      const r2First = await (await getTseResultsRoute(new Request('http://localhost/api/tse-results?round=2'))).json();
+      expect(r2First.offices[0].cargoName).toBe('Prefeito Inicial');
+      expect(fetchCalls).toBe(3);
+
+      // 2. Alteração no nome do Office dentro da janela de 15s deve invalidar R1 (e R2 quando consultado)
+      const off11 = ele1.offices.find(o => o.code === '11')!;
+      const off13 = ele1.offices.find(o => o.code === '13')!;
+      await prisma.office.update({ where: { id: off11.id }, data: { name: 'Prefeito Atualizado' } });
+
+      vi.advanceTimersByTime(1000);
+      const r1AfterName = await (await getTseResultsRoute(new Request('http://localhost/api/tse-results?round=1'))).json();
+      expect(r1AfterName.offices[0].cargoName).toBe('Prefeito Atualizado');
+      expect(fetchCalls).toBe(5);
+
+      // 3. Alteração na ordenação (orderNumber) dos cargos dentro dos 15s invalida e reordena
+      await prisma.office.update({ where: { id: off11.id }, data: { orderNumber: 2 } });
+      await prisma.office.update({ where: { id: off13.id }, data: { orderNumber: 1 } });
+
+      vi.advanceTimersByTime(1000);
+      const r1AfterOrder = await (await getTseResultsRoute(new Request('http://localhost/api/tse-results?round=1'))).json();
+      expect(r1AfterOrder.offices.map((o: any) => o.cargo)).toEqual(['13', '11']);
+      expect(fetchCalls).toBe(7);
+
+      // 4. Alteração no código do cargo (code) dentro dos 15s invalida imediatamente
+      await prisma.office.update({ where: { id: off13.id }, data: { code: '12', name: 'Vereador Novo Código' } });
+
+      vi.advanceTimersByTime(1000);
+      const r1AfterCode = await (await getTseResultsRoute(new Request('http://localhost/api/tse-results?round=1'))).json();
+      expect(r1AfterCode.offices.map((o: any) => o.cargo)).toEqual(['12', '11']);
+      expect(r1AfterCode.offices[0].cargoName).toBe('Vereador Novo Código');
+      expect(fetchCalls).toBe(9);
+
+      // 5. Inclusão de novo cargo (Office) dentro dos 15s invalida imediatamente
+      await prisma.office.create({
+        data: { electionId: ele1.id, code: '15', name: 'Cargo Extra', type: 'MAJORITARIO', orderNumber: 3 }
+      });
+
+      vi.advanceTimersByTime(1000);
+      const r1AfterAddOffice = await (await getTseResultsRoute(new Request('http://localhost/api/tse-results?round=1'))).json();
+      expect(r1AfterAddOffice.offices.map((o: any) => o.cargo)).toEqual(['12', '11', '15']);
+      expect(fetchCalls).toBe(12);
+
+      // 6. Alteração em ElectionScope (escopo territorial adicional ou isCoverageArea) dentro dos 15s invalida cache
+      const muniB = await prisma.municipality.create({
+        data: { officialCode: '71072', name: 'São Paulo', stateId: stateSP.id, isCoverage: true }
+      });
+      await prisma.electionScope.create({
+        data: {
+          electionId: ele1.id,
+          scopeType: 'MUNICIPAL',
+          scopeKey: 'MUNICIPAL:SP:71072',
+          stateId: stateSP.id,
+          municipalityId: muniB.id,
+          isCoverageArea: true
+        }
+      });
+
+      vi.advanceTimersByTime(1000);
+      await getTseResultsRoute(new Request('http://localhost/api/tse-results?round=1'));
+      expect(fetchCalls).toBe(15);
+
+      // Dentro dos 15s sem novas alterações, o resultado volta a ser reutilizado do cache
+      vi.advanceTimersByTime(2000);
+      await getTseResultsRoute(new Request('http://localhost/api/tse-results?round=1'));
+      expect(fetchCalls).toBe(15);
+
+      // Fingerprint unitário direto confirma sensibilidade a escopo e ordenação de cargo
+      const fp1 = computeTseConfigFingerprint({
+        configs: [],
+        scopes: [{ scopeType: 'ESTADUAL', scopeKey: 'ESTADUAL:SP', isCoverageArea: true }],
+        offices: [
+          { code: '1', name: 'Presidente', orderNumber: 1 },
+          { code: '3', name: 'Governador', orderNumber: 2 }
+        ]
+      });
+      const fpReordered = computeTseConfigFingerprint({
+        configs: [],
+        scopes: [{ scopeType: 'ESTADUAL', scopeKey: 'ESTADUAL:SP', isCoverageArea: true }],
+        offices: [
+          { code: '1', name: 'Presidente', orderNumber: 2 },
+          { code: '3', name: 'Governador', orderNumber: 1 }
+        ]
+      });
+      const fpScopeChanged = computeTseConfigFingerprint({
+        configs: [],
+        scopes: [{ scopeType: 'ESTADUAL', scopeKey: 'ESTADUAL:RJ', isCoverageArea: true }],
+        offices: [
+          { code: '1', name: 'Presidente', orderNumber: 1 },
+          { code: '3', name: 'Governador', orderNumber: 2 }
+        ]
+      });
+      expect(fp1).not.toBe(fpReordered);
+      expect(fp1).not.toBe(fpScopeChanged);
+    });
+
+    it('6.7 (P2) Aplica política explícita de cacheabilidade para resposta integral, parcial (404/rede/timeout/inválido) e falhas totais', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-10-04T19:00:00.000Z'));
+
+      // Verificações diretas de isCacheableTseResponse
+      expect(
+        isCacheableTseResponse({
+          source: 'TSE',
+          round: '1',
+          municipality: '62910',
+          status: 'AVAILABLE',
+          offices: [
+            { status: 'AVAILABLE', cargo: '11' },
+            { status: 'AVAILABLE', cargo: '13' }
+          ]
+        })
+      ).toBe(true);
+
+      for (const badPartialStatus of ['NOT_YET_AVAILABLE', 'TEMPORARILY_UNAVAILABLE', 'INVALID_RESPONSE'] as const) {
+        expect(
+          isCacheableTseResponse({
+            source: 'TSE',
+            round: '1',
+            municipality: '62910',
+            status: 'AVAILABLE',
+            offices: [
+              { status: 'AVAILABLE', cargo: '11' },
+              { status: badPartialStatus, cargo: '13' }
+            ]
+          })
+        ).toBe(false);
+      }
+
+      const ele = await prisma.election.create({
+        data: {
+          name: 'Eleição Política Cache Parcial',
+          slug: 'ele-cache-parcial',
+          year: 2024,
+          status: 'ACTIVE',
+          rounds: { create: { roundNumber: 1, status: 'ACTIVE' } },
+          offices: {
+            create: [
+              { code: '11', name: 'Prefeito', type: 'MAJORITARIO', orderNumber: 1 },
+              { code: '13', name: 'Vereador', type: 'PROPORCIONAL', orderNumber: 2 }
+            ]
+          }
+        }
+      });
+
+      await prisma.tseSyncConfig.create({
+        data: {
+          electionId: ele.id,
+          roundNumber: 1,
+          configKey: 'R1:OFFICE-ALL:MUNICIPAL:SP:62910',
+          officeCode: null,
+          officialElectionCode: '620',
+          scopeType: 'MUNICIPAL',
+          uf: 'SP',
+          muniTseCode: '62910',
+          status: 'ACTIVE',
+          isActive: true
+        }
+      });
+
+      // Cenário A: Parcial por 404 (c0011 AVAILABLE + c0013 NOT_YET_AVAILABLE) -> HTTP 200 parcial, NÃO cacheado
+      let callCount = 0;
+      let cargo13State: '404' | '500' | 'INVALID' | 'TIMEOUT' | 'OK' = '404';
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+        callCount += 1;
+        if (url.includes('c0011')) {
+          return {
+            ok: true,
+            json: async () => makeEa20Payload({ ele: '620', t: '1', cdabr: '62910', cargoCd: '11', cargoName: 'Prefeito' })
+          } as any;
+        }
+        if (cargo13State === '404') return { ok: false, status: 404 } as any;
+        if (cargo13State === '500') return { ok: false, status: 500 } as any;
+        if (cargo13State === 'INVALID') return { ok: true, json: async () => ({ unexpected: true }) } as any;
+        if (cargo13State === 'TIMEOUT') return new Promise(() => {});
+        return {
+          ok: true,
+          json: async () => makeEa20Payload({ ele: '620', t: '1', cdabr: '62910', cargoCd: '13', cargoName: 'Vereador' })
+        } as any;
+      }) as any;
+
+      const resPartial404 = await getTseResultsRoute(new Request('http://localhost/api/tse-results?round=1'));
+      expect(resPartial404.status).toBe(200);
+      expect(resPartial404.headers.get('Cache-Control')).toContain('no-store');
+      const bodyPartial404 = await resPartial404.json();
+      expect(bodyPartial404.status).toBe('AVAILABLE');
+      expect(bodyPartial404.offices[0].status).toBe('AVAILABLE');
+      expect(bodyPartial404.offices[1].status).toBe('NOT_YET_AVAILABLE');
+
+      // Cenário B: Parcial por falha de rede / HTTP 500 -> HTTP 200 parcial, NÃO cacheado
+      vi.advanceTimersByTime(1000);
+      cargo13State = '500';
+      const resPartial500 = await getTseResultsRoute(new Request('http://localhost/api/tse-results?round=1'));
+      expect(resPartial500.status).toBe(200);
+      expect(resPartial500.headers.get('Cache-Control')).toContain('no-store');
+      expect((await resPartial500.json()).offices[1].status).toBe('TEMPORARILY_UNAVAILABLE');
+
+      // Cenário C: Parcial por payload inválido -> HTTP 200 parcial, NÃO cacheado
+      vi.advanceTimersByTime(1000);
+      cargo13State = 'INVALID';
+      const resPartialInvalid = await getTseResultsRoute(new Request('http://localhost/api/tse-results?round=1'));
+      expect(resPartialInvalid.status).toBe(200);
+      expect(resPartialInvalid.headers.get('Cache-Control')).toContain('no-store');
+      expect((await resPartialInvalid.json()).offices[1].status).toBe('INVALID_RESPONSE');
+
+      // Cenário D: Resposta integralmente válida (todos os cargos AVAILABLE) -> cacheada por 15s!
+      vi.advanceTimersByTime(1000);
+      cargo13State = 'OK';
+      const callsBeforeFull = callCount;
+      const resFull = await getTseResultsRoute(new Request('http://localhost/api/tse-results?round=1'));
+      expect(resFull.status).toBe(200);
+      expect(resFull.headers.get('Cache-Control')).toContain('max-age=15');
+      const bodyFull = await resFull.json();
+      expect(bodyFull.offices.every((o: any) => o.status === 'AVAILABLE')).toBe(true);
+      expect(callCount).toBe(callsBeforeFull + 2);
+
+      // Próxima consulta dentro dos 15s reaproveita o cache integral sem novo fetch
+      vi.advanceTimersByTime(3000);
+      const resFullHit = await getTseResultsRoute(new Request('http://localhost/api/tse-results?round=1'));
+      expect(resFullHit.status).toBe(200);
+      expect(resFullHit.headers.get('Cache-Control')).toContain('max-age=15');
+      expect(callCount).toBe(callsBeforeFull + 2);
+
+      // Cenário E: Parcial por timeout externo -> HTTP 200 parcial, NÃO cacheado e recuperação imediata
+      vi.useRealTimers();
+      clearTseResultsCache();
+      cargo13State = 'TIMEOUT';
+      const resPartialTimeout = await getDynamicTseResults(
+        new Request('http://localhost/api/tse-results?round=1'),
+        { timeoutMs: 40 }
+      );
+      expect(resPartialTimeout.status).toBe(200);
+      expect(resPartialTimeout.headers['Cache-Control']).toContain('no-store');
+      expect(resPartialTimeout.body.status).toBe('AVAILABLE');
+      expect(resPartialTimeout.body.offices[1].status).toBe('TEMPORARILY_UNAVAILABLE');
+
+      cargo13State = 'OK';
+      const resRecovered = await getTseResultsRoute(new Request('http://localhost/api/tse-results?round=1'));
+      expect(resRecovered.status).toBe(200);
+      expect(resRecovered.headers.get('Cache-Control')).toContain('max-age=15');
+      expect((await resRecovered.json()).offices.every((o: any) => o.status === 'AVAILABLE')).toBe(true);
     });
   });
 });

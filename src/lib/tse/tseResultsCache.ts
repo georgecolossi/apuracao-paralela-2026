@@ -86,6 +86,33 @@ export interface TseSyncConfigCacheInput {
   syncIntervalSeconds: number;
 }
 
+export interface TseScopeCacheInput {
+  id?: string;
+  scopeType: string;
+  scopeKey: string;
+  isCoverageArea?: boolean;
+  state?: { abbreviation: string } | null;
+  municipality?: {
+    officialCode: string;
+    name?: string | null;
+    state?: { abbreviation: string } | null;
+  } | null;
+}
+
+export interface TseOfficeCacheInput {
+  id?: string;
+  code: string;
+  name: string;
+  type?: string | null;
+  orderNumber: number;
+}
+
+export interface TseFingerprintInput {
+  configs: TseSyncConfigCacheInput[];
+  scopes?: TseScopeCacheInput[];
+  offices?: TseOfficeCacheInput[];
+}
+
 export interface TseCacheContextKeyParams {
   electionId: string;
   year: number;
@@ -106,10 +133,12 @@ const resultsCache = new Map<string, CacheEntry>();
 
 /**
  * Computes a deterministic SHA-256 fingerprint over all functional fields of
- * active TseSyncConfig records so any configuration update invalidates stale cache entries.
+ * active TseSyncConfig, ElectionScope, and Office records (including cargo codes,
+ * display names, and orderNumber ordering) so any configuration or structural update
+ * immediately invalidates stale cache entries.
  */
-export function computeTseConfigFingerprint(configs: TseSyncConfigCacheInput[]): string {
-  const normalized = [...configs]
+export function computeTseConfigFingerprint(input: TseFingerprintInput): string {
+  const normalizedConfigs = [...input.configs]
     .sort((a, b) => a.configKey.localeCompare(b.configKey) || a.id.localeCompare(b.id))
     .map(c => [
       c.id,
@@ -126,15 +155,49 @@ export function computeTseConfigFingerprint(configs: TseSyncConfigCacheInput[]):
       c.syncIntervalSeconds
     ]);
 
+  const normalizedScopes = [...(input.scopes ?? [])]
+    .sort(
+      (a, b) =>
+        a.scopeKey.localeCompare(b.scopeKey) ||
+        a.scopeType.localeCompare(b.scopeType) ||
+        (a.id ?? '').localeCompare(b.id ?? '')
+    )
+    .map(s => [
+      s.id ?? null,
+      s.scopeType,
+      s.scopeKey,
+      s.isCoverageArea ?? true,
+      s.state?.abbreviation ?? null,
+      s.municipality?.officialCode ?? null,
+      s.municipality?.name ?? null,
+      s.municipality?.state?.abbreviation ?? null
+    ]);
+
+  const normalizedOffices = [...(input.offices ?? [])]
+    .sort(
+      (a, b) =>
+        a.orderNumber - b.orderNumber ||
+        a.code.localeCompare(b.code, undefined, { numeric: true }) ||
+        a.name.localeCompare(b.name) ||
+        (a.id ?? '').localeCompare(b.id ?? '')
+    )
+    .map(o => [o.id ?? null, o.code, o.name, o.type ?? null, o.orderNumber]);
+
   return crypto
     .createHash('sha256')
-    .update(JSON.stringify(normalized))
+    .update(
+      JSON.stringify({
+        configs: normalizedConfigs,
+        scopes: normalizedScopes,
+        offices: normalizedOffices
+      })
+    )
     .digest('hex');
 }
 
 /**
  * Builds a collision-free cache key bound to the effective electoral context
- * (electionId, year, round, uf, municipality code) and config fingerprint.
+ * (electionId, year, round, uf, municipality code) and complete config fingerprint.
  */
 export function buildTseContextCacheKey(params: TseCacheContextKeyParams): string {
   const tuple = [
@@ -152,17 +215,20 @@ export function buildTseContextCacheKey(params: TseCacheContextKeyParams): strin
     .digest('hex');
 }
 
+/**
+ * Explicit partial/failure cache policy:
+ * Only fully valid responses where overall status is 'AVAILABLE' and EVERY office
+ * returned status === 'AVAILABLE' are stored in the 15s cache.
+ * Partial responses (containing any office with NOT_YET_AVAILABLE / 404,
+ * TEMPORARILY_UNAVAILABLE / network/timeout/5xx, or INVALID_RESPONSE) and overall
+ * non-AVAILABLE responses bypass cache (Cache-Control: no-store).
+ */
 export function isCacheableTseResponse(data: TseResultsResponse): boolean {
   if (data.status !== 'AVAILABLE' || !Array.isArray(data.offices) || data.offices.length === 0) {
     return false;
   }
 
-  const hasAvailableOffice = data.offices.some(o => o.status === 'AVAILABLE');
-  const hasExternalFailure = data.offices.some(
-    o => o.status === 'TEMPORARILY_UNAVAILABLE' || o.status === 'INVALID_RESPONSE'
-  );
-
-  return hasAvailableOffice && !hasExternalFailure;
+  return data.offices.every(o => o.status === 'AVAILABLE');
 }
 
 export function getCachedTseResult(key: string, now: number = Date.now()): TseResultsResponse | null {

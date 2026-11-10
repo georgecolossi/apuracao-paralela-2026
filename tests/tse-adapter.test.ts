@@ -240,6 +240,7 @@ describe('TSE Adapter (API — Dinâmico via TseSyncConfig)', () => {
     const data = await res.json();
 
     expect(data.status).toBe('AVAILABLE');
+    expect(res.headers.get('Cache-Control')).toContain('no-store');
     expect(data.offices.find((o: any) => o.cargo === '1').status).toBe('AVAILABLE');
     expect(data.offices.find((o: any) => o.cargo === '3').status).toBe('NOT_YET_AVAILABLE');
   });
