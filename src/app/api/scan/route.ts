@@ -12,6 +12,7 @@ import {
   ElectionInvariantError,
   getSafeOperatorErrorMessage
 } from '@/lib/validation/electionContext';
+import { toCryptographicStatus } from '@/lib/presentation/pressDto';
 import crypto from 'crypto';
 
 export async function POST(req: Request) {
@@ -565,6 +566,8 @@ export async function POST(req: Request) {
             vrqrVersion: reportData.vrqrVersion || null,
             hash: reportData.hash || '',
             signature: reportData.signature || '',
+            hashStatus: toCryptographicStatus(reportData.hashStatus),
+            sigStatus: toCryptographicStatus(reportData.sigStatus),
             status: 'PENDENTE_CONFIRMACAO',
             validationData: JSON.stringify({
               parsed: true,

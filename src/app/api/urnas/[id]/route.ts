@@ -1,7 +1,13 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { generateRadioScript } from '@/lib/presentation/radioScriptGenerator';
-import { UrnaDetailDTO, OfficeVotesDTO, CandidateVoteDTO, PartyVoteDTO } from '@/lib/presentation/pressDto';
+import {
+  UrnaDetailDTO,
+  OfficeVotesDTO,
+  CandidateVoteDTO,
+  PartyVoteDTO,
+  resolveCryptographicStatus
+} from '@/lib/presentation/pressDto';
 import { getTerritoryVariants } from '@/lib/presentation/territoryValidator';
 
 export const dynamic = 'force-dynamic';
@@ -256,6 +262,9 @@ export async function GET(
     const displayTimestamp = (report.confirmedAt || report.createdAt).toISOString();
     const timestampType = report.confirmedAt ? 'CONFIRMED' : 'RECEIVED_FALLBACK';
 
+    const resolvedHashStatus = resolveCryptographicStatus(report.hashStatus, report.validationData, 'hashStatus');
+    const resolvedSigStatus = resolveCryptographicStatus(report.sigStatus, report.validationData, 'sigStatus');
+
     const detailDTO: UrnaDetailDTO = {
       id: report.id,
       context: {
@@ -287,9 +296,9 @@ export async function GET(
       integrity: {
         vrqrVersion: report.vrqrVersion || null,
         hash: report.hash || null,
-        hashStatus: (report.hashStatus as any) || 'UNCHECKED',
-        sigStatus: (report.sigStatus as any) || 'UNCHECKED',
-        note: report.hashStatus === 'VERIFIED'
+        hashStatus: resolvedHashStatus,
+        sigStatus: resolvedSigStatus,
+        note: resolvedHashStatus === 'VERIFIED'
           ? 'Integridade SHA-512 do Boletim de Urna verificada com sucesso. Assinatura digital da urna não autenticada offline.'
           : 'Integridade SHA-512 não verificada.'
       },

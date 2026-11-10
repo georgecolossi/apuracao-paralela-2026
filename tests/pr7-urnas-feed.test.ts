@@ -5,6 +5,7 @@ import { GET as urnasFeedRoute } from '../src/app/api/urnas/route';
 import { GET as urnaDetailRoute } from '../src/app/api/urnas/[id]/route';
 import { POST as confirmReportRoute } from '../src/app/api/reports/[id]/confirm/route';
 import { encodeUrnaCursor } from '../src/lib/presentation/urnaCursor';
+import { toCryptographicStatus, resolveCryptographicStatus } from '../src/lib/presentation/pressDto';
 
 describe('PR 7 — Feed de Últimas Urnas e Paginação por Keyset Cursor (PAG-01 a PAG-30)', () => {
   let electionA: any;
@@ -1320,5 +1321,53 @@ describe('PR 7 — Feed de Últimas Urnas e Paginação por Keyset Cursor (PAG-0
     const res = await urnasFeedRoute(req);
     expect(res.headers.get('cache-control')).toContain('public');
     expect(res.headers.get('cache-control')).toContain('max-age=5');
+  });
+
+  // PAG-40: Regressão de normalização e fallback de hashStatus entre validationData e colunas do BallotReport
+  it('PAG-40: Normaliza status criptográficos e aplica fallback seguro de validationData no feed e detalhe da urna', async () => {
+    expect(toCryptographicStatus('VERIFIED')).toBe('VERIFIED');
+    expect(toCryptographicStatus('INVALID')).toBe('FAILED');
+    expect(toCryptographicStatus('UNAVAILABLE')).toBe('UNCHECKED');
+    expect(resolveCryptographicStatus('UNCHECKED', JSON.stringify({ hashStatus: 'VERIFIED' }), 'hashStatus')).toBe('VERIFIED');
+    expect(resolveCryptographicStatus('FAILED', JSON.stringify({ hashStatus: 'VERIFIED' }), 'hashStatus')).toBe('FAILED');
+
+    const repFallback = await prisma.ballotReport.create({
+      data: {
+        deterministicId: 'det-pag40-fallback',
+        electionId: electionA.id,
+        roundId: roundA1.id,
+        stateCode: 'SC',
+        cityCode: '80837',
+        zoneCode: '9',
+        sectionCode: '42',
+        urnCode: '9999',
+        status: 'PROCESSADO',
+        confirmedAt: new Date('2026-10-30T20:00:00.000Z'),
+        hashStatus: 'UNCHECKED',
+        sigStatus: 'UNCHECKED',
+        validationData: JSON.stringify({ parsed: true, hashStatus: 'VERIFIED', sigStatus: 'UNAVAILABLE' })
+      }
+    });
+
+    try {
+      const feedRes = await urnasFeedRoute(new Request('http://localhost:3000/api/urnas?round=1&limit=20'));
+      expect(feedRes.status).toBe(200);
+      const feedJson = await feedRes.json();
+      const targetItem = feedJson.items.find((i: { id: string }) => i.id === repFallback.id);
+      expect(targetItem).toBeDefined();
+      expect(targetItem.integrity.hashStatus).toBe('VERIFIED');
+      expect(targetItem.integrity.sigStatus).toBe('UNCHECKED');
+
+      const detailRes = await urnaDetailRoute(
+        new Request(`http://localhost:3000/api/urnas/${repFallback.id}`),
+        { params: Promise.resolve({ id: repFallback.id }) }
+      );
+      expect(detailRes.status).toBe(200);
+      const detailJson = await detailRes.json();
+      expect(detailJson.integrity.hashStatus).toBe('VERIFIED');
+      expect(detailJson.radioScript).toContain('Hash SHA-512 Verificado com Sucesso');
+    } finally {
+      await prisma.ballotReport.delete({ where: { id: repFallback.id } });
+    }
   });
 });
