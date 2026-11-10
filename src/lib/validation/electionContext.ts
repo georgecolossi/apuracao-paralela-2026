@@ -748,3 +748,40 @@ export function buildTseSyncConfigKey(params: {
 
   return `R${r}:OFFICE-${off}:${scope}:${uf}:${mun}`;
 }
+
+function isBlockedPrivateOrMetadataHost(hostname: string): boolean {
+  const lower = hostname.toLowerCase();
+  if (lower === '169.254.169.254' || lower === '0.0.0.0' || lower === 'metadata.google.internal') {
+    return true;
+  }
+  if (/^10\./.test(lower) || /^192\.168\./.test(lower) || /^172\.(1[6-9]|2\d|3[01])\./.test(lower)) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Valida URL de origem externa para integração TSE contra esquemas inseguros e SSRF em hosts privados/metadata.
+ */
+export function validateTseSourceUrl(
+  rawUrl: string
+): { valid: true; normalized: string } | { valid: false; reason: string } {
+  const trimmed = rawUrl.trim();
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return { valid: false, reason: 'URL de origem externa malformada.' };
+  }
+
+  const isLocalHost = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
+  if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && isLocalHost)) {
+    return { valid: false, reason: 'Protocolo da URL de origem externa não é permitido.' };
+  }
+
+  if (!parsed.hostname || (!isLocalHost && isBlockedPrivateOrMetadataHost(parsed.hostname))) {
+    return { valid: false, reason: 'Host de destino da URL externa não é permitido.' };
+  }
+
+  return { valid: true, normalized: trimmed };
+}
