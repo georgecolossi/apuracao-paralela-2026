@@ -342,7 +342,7 @@ export default function ApuracaoDashboard() {
         ]);
 
         const pData = pRes.ok ? await pRes.json() : null;
-        const tData = tRes && tRes.ok ? await tRes.json() : null;
+        const tData = tRes ? await tRes.json().catch(() => null) : null;
 
         if (mounted) {
           if (pData) {
@@ -519,12 +519,14 @@ export default function ApuracaoDashboard() {
       );
     }
     
-    if (tse.status === 'NOT_YET_AVAILABLE' || (tse.offices && tse.offices.length === 0)) {
+    if (tse.status !== 'AVAILABLE' || !tse.offices || tse.offices.length === 0) {
       return (
         <div className="bg-white p-12 rounded-2xl border border-slate-200 text-center shadow-sm">
           <ShieldCheck className="w-12 h-12 text-slate-300 mx-auto mb-3" />
           <h2 className="text-xl font-black text-slate-700 tracking-tight">Resultado oficial ainda não disponível</h2>
-          <p className="text-slate-500 text-sm mt-2 font-medium">Os arquivos do TSE para esta consulta não foram publicados ou sincronizados.</p>
+          <p className="text-slate-500 text-sm mt-2 font-medium">
+            {tse.message || 'Os arquivos do TSE para esta consulta não foram publicados ou sincronizados.'}
+          </p>
         </div>
       );
     }
