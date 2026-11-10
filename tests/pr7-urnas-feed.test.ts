@@ -1055,6 +1055,265 @@ describe('PR 7 — Feed de Últimas Urnas e Paginação por Keyset Cursor (PAG-0
     await prisma.election.delete({ where: { id: electionHist.id } });
   });
 
+  // PAG-37: Eleição histórica com um único turno FINISHED e sem ?round informado
+  it('PAG-37: Seleciona automaticamente o único turno FINISHED quando ?election é informado sem ?round, preservando paginação, segurança e isolamento padrão', async () => {
+    const electionHist1T = await prisma.election.create({
+      data: {
+        name: 'Eleição Municipal Histórica 2020',
+        year: 2020,
+        type: 'MUNICIPAL',
+        status: 'FINISHED',
+        slug: 'eleicao-hist-1t-2020',
+        rounds: {
+          create: { roundNumber: 1, status: 'FINISHED', coverageStatus: 'HOMOLOGATED' }
+        }
+      },
+      include: { rounds: true }
+    });
+    const round1T = electionHist1T.rounds[0];
+
+    const rep1 = await prisma.ballotReport.create({
+      data: {
+        deterministicId: 'det-hist-1t-1',
+        electionId: electionHist1T.id,
+        roundId: round1T.id,
+        stateCode: 'SC',
+        cityCode: '80837',
+        zoneCode: '9',
+        sectionCode: '42',
+        urnCode: '8801',
+        status: 'PROCESSADO',
+        isSimulation: false,
+        confirmedAt: new Date('2020-11-15T19:00:00.000Z'),
+        createdAt: new Date('2020-11-15T19:00:00.000Z')
+      }
+    });
+
+    const rep2 = await prisma.ballotReport.create({
+      data: {
+        deterministicId: 'det-hist-1t-2',
+        electionId: electionHist1T.id,
+        roundId: round1T.id,
+        stateCode: 'SC',
+        cityCode: '80837',
+        zoneCode: '9',
+        sectionCode: '43',
+        urnCode: '8802',
+        status: 'PROCESSADO',
+        isSimulation: false,
+        confirmedAt: new Date('2020-11-15T18:00:00.000Z'),
+        createdAt: new Date('2020-11-15T18:00:00.000Z')
+      }
+    });
+
+    const repSim = await prisma.ballotReport.create({
+      data: {
+        deterministicId: 'det-hist-1t-sim',
+        electionId: electionHist1T.id,
+        roundId: round1T.id,
+        stateCode: 'SC',
+        cityCode: '80837',
+        zoneCode: '9',
+        sectionCode: '42',
+        urnCode: '8803',
+        status: 'PROCESSADO',
+        isSimulation: true,
+        confirmedAt: new Date('2020-11-15T20:00:00.000Z'),
+        createdAt: new Date('2020-11-15T20:00:00.000Z')
+      }
+    });
+
+    try {
+      // 1. Consulta explícita da eleição histórica sem ?round: seleciona automaticamente o único turno FINISHED
+      const reqPage1 = new Request('http://localhost:3000/api/urnas?election=eleicao-hist-1t-2020&limit=1');
+      const resPage1 = await urnasFeedRoute(reqPage1);
+      expect(resPage1.status).toBe(200);
+      const jsonPage1 = await resPage1.json();
+
+      expect(jsonPage1.context.election.slug).toBe('eleicao-hist-1t-2020');
+      expect(jsonPage1.context.round.id).toBe(round1T.id);
+      expect(jsonPage1.context.round.roundNumber).toBe(1);
+      expect(jsonPage1.context.round.status).toBe('FINISHED');
+      expect(jsonPage1.items).toHaveLength(1);
+      expect(jsonPage1.items[0].id).toBe(rep1.id);
+      expect(jsonPage1.pagination.hasMore).toBe(true);
+      expect(jsonPage1.pagination.nextCursor).toBeTruthy();
+
+      // Garante que simulação não apareceu
+      expect(jsonPage1.items.map((i: any) => i.id)).not.toContain(repSim.id);
+
+      // 2. Paginação com cursor sem ?round continua funcionando na página seguinte
+      const reqPage2 = new Request(`http://localhost:3000/api/urnas?election=eleicao-hist-1t-2020&limit=1&cursor=${jsonPage1.pagination.nextCursor}`);
+      const resPage2 = await urnasFeedRoute(reqPage2);
+      expect(resPage2.status).toBe(200);
+      const jsonPage2 = await resPage2.json();
+      expect(jsonPage2.items).toHaveLength(1);
+      expect(jsonPage2.items[0].id).toBe(rep2.id);
+      expect(jsonPage2.pagination.hasMore).toBe(false);
+
+      // 3. Consulta padrão (sem ?election e sem ?round) mantém comportamento anterior na eleição ativa e NÃO vaza histórico
+      const reqDefault = new Request('http://localhost:3000/api/urnas');
+      const resDefault = await urnasFeedRoute(reqDefault);
+      expect(resDefault.status).toBe(200);
+      const jsonDefault = await resDefault.json();
+      expect(jsonDefault.context.election.id).toBe(electionA.id);
+      expect(jsonDefault.context.round.id).toBe(roundA1.id);
+      const defaultIds = jsonDefault.items.map((i: any) => i.id);
+      expect(defaultIds).not.toContain(rep1.id);
+      expect(defaultIds).not.toContain(rep2.id);
+
+      // 4. Cursor emitido para a eleição histórica não pode ser reutilizado na eleição ativa padrão
+      const reqMismatch = new Request(`http://localhost:3000/api/urnas?cursor=${jsonPage1.pagination.nextCursor}`);
+      const resMismatch = await urnasFeedRoute(reqMismatch);
+      expect(resMismatch.status).toBe(400);
+      const jsonMismatch = await resMismatch.json();
+      expect(jsonMismatch.error).toBe('CURSOR_CONTEXT_MISMATCH');
+    } finally {
+      await prisma.ballotReport.deleteMany({ where: { electionId: electionHist1T.id } });
+      await prisma.electionRound.deleteMany({ where: { electionId: electionHist1T.id } });
+      await prisma.election.delete({ where: { id: electionHist1T.id } });
+    }
+  });
+
+  // PAG-38: Eleição histórica com múltiplos turnos FINISHED sem ?round exige seleção explícita
+  it('PAG-38: Exige especificação explícita de ?round quando eleição histórica possui múltiplos turnos FINISHED e preserva isolamento por turno', async () => {
+    const electionHist2T = await prisma.election.create({
+      data: {
+        name: 'Eleições Gerais Históricas 2022',
+        year: 2022,
+        type: 'GENERAL',
+        status: 'FINISHED',
+        slug: 'eleicoes-hist-2t-2022',
+        rounds: {
+          create: [
+            { roundNumber: 1, status: 'FINISHED', coverageStatus: 'HOMOLOGATED' },
+            { roundNumber: 2, status: 'FINISHED', coverageStatus: 'HOMOLOGATED' }
+          ]
+        }
+      },
+      include: { rounds: { orderBy: { roundNumber: 'asc' } } }
+    });
+    const round1Hist = electionHist2T.rounds[0];
+    const round2Hist = electionHist2T.rounds[1];
+
+    const repR1 = await prisma.ballotReport.create({
+      data: {
+        deterministicId: 'det-hist-2t-r1',
+        electionId: electionHist2T.id,
+        roundId: round1Hist.id,
+        stateCode: 'SC',
+        cityCode: '80837',
+        zoneCode: '9',
+        sectionCode: '42',
+        urnCode: '9901',
+        status: 'PROCESSADO',
+        isSimulation: false,
+        confirmedAt: new Date('2022-10-02T18:00:00.000Z'),
+        createdAt: new Date('2022-10-02T18:00:00.000Z')
+      }
+    });
+
+    const repR2 = await prisma.ballotReport.create({
+      data: {
+        deterministicId: 'det-hist-2t-r2',
+        electionId: electionHist2T.id,
+        roundId: round2Hist.id,
+        stateCode: 'SC',
+        cityCode: '80837',
+        zoneCode: '9',
+        sectionCode: '42',
+        urnCode: '9902',
+        status: 'PROCESSADO',
+        isSimulation: false,
+        confirmedAt: new Date('2022-10-30T18:00:00.000Z'),
+        createdAt: new Date('2022-10-30T18:00:00.000Z')
+      }
+    });
+
+    try {
+      // 1. Sem informar ?round: exige especificação explícita com HTTP 400
+      const reqAmbiguous = new Request('http://localhost:3000/api/urnas?election=eleicoes-hist-2t-2022');
+      const resAmbiguous = await urnasFeedRoute(reqAmbiguous);
+      expect(resAmbiguous.status).toBe(400);
+      const jsonAmbiguous = await resAmbiguous.json();
+      expect(jsonAmbiguous.error).toBe('TURNO_NAO_ESPECIFICADO');
+      expect(jsonAmbiguous.availableRounds).toHaveLength(2);
+
+      // 2. Com ?round=1: retorna apenas os BUs do 1º Turno histórico
+      const reqR1 = new Request('http://localhost:3000/api/urnas?election=eleicoes-hist-2t-2022&round=1');
+      const resR1 = await urnasFeedRoute(reqR1);
+      expect(resR1.status).toBe(200);
+      const jsonR1 = await resR1.json();
+      expect(jsonR1.context.round.id).toBe(round1Hist.id);
+      expect(jsonR1.items.map((i: any) => i.id)).toEqual([repR1.id]);
+
+      // 3. Com ?round=2: retorna apenas os BUs do 2º Turno histórico
+      const reqR2 = new Request('http://localhost:3000/api/urnas?election=eleicoes-hist-2t-2022&round=2');
+      const resR2 = await urnasFeedRoute(reqR2);
+      expect(resR2.status).toBe(200);
+      const jsonR2 = await resR2.json();
+      expect(jsonR2.context.round.id).toBe(round2Hist.id);
+      expect(jsonR2.items.map((i: any) => i.id)).toEqual([repR2.id]);
+
+      // 4. Cursor do 1º turno histórico não pode ser reutilizado no 2º turno histórico
+      const cursorR1 = encodeUrnaCursor(
+        repR1.confirmedAt,
+        repR1.createdAt,
+        repR1.id,
+        {
+          electionId: electionHist2T.id,
+          roundId: round1Hist.id,
+          zoneFilter: null,
+          sectionFilter: null
+        }
+      );
+      const reqRoundMismatch = new Request(`http://localhost:3000/api/urnas?election=eleicoes-hist-2t-2022&round=2&cursor=${cursorR1}`);
+      const resRoundMismatch = await urnasFeedRoute(reqRoundMismatch);
+      expect(resRoundMismatch.status).toBe(400);
+      const jsonRoundMismatch = await resRoundMismatch.json();
+      expect(jsonRoundMismatch.error).toBe('CURSOR_CONTEXT_MISMATCH');
+    } finally {
+      await prisma.ballotReport.deleteMany({ where: { electionId: electionHist2T.id } });
+      await prisma.electionRound.deleteMany({ where: { electionId: electionHist2T.id } });
+      await prisma.election.delete({ where: { id: electionHist2T.id } });
+    }
+  });
+
+  // PAG-39: Resposta controlada para eleição sem turnos e compatibilidade com eleição ativa explícita sem ?round
+  it('PAG-39: Mantém resposta controlada para eleição sem turnos e resolve turno ativo quando eleição ativa possui turno PLANNED adicional', async () => {
+    const electionSemTurnos = await prisma.election.create({
+      data: {
+        name: 'Eleição Sem Turnos',
+        year: 2018,
+        type: 'MUNICIPAL',
+        status: 'ARCHIVED',
+        slug: 'eleicao-sem-turnos-2018'
+      }
+    });
+
+    try {
+      // 1. Eleição sem turnos retorna resposta 200 controlada com round = null
+      const reqNoRound = new Request('http://localhost:3000/api/urnas?election=eleicao-sem-turnos-2018');
+      const resNoRound = await urnasFeedRoute(reqNoRound);
+      expect(resNoRound.status).toBe(200);
+      const jsonNoRound = await resNoRound.json();
+      expect(jsonNoRound.context.election.slug).toBe('eleicao-sem-turnos-2018');
+      expect(jsonNoRound.context.round).toBeNull();
+      expect(jsonNoRound.items).toEqual([]);
+      expect(jsonNoRound.message).toBeTruthy();
+
+      // 2. Eleição ativa explícita (?election=gerais-2026) com Round 1 ACTIVE e Round 2 PLANNED resolve o turno ACTIVE sem ?round
+      const reqActiveExplicit = new Request('http://localhost:3000/api/urnas?election=gerais-2026');
+      const resActiveExplicit = await urnasFeedRoute(reqActiveExplicit);
+      expect(resActiveExplicit.status).toBe(200);
+      const jsonActiveExplicit = await resActiveExplicit.json();
+      expect(jsonActiveExplicit.context.election.id).toBe(electionA.id);
+      expect(jsonActiveExplicit.context.round.id).toBe(roundA1.id);
+    } finally {
+      await prisma.election.delete({ where: { id: electionSemTurnos.id } });
+    }
+  });
+
   // Bônus: Verificação de Cabeçalhos HTTP de Cache
   it('Retorna cabeçalho Cache-Control adequado para feed público', async () => {
     const req = new Request('http://localhost:3000/api/urnas?round=1');

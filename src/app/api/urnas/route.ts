@@ -10,6 +10,23 @@ export const revalidate = 0;
 
 const CACHE_HEADER = 'public, max-age=5, s-maxage=5, stale-while-revalidate=10';
 
+function buildEmptyRoundResponse(
+  election: { id: string; slug: string; name: string; year: number },
+  message: string
+) {
+  const emptyResponse: UrnaFeedResponse = {
+    context: {
+      election: { id: election.id, slug: election.slug, name: election.name, year: election.year },
+      round: null
+    },
+    pagination: { limit: 20, hasMore: false, nextCursor: null },
+    filters: { zone: null, section: null },
+    items: [],
+    message
+  };
+  return NextResponse.json(emptyResponse, { headers: { 'Cache-Control': CACHE_HEADER } });
+}
+
 export async function GET(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
@@ -88,19 +105,6 @@ export async function GET(req: Request) {
       }
     } else {
       const activeRounds = election.rounds.filter(r => r.status === 'ACTIVE');
-      if (activeRounds.length === 0) {
-        const emptyResponse: UrnaFeedResponse = {
-          context: {
-            election: { id: election.id, slug: election.slug, name: election.name, year: election.year },
-            round: null
-          },
-          pagination: { limit: 20, hasMore: false, nextCursor: null },
-          filters: { zone: null, section: null },
-          items: [],
-          message: 'Nenhum turno ativo nesta eleição.'
-        };
-        return NextResponse.json(emptyResponse, { headers: { 'Cache-Control': CACHE_HEADER } });
-      }
 
       if (activeRounds.length > 1) {
         return NextResponse.json({
@@ -110,7 +114,29 @@ export async function GET(req: Request) {
         }, { status: 400, headers: { 'Cache-Control': CACHE_HEADER } });
       }
 
-      targetRound = activeRounds[0];
+      if (activeRounds.length === 1) {
+        targetRound = activeRounds[0];
+      } else if (!electionParam) {
+        return buildEmptyRoundResponse(election, 'Nenhum turno ativo nesta eleição.');
+      } else {
+        const finishedRounds = election.rounds.filter(r => r.status === 'FINISHED');
+        if (finishedRounds.length === 1) {
+          targetRound = finishedRounds[0];
+        } else if (finishedRounds.length > 1) {
+          return NextResponse.json({
+            error: 'TURNO_NAO_ESPECIFICADO',
+            message: 'Esta eleição possui múltiplos turnos concluídos. Especifique o parâmetro ?round=1 ou ?round=2.',
+            availableRounds: finishedRounds.map(r => ({ id: r.id, roundNumber: r.roundNumber, status: r.status }))
+          }, { status: 400, headers: { 'Cache-Control': CACHE_HEADER } });
+        } else {
+          return buildEmptyRoundResponse(
+            election,
+            election.rounds.length === 0
+              ? 'Nenhum turno cadastrado nesta eleição.'
+              : 'Nenhum turno ativo ou finalizado nesta eleição.'
+          );
+        }
+      }
     }
 
     // 3. Validação dos Filtros Territoriais
