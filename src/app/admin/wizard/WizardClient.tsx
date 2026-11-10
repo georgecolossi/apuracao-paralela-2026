@@ -104,6 +104,14 @@ interface WizardState {
     name: string;
     initialPassword?: string;
   }>;
+  tseConfigs: Array<{
+    roundNumber: number;
+    officeCode: string;
+    officialElectionCode: string;
+    scopeType: 'NACIONAL' | 'ESTADUAL' | 'MUNICIPAL';
+    uf: string;
+    muniTseCode: string;
+  }>;
 }
 
 const DEFAULT_STATE: WizardState = {
@@ -131,8 +139,64 @@ const DEFAULT_STATE: WizardState = {
   parties: [],
   candidates: [],
   coverage: [],
-  operators: []
+  operators: [],
+  tseConfigs: []
 };
+
+function mapElectionToWizardState(el: any): WizardState {
+  return {
+    electionId: el.id,
+    name: el.name || '',
+    year: el.year || new Date().getFullYear(),
+    type: el.type || 'MUNICIPAL',
+    description: el.description || '',
+    plei: el.plei || '',
+    scopes: (el.scopes || []).map((s: any) => ({
+      scopeType: s.scopeType,
+      stateAbbreviation: s.state?.abbreviation || '',
+      municipalityOfficialCode: s.municipality?.officialCode || '',
+      municipalityName: s.municipality?.name || ''
+    })),
+    rounds: (el.rounds || []).map((r: any) => ({
+      roundNumber: r.roundNumber,
+      plei: r.plei || '',
+      date: r.date ? r.date.split('T')[0] : ''
+    })),
+    offices: (el.offices || []).map((o: any) => ({
+      code: o.code,
+      name: o.name,
+      type: o.type,
+      maxVotesPerVoter: o.maxVotesPerVoter || 1
+    })),
+    parties: [],
+    candidates: (el.offices || []).flatMap((o: any) =>
+      (o.candidates || []).map((c: any) => ({
+        officeCode: o.code,
+        candidateNumber: c.candidateNumber,
+        name: c.name,
+        ballotName: c.ballotName,
+        partyNumber: c.party?.officialIdentifier || ''
+      }))
+    ),
+    coverage: (el.rounds?.[0]?.coverage || []).map((cov: any) => ({
+      municipalityOfficialCode: cov.pollingSection?.zone?.municipality?.officialCode || '',
+      zoneNumber: cov.pollingSection?.zone?.zoneNumber || '',
+      sectionNumber: cov.pollingSection?.sectionNumber || '',
+      expectedBUs: cov.expectedBUs || 1,
+      isAggregated: cov.pollingSection?.isAggregated || false,
+      aggregatedIntoSec: cov.pollingSection?.aggregatedIntoSec || ''
+    })),
+    operators: [],
+    tseConfigs: (el.tseConfigs || []).map((tc: any) => ({
+      roundNumber: tc.roundNumber,
+      officeCode: tc.officeCode || '',
+      officialElectionCode: tc.officialElectionCode || '',
+      scopeType: tc.scopeType || 'MUNICIPAL',
+      uf: tc.uf || '',
+      muniTseCode: tc.muniTseCode || ''
+    }))
+  };
+}
 
 const BRAZILIAN_UFS = [
   'AC', 'AL', 'AP', 'AM', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA',
@@ -149,6 +213,7 @@ export default function WizardClient({ initialElectionId }: { initialElectionId?
   const [loading, setLoading] = useState<boolean>(true);
   const [saving, setSaving] = useState<boolean>(false);
   const [activating, setActivating] = useState<boolean>(false);
+  const [tseConfigsModified, setTseConfigsModified] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
@@ -186,51 +251,7 @@ export default function WizardClient({ initialElectionId }: { initialElectionId?
           setDrafts(data.drafts || []);
 
           if (data.election) {
-            const el = data.election;
-            setFormData({
-              electionId: el.id,
-              name: el.name || '',
-              year: el.year || new Date().getFullYear(),
-              type: el.type || 'MUNICIPAL',
-              description: el.description || '',
-              plei: el.plei || '',
-              scopes: (el.scopes || []).map((s: any) => ({
-                scopeType: s.scopeType,
-                stateAbbreviation: s.state?.abbreviation || 'SC',
-                municipalityOfficialCode: s.municipality?.officialCode || '',
-                municipalityName: s.municipality?.name || ''
-              })),
-              rounds: (el.rounds || []).map((r: any) => ({
-                roundNumber: r.roundNumber,
-                plei: r.plei || '',
-                date: r.date ? r.date.split('T')[0] : ''
-              })),
-              offices: (el.offices || []).map((o: any) => ({
-                code: o.code,
-                name: o.name,
-                type: o.type,
-                maxVotesPerVoter: o.maxVotesPerVoter || 1
-              })),
-              parties: [],
-              candidates: (el.offices || []).flatMap((o: any) =>
-                (o.candidates || []).map((c: any) => ({
-                  officeCode: o.code,
-                  candidateNumber: c.candidateNumber,
-                  name: c.name,
-                  ballotName: c.ballotName,
-                  partyNumber: c.party?.officialIdentifier || ''
-                }))
-              ),
-              coverage: (el.rounds?.[0]?.coverage || []).map((cov: any) => ({
-                municipalityOfficialCode: cov.pollingSection?.zone?.municipality?.officialCode || '',
-                zoneNumber: cov.pollingSection?.zone?.zoneNumber || '',
-                sectionNumber: cov.pollingSection?.sectionNumber || '',
-                expectedBUs: cov.expectedBUs || 1,
-                isAggregated: cov.pollingSection?.isAggregated || false,
-                aggregatedIntoSec: cov.pollingSection?.aggregatedIntoSec || ''
-              })),
-              operators: []
-            });
+            setFormData(mapElectionToWizardState(data.election));
           }
         }
       } catch (err: any) {
@@ -252,52 +273,8 @@ export default function WizardClient({ initialElectionId }: { initialElectionId?
       if (!res.ok) throw new Error('Não foi possível carregar o rascunho.');
       const data = await res.json();
       if (data.election) {
-        const el = data.election;
-        setFormData({
-          electionId: el.id,
-          name: el.name || '',
-          year: el.year || new Date().getFullYear(),
-          type: el.type || 'MUNICIPAL',
-          description: el.description || '',
-          plei: el.plei || '',
-          scopes: (el.scopes || []).map((s: any) => ({
-            scopeType: s.scopeType,
-            stateAbbreviation: s.state?.abbreviation || 'SC',
-            municipalityOfficialCode: s.municipality?.officialCode || '',
-            municipalityName: s.municipality?.name || ''
-          })),
-          rounds: (el.rounds || []).map((r: any) => ({
-            roundNumber: r.roundNumber,
-            plei: r.plei || '',
-            date: r.date ? r.date.split('T')[0] : ''
-          })),
-          offices: (el.offices || []).map((o: any) => ({
-            code: o.code,
-            name: o.name,
-            type: o.type,
-            maxVotesPerVoter: o.maxVotesPerVoter || 1
-          })),
-          parties: [],
-          candidates: (el.offices || []).flatMap((o: any) =>
-            (o.candidates || []).map((c: any) => ({
-              officeCode: o.code,
-              candidateNumber: c.candidateNumber,
-              name: c.name,
-              ballotName: c.ballotName,
-              partyNumber: c.party?.officialIdentifier || ''
-            }))
-          ),
-          coverage: (el.rounds?.[0]?.coverage || []).map((cov: any) => ({
-            municipalityOfficialCode: cov.pollingSection?.zone?.municipality?.officialCode || '',
-            zoneNumber: cov.pollingSection?.zone?.zoneNumber || '',
-            sectionNumber: cov.pollingSection?.sectionNumber || '',
-            expectedBUs: cov.expectedBUs || 1,
-            isAggregated: cov.pollingSection?.isAggregated || false,
-            aggregatedIntoSec: cov.pollingSection?.aggregatedIntoSec || ''
-          })),
-          operators: []
-        });
-        setSuccessMsg(`Rascunho "${el.name}" carregado com sucesso.`);
+        setFormData(mapElectionToWizardState(data.election));
+        setSuccessMsg(`Rascunho "${data.election.name}" carregado com sucesso.`);
       }
     } catch (err: any) {
       setErrorMsg(err.message || 'Falha ao carregar rascunho.');
@@ -321,6 +298,7 @@ export default function WizardClient({ initialElectionId }: { initialElectionId?
         },
         body: JSON.stringify({
           ...formData,
+          tseConfigs: tseConfigsModified || formData.tseConfigs.length > 0 ? formData.tseConfigs : undefined,
           status
         })
       });
@@ -442,7 +420,8 @@ export default function WizardClient({ initialElectionId }: { initialElectionId?
       candidates: d.candidates?.length ? d.candidates : prev.candidates,
       rounds: d.rounds?.length ? d.rounds : prev.rounds,
       coverage: d.coverage?.length ? d.coverage : prev.coverage,
-      scopes: d.scopes?.length ? d.scopes : prev.scopes
+      scopes: d.scopes?.length ? d.scopes : prev.scopes,
+      tseConfigs: d.tseConfigs?.length ? d.tseConfigs : prev.tseConfigs
     }));
 
     setSuccessMsg('Dados importados com sucesso! Revise os campos nas abas correspondentes.');
@@ -990,6 +969,169 @@ export default function WizardClient({ initialElectionId }: { initialElectionId?
                 ))}
               </div>
             </div>
+
+            {/* Sincronização Oficial TSE (TseSyncConfig) */}
+            <div className="space-y-4 pt-4 border-t border-slate-100">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                    Integração Oficial TSE (Opcional — TseSyncConfig)
+                  </h3>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Configure os códigos oficiais de eleição TSE por turno e cargo para o comparativo em /apuracao.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const firstScope = formData.scopes[0];
+                    setTseConfigsModified(true);
+                    setFormData({
+                      ...formData,
+                      tseConfigs: [
+                        ...formData.tseConfigs,
+                        {
+                          roundNumber: formData.rounds[0]?.roundNumber || 1,
+                          officeCode: '',
+                          officialElectionCode: '',
+                          scopeType: firstScope?.scopeType || 'MUNICIPAL',
+                          uf: firstScope?.stateAbbreviation || '',
+                          muniTseCode: firstScope?.municipalityOfficialCode || ''
+                        }
+                      ]
+                    });
+                  }}
+                  className="text-xs text-indigo-600 font-bold flex items-center gap-1 shrink-0"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Adicionar Config TSE
+                </button>
+              </div>
+
+              {formData.tseConfigs.length > 0 && (
+                <div className="space-y-3">
+                  {formData.tseConfigs.map((cfg, idx) => (
+                    <div key={idx} className="p-3 bg-slate-50 rounded-2xl border border-slate-200 grid grid-cols-1 sm:grid-cols-6 gap-2 items-end text-xs">
+                      <div>
+                        <label className="block text-[10px] font-bold uppercase text-slate-500 mb-0.5">Turno</label>
+                        <select
+                          value={cfg.roundNumber}
+                          onChange={(e) => {
+                            const updated = [...formData.tseConfigs];
+                            updated[idx].roundNumber = Number(e.target.value);
+                            setTseConfigsModified(true);
+                            setFormData({ ...formData, tseConfigs: updated });
+                          }}
+                          className="w-full px-2 py-1.5 rounded-lg border border-slate-200 bg-white"
+                        >
+                          {formData.rounds.map(r => (
+                            <option key={r.roundNumber} value={r.roundNumber}>{r.roundNumber}º Turno</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] font-bold uppercase text-slate-500 mb-0.5">Cód. Eleição TSE *</label>
+                        <input
+                          type="text"
+                          placeholder="Ex: 620, 6257"
+                          value={cfg.officialElectionCode}
+                          onChange={(e) => {
+                            const updated = [...formData.tseConfigs];
+                            updated[idx].officialElectionCode = e.target.value;
+                            setTseConfigsModified(true);
+                            setFormData({ ...formData, tseConfigs: updated });
+                          }}
+                          className="w-full px-2 py-1.5 rounded-lg border border-slate-200 bg-white"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] font-bold uppercase text-slate-500 mb-0.5">Cód. Cargo (ou vazio)</label>
+                        <input
+                          type="text"
+                          placeholder="Todos ou ex: 1, 11"
+                          value={cfg.officeCode}
+                          onChange={(e) => {
+                            const updated = [...formData.tseConfigs];
+                            updated[idx].officeCode = e.target.value;
+                            setTseConfigsModified(true);
+                            setFormData({ ...formData, tseConfigs: updated });
+                          }}
+                          className="w-full px-2 py-1.5 rounded-lg border border-slate-200 bg-white"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] font-bold uppercase text-slate-500 mb-0.5">Abrangência</label>
+                        <select
+                          value={cfg.scopeType}
+                          onChange={(e) => {
+                            const updated = [...formData.tseConfigs];
+                            updated[idx].scopeType = e.target.value as any;
+                            setTseConfigsModified(true);
+                            setFormData({ ...formData, tseConfigs: updated });
+                          }}
+                          className="w-full px-2 py-1.5 rounded-lg border border-slate-200 bg-white"
+                        >
+                          <option value="MUNICIPAL">MUNICIPAL</option>
+                          <option value="ESTADUAL">ESTADUAL</option>
+                          <option value="NACIONAL">NACIONAL</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] font-bold uppercase text-slate-500 mb-0.5">UF / Município TSE</label>
+                        <div className="flex gap-1">
+                          <input
+                            type="text"
+                            placeholder="UF"
+                            maxLength={2}
+                            value={cfg.uf}
+                            onChange={(e) => {
+                              const updated = [...formData.tseConfigs];
+                              updated[idx].uf = e.target.value.toUpperCase();
+                              setTseConfigsModified(true);
+                              setFormData({ ...formData, tseConfigs: updated });
+                            }}
+                            className="w-12 px-2 py-1.5 rounded-lg border border-slate-200 bg-white uppercase"
+                          />
+                          <input
+                            type="text"
+                            placeholder="Cód. Muni"
+                            value={cfg.muniTseCode}
+                            onChange={(e) => {
+                              const updated = [...formData.tseConfigs];
+                              updated[idx].muniTseCode = e.target.value;
+                              setTseConfigsModified(true);
+                              setFormData({ ...formData, tseConfigs: updated });
+                            }}
+                            className="flex-1 min-w-0 px-2 py-1.5 rounded-lg border border-slate-200 bg-white"
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex justify-end">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTseConfigsModified(true);
+                            setFormData({
+                              ...formData,
+                              tseConfigs: formData.tseConfigs.filter((_, i) => i !== idx)
+                            });
+                          }}
+                          className="text-red-500 hover:text-red-700 p-2"
+                          title="Remover Configuração TSE"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </fieldset>
         )}
 
@@ -1207,7 +1349,7 @@ export default function WizardClient({ initialElectionId }: { initialElectionId?
                 <button
                   type="button"
                   onClick={() => {
-                    const muniCode = formData.scopes[0]?.municipalityOfficialCode || '80837';
+                    const muniCode = formData.scopes[0]?.municipalityOfficialCode || '';
                     setFormData({
                       ...formData,
                       coverage: [

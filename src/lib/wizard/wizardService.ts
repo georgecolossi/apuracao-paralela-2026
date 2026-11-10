@@ -6,7 +6,11 @@ import {
   canonicalizeScopeKey,
   validateElectionScopesSet,
   ElectionInvariantError,
-  VALID_BRAZILIAN_UFS
+  VALID_BRAZILIAN_UFS,
+  buildTseSyncConfigKey,
+  TseDnsLookupFn,
+  validateTseSourceUrl,
+  resolveAndValidateTseSourceUrl
 } from '@/lib/validation/electionContext';
 import { validateAdminConfirmation, getConfirmationAliases } from '@/lib/normalization';
 import { validatePasswordStrength } from '@/lib/validation/password';
@@ -70,6 +74,18 @@ export interface WizardOperatorInput {
   initialPassword?: string;
 }
 
+export interface WizardTseConfigInput {
+  roundNumber: number;
+  officeCode?: string | null;
+  officialElectionCode: string;
+  scopeType: 'NACIONAL' | 'ESTADUAL' | 'MUNICIPAL';
+  uf?: string | null;
+  muniTseCode?: string | null;
+  sourceUrl?: string | null;
+  syncIntervalSeconds?: number;
+  isActive?: boolean;
+}
+
 export interface WizardPayload {
   electionId?: string;
   name: string;
@@ -85,6 +101,7 @@ export interface WizardPayload {
   candidates?: WizardCandidateInput[];
   coverage?: WizardCoverageSectionInput[];
   operators?: WizardOperatorInput[];
+  tseConfigs?: WizardTseConfigInput[];
 }
 
 export interface TseCandidateValidationItem {
@@ -126,6 +143,7 @@ export interface TseImportResult {
     candidates?: WizardCandidateInput[];
     coverage?: WizardCoverageSectionInput[];
     scopes?: WizardScopeInput[];
+    tseConfigs?: WizardTseConfigInput[];
   };
   validationDetails?: TseCandidateValidationItem[];
   errors?: string[];
@@ -237,6 +255,9 @@ export async function getWizardMetadata(electionId?: string) {
         },
         reports: {
           select: { id: true, status: true, isSimulation: false }
+        },
+        tseConfigs: {
+          orderBy: [{ roundNumber: 'asc' }, { configKey: 'asc' }]
         }
       }
     });
@@ -269,7 +290,11 @@ export async function getWizardMetadata(electionId?: string) {
  * Salva ou atualiza uma eleição via assistente em transação atômica.
  * Atende às diretrizes de isolamento, integridade global e não-homologação precipitada de cobertura.
  */
-export async function saveElectionWizard(userId: string, payload: WizardPayload) {
+export async function saveElectionWizard(
+  userId: string,
+  payload: WizardPayload,
+  options?: { dnsLookup?: TseDnsLookupFn }
+) {
   // 1. Validações preliminares
   if (!payload.name || typeof payload.name !== 'string' || payload.name.trim().length < 3) {
     throw new WizardValidationError('INVALID_NAME', 'O nome da eleição deve ter pelo menos 3 caracteres.');
@@ -283,6 +308,25 @@ export async function saveElectionWizard(userId: string, payload: WizardPayload)
   const validTypes = ['GENERAL', 'MUNICIPAL', 'SUPPLEMENTARY', 'CONSULTA'];
   if (!validTypes.includes(payload.type)) {
     throw new WizardValidationError('INVALID_TYPE', `Tipo de eleição inválido. Deve ser: ${validTypes.join(', ')}.`);
+  }
+
+  // Validação anti-SSRF (incluindo resolução DNS) fora da transação para evitar bloqueio de escrita no SQLite
+  const preValidatedSourceUrls = new Map<string, string>();
+  if (Array.isArray(payload.tseConfigs)) {
+    for (const cfg of payload.tseConfigs) {
+      if (cfg.sourceUrl && cfg.sourceUrl.trim()) {
+        const trimmedUrl = cfg.sourceUrl.trim();
+        if (!preValidatedSourceUrls.has(trimmedUrl)) {
+          const urlCheck = await resolveAndValidateTseSourceUrl(trimmedUrl, {
+            dnsLookup: options?.dnsLookup
+          });
+          if (!urlCheck.valid) {
+            throw new WizardValidationError('INVALID_TSE_SOURCE_URL', urlCheck.reason);
+          }
+          preValidatedSourceUrls.set(trimmedUrl, urlCheck.normalized);
+        }
+      }
+    }
   }
 
   // 2. Transação Atômica com Prisma
@@ -316,7 +360,8 @@ export async function saveElectionWizard(userId: string, payload: WizardPayload)
           payload.offices !== undefined ||
           payload.candidates !== undefined ||
           payload.rounds !== undefined ||
-          payload.coverage !== undefined;
+          payload.coverage !== undefined ||
+          payload.tseConfigs !== undefined;
 
         if (structuralChangeAttempted) {
           throw new WizardValidationError(
@@ -1072,6 +1117,165 @@ export async function saveElectionWizard(userId: string, payload: WizardPayload)
       }
     }
 
+    // 9.5. Processar Configurações de Integração TSE (TseSyncConfig) - Se fornecido
+    if (payload.tseConfigs !== undefined) {
+      const incomingKeys = new Set<string>();
+      const preparedConfigs: Array<{
+        roundNumber: number;
+        configKey: string;
+        officeCode: string | null;
+        officialElectionCode: string;
+        scopeType: string;
+        uf: string | null;
+        muniTseCode: string | null;
+        sourceUrl: string | null;
+        syncIntervalSeconds: number;
+        isActive: boolean;
+      }> = [];
+
+      for (const cfg of payload.tseConfigs) {
+        const rNum = Number(cfg.roundNumber);
+        if (![1, 2].includes(rNum) || !roundMap.has(rNum)) {
+          throw new WizardValidationError(
+            'INVALID_TSE_CONFIG_ROUND',
+            `Turno inválido ou não configurado na eleição para TseSyncConfig: ${cfg.roundNumber}.`
+          );
+        }
+
+        const officialCode = (cfg.officialElectionCode || '').trim();
+        if (!officialCode || !/^\d+$/.test(officialCode)) {
+          throw new WizardValidationError(
+            'INVALID_TSE_ELECTION_CODE',
+            'O código oficial da eleição no TSE (officialElectionCode) deve ser numérico e não vazio.'
+          );
+        }
+
+        const scopeType = (cfg.scopeType || 'MUNICIPAL').trim().toUpperCase();
+        if (!['NACIONAL', 'ESTADUAL', 'MUNICIPAL'].includes(scopeType)) {
+          throw new WizardValidationError(
+            'INVALID_TSE_CONFIG_SCOPE',
+            `Tipo de abrangência inválido em TseSyncConfig: '${cfg.scopeType}'.`
+          );
+        }
+
+        const rawUf = cfg.uf ? cfg.uf.trim().toUpperCase() : null;
+        if (rawUf) {
+          if (scopeType === 'NACIONAL') {
+            if (rawUf !== 'BR' && !VALID_BRAZILIAN_UFS.has(rawUf)) {
+              throw new WizardValidationError('INVALID_TSE_CONFIG_UF', `UF '${rawUf}' inválida para escopo nacional.`);
+            }
+          } else if (!VALID_BRAZILIAN_UFS.has(rawUf)) {
+            throw new WizardValidationError('INVALID_TSE_CONFIG_UF', `UF '${rawUf}' inválida para escopo ${scopeType}.`);
+          }
+        } else if (scopeType === 'ESTADUAL' || scopeType === 'MUNICIPAL') {
+          throw new WizardValidationError('MISSING_TSE_CONFIG_UF', `UF obrigatória para configuração TSE de escopo ${scopeType}.`);
+        }
+
+        const rawMuni = cfg.muniTseCode ? cfg.muniTseCode.trim() : null;
+        if (rawMuni && !/^\d+$/.test(rawMuni)) {
+          throw new WizardValidationError('INVALID_TSE_CONFIG_MUNI', `Código TSE do município inválido: '${rawMuni}'.`);
+        }
+        if (scopeType === 'MUNICIPAL' && !rawMuni) {
+          throw new WizardValidationError('MISSING_TSE_CONFIG_MUNI', 'Código TSE do município obrigatório para configuração municipal.');
+        }
+
+        const cleanOffice = cfg.officeCode && cfg.officeCode.trim() ? cfg.officeCode.trim() : null;
+        if (cleanOffice && !/^\d+$/.test(cleanOffice) && cleanOffice.toUpperCase() !== 'ALL') {
+          throw new WizardValidationError('INVALID_TSE_CONFIG_OFFICE', `Código de cargo inválido em TseSyncConfig: '${cleanOffice}'.`);
+        }
+
+        let cleanSourceUrl: string | null = null;
+        if (cfg.sourceUrl && cfg.sourceUrl.trim()) {
+          const preValidated = preValidatedSourceUrls.get(cfg.sourceUrl.trim());
+          if (preValidated) {
+            cleanSourceUrl = preValidated;
+          } else {
+            const urlCheck = validateTseSourceUrl(cfg.sourceUrl);
+            if (!urlCheck.valid) {
+              throw new WizardValidationError('INVALID_TSE_SOURCE_URL', urlCheck.reason);
+            }
+            cleanSourceUrl = urlCheck.normalized;
+          }
+        }
+
+        const effectiveUfForKey = rawUf || (scopeType === 'NACIONAL' ? 'BR' : null);
+        const configKey = buildTseSyncConfigKey({
+          roundNumber: rNum,
+          officeCode: cleanOffice,
+          scopeType,
+          uf: effectiveUfForKey,
+          muniTseCode: rawMuni
+        });
+
+        if (incomingKeys.has(configKey)) {
+          throw new WizardValidationError(
+            'DUPLICATE_TSE_CONFIG_KEY',
+            `Configuração TSE duplicada na requisição para a chave lógica '${configKey}'.`
+          );
+        }
+        incomingKeys.add(configKey);
+
+        preparedConfigs.push({
+          roundNumber: rNum,
+          configKey,
+          officeCode: cleanOffice && cleanOffice.toUpperCase() === 'ALL' ? null : cleanOffice,
+          officialElectionCode: officialCode,
+          scopeType,
+          uf: effectiveUfForKey,
+          muniTseCode: rawMuni,
+          sourceUrl: cleanSourceUrl,
+          syncIntervalSeconds: typeof cfg.syncIntervalSeconds === 'number' && cfg.syncIntervalSeconds >= 1 ? Math.floor(cfg.syncIntervalSeconds) : 15,
+          isActive: cfg.isActive !== undefined ? Boolean(cfg.isActive) : true
+        });
+      }
+
+      // Remover configurações que não constam mais do payload
+      await tx.tseSyncConfig.deleteMany({
+        where: {
+          electionId: electionId!,
+          configKey: { notIn: Array.from(incomingKeys) }
+        }
+      });
+
+      // Upsert das configurações validadas
+      for (const item of preparedConfigs) {
+        await tx.tseSyncConfig.upsert({
+          where: {
+            electionId_configKey: {
+              electionId: electionId!,
+              configKey: item.configKey
+            }
+          },
+          update: {
+            roundNumber: item.roundNumber,
+            officeCode: item.officeCode,
+            officialElectionCode: item.officialElectionCode,
+            scopeType: item.scopeType,
+            uf: item.uf,
+            muniTseCode: item.muniTseCode,
+            sourceUrl: item.sourceUrl,
+            syncIntervalSeconds: item.syncIntervalSeconds,
+            isActive: item.isActive,
+            status: item.isActive ? 'ACTIVE' : 'PAUSED'
+          },
+          create: {
+            electionId: electionId!,
+            roundNumber: item.roundNumber,
+            configKey: item.configKey,
+            officeCode: item.officeCode,
+            officialElectionCode: item.officialElectionCode,
+            scopeType: item.scopeType,
+            uf: item.uf,
+            muniTseCode: item.muniTseCode,
+            sourceUrl: item.sourceUrl,
+            syncIntervalSeconds: item.syncIntervalSeconds,
+            isActive: item.isActive,
+            status: item.isActive ? 'ACTIVE' : 'PAUSED'
+          }
+        });
+      }
+    }
+
     // 10. Registrar Auditoria Transacional
     await tx.auditLog.create({
       data: {
@@ -1088,7 +1292,8 @@ export async function saveElectionWizard(userId: string, payload: WizardPayload)
           officesProvided: payload.offices !== undefined,
           candidatesProvided: payload.candidates !== undefined,
           coverageProvided: payload.coverage !== undefined,
-          operatorsProvided: payload.operators !== undefined
+          operatorsProvided: payload.operators !== undefined,
+          tseConfigsProvided: payload.tseConfigs !== undefined
         })
       }
     });
@@ -1574,6 +1779,9 @@ export function validateAndParseTseImport(rawJson: unknown): TseImportResult {
     const coverage: WizardCoverageSectionInput[] = Array.isArray(payload.coverage) ? payload.coverage : [];
     const rounds: WizardRoundInput[] = Array.isArray(payload.rounds) ? payload.rounds : [];
     const scopes: WizardScopeInput[] = Array.isArray(payload.scopes) ? payload.scopes : [];
+    const tseConfigs: WizardTseConfigInput[] | undefined = Array.isArray(payload.tseConfigs)
+      ? payload.tseConfigs
+      : undefined;
 
     return {
       valid: true,
@@ -1600,7 +1808,8 @@ export function validateAndParseTseImport(rawJson: unknown): TseImportResult {
         parties,
         candidates,
         coverage,
-        scopes
+        scopes,
+        ...(tseConfigs ? { tseConfigs } : {})
       }
     };
   }

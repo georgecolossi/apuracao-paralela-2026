@@ -27,6 +27,7 @@ O sistema opera sobre uma arquitetura web moderna baseada em Next.js (App Router
 - **Painel Administrativo (`/admin`):** Gestão operacional, ativação de turnos, visualização de cobertura e conferência de boletins.
 - **Scanner de QRBU (`/admin/scanner`):** Interface ótica baseada em HTML5 para leitura contínua de QR Codes impressos nos Boletins de Urna, compatível com múltiplos dispositivos simultâneos.
 - **API de Totais (`/api/totals`):** Endpoint de dados com cabeçalhos HTTP `Cache-Control: no-store, no-cache, must-revalidate, proxy-revalidate`, prevenindo respostas obsoletas em proxies e navegadores.
+- **Adaptador Dinâmico TSE (`/api/tse-results`):** Endpoint de consulta aos arquivos EA20 oficiais do TSE, inteiramente orientado pela configuração eleitoral persistida em `TseSyncConfig` e Setup Wizard, com isolamento de contexto e cache de 15 segundos.
 
 ---
 
@@ -180,3 +181,53 @@ Get-FileHash backups-local/prod-backup-2026-10-23-offsite.db -Algorithm SHA256
 | **Erro `SIMULATED_QRBU_REJECTED` (HTTP 400)** | O QR Code escaneado possui `FASE:S` ou `FASE:T`. Certifique-se de escanear o BU oficial impresso após as 17h00 da urna eletrônica (`FASE:O`). |
 | **Erro `SECTION_AGGREGATED_NO_BU` (HTTP 403)** | A seção é agregada e não possui urna física independente. Seus eleitores votaram na seção principal do mesmo local. Não é necessário enviar este número de seção. |
 | **Divergência entre BU de papel e tela** | Interrompa novos envios imediatamente. Acesse `/admin/conferencia`, localize o lote em questão e compare os hashes e votos com o relatório físico. |
+
+---
+
+## 10. Adaptador Dinâmico de Integração com o TSE (PR 8)
+
+A partir da arquitetura universal 2.0 (PR 8), o endpoint `GET /api/tse-results` (`src/lib/tse/tseResultsService.ts` e `src/lib/tse/tseResultsCache.ts`) deixou de utilizar quaisquer parâmetros estáticos (ano, UF, código de município ou códigos de eleição pré-fixados) e passou a operar exclusivamente orientado pela configuração persistida no banco de dados.
+
+### 10.1. Fonte Única de Configuração (`TseSyncConfig` + Setup Wizard)
+- **Origem dos Dados:** Todos os parâmetros da integração são extraídos da tabela `TseSyncConfig` vinculada à entidade `Election` (`Election.year`, `Election.scopes`, `Election.offices` e `Election.rounds`), alimentada pelo Setup Wizard (`/api/admin/wizard` / `wizardService.ts`) ou diretamente no cadastro relacional da eleição.
+- **Zero Acoplamentos Estáticos:** As URLs EA20 oficiais são construídas dinamicamente no padrão `{baseUrl}/ele{year}/{officialElectionCode}/dados/{abrFolder}/{abrPrefix}-c{cargoCode}-e{eleCode}-u.json`, suportando abrangências **MUNICIPAL** (`{uf}{muniTseCode}`), **ESTADUAL** (`{uf}`) e **NACIONAL** (`br`), bem como URLs personalizadas válidas em `TseSyncConfig.sourceUrl`.
+- **Resolução de Cargos:** Cargos são resolvidos pelo campo `TseSyncConfig.officeCode` ou expandidos automaticamente para os registros de `Office` cadastrados na eleição quando `officeCode` for nulo (`ALL`). Os nomes exibidos priorizam o cadastro de `Office.name` e normalizam flexões de gênero da resposta oficial.
+
+### 10.2. Isolamento entre Eleições, Turnos e Segurança (Anti-SSRF)
+- **Contexto Eleitoral:** Sem o parâmetro `?election`, o endpoint resolve estritamente a eleição `ACTIVE` única (retornando HTTP 400 `ELEICOES_MULTIPLAS_ATIVAS` se houver ambiguidade). Com `?election=<id_ou_slug>`, apenas eleições nos estados públicos `ACTIVE` ou `FINISHED` são acessíveis; eleições `DRAFT` ou `ARCHIVED` são bloqueadas com **HTTP 403 (`CONTEXTO_NAO_AUTORIZADO`)**.
+- **Anti-Proxy e Bloqueio de Sobrescrita:** Parâmetros externos de sobrescrita (`uf`, `muni`, `muniCode`, `muniTseCode`, `eleCode`, `officialElectionCode`, `year`, `sourceUrl`, `url`, `baseUrl`, `cargo`, `officeCode`, `scopeType`) na query string são sumariamente rejeitados com **HTTP 400 (`PARAMETRO_NAO_PERMITIDO`)**.
+- **Validação Anti-SSRF em Camadas (`validateTseSourceUrl` / `resolveAndValidateTseSourceUrl`):**
+  - **HTTPS Obrigatório em Produção:** Em produção (`NODE_ENV === 'production'`), apenas URLs `https://` públicas são aceitas; **HTTP e `localhost`/loopback são estritamente bloqueados** (exceções de loopback HTTP existem apenas mediante opt-in programático em testes automatizados Vitest, sem bypass em produção).
+  - **Bloqueio Completo IPv4 e IPv6 Não Públicos:** Normaliza representações alternativas (decimal, octal, hexadecimal, abreviada e IPv4-mapeado em IPv6 `::ffff:...`) e bloqueia integralmente `127.0.0.0/8`, RFC 1918 (`10/8`, `172.16/12`, `192.168/16`), `169.254.0.0/16` (link-local/metadata), `100.64.0.0/10` (CGNAT), `0.0.0.0/8`, multicast/reservados/documentação, além de IPv6 `::/128`, `::1/128`, `fe80::/10`, `fc00::/7` (ULA), `ff00::/8`, `2001:db8::/32` e hostnames internos (`.local`, `.internal`, `.localhost`, `metadata.google.internal`).
+  - **Resolução DNS Multi-Registro e Proteção Anti-DNS-Rebinding:** Resolve todos os registros DNS (`all: true`) em modo fail-closed (rejeitando se qualquer registro apontar para IP não público), fixa os IPs validados diretamente no `lookup` do socket (`executePinnedHttpGetJson` com SNI/TLS validado) e bloqueia redirecionamentos HTTP (`3xx`).
+- **Turnos Independentes:** O parâmetro obrigatório `?round=1` ou `?round=2` é validado por regex estrita `/^[1-2]$/` e filtra exclusivamente os registros de `TseSyncConfig` associados ao respectivo `roundNumber`.
+
+### 10.3. Comportamento para Configurações Ausentes, Pausadas ou Incompletas
+- **Configuração Ausente (`CONFIGURACAO_TSE_AUSENTE`):** Caso não exista eleição ativa ou não haja `TseSyncConfig` para o turno solicitado, o endpoint não aciona nenhuma URL externa e retorna resposta controlada HTTP 200 `{ status: 'NOT_YET_AVAILABLE', error: 'CONFIGURACAO_TSE_AUSENTE', offices: [] }` com `Cache-Control: no-store`.
+- **Configuração Pausada (`CONFIGURACAO_TSE_PAUSADA`):** Quando todos os registros estiverem com `isActive: false` ou `status: 'PAUSED'`, nenhuma requisição externa é disparada (`status: 'NOT_YET_AVAILABLE'`, `no-store`).
+- **Configuração Incompleta ou Inconsistente:** Configurações com `officialElectionCode` inválido, município ausente em escopo `MUNICIPAL`, `officeCode` nulo sem cargos cadastrados ou conflito de UF/município/SSRF são rejeitadas previamente com **HTTP 422 (`CONFIGURACAO_TSE_INCOMPLETA` / `CONFIGURACAO_TSE_INCONSISTENTE`)**, impedindo consultas externas malformadas ou inseguras.
+
+### 10.4. Política de Cache Context-Bound de 15 Segundos e Resultados Parciais
+- **Chave Criptográfica Contextual e Fingerprint Completo:** Implementada em `src/lib/tse/tseResultsCache.ts`, a chave de cache calcula SHA-256 sobre `[electionId, year, roundNumber, uf, muniTseCode, configFingerprint]`. O `configFingerprint` inclui integralmente os campos funcionais de:
+  1. Todos os registros ativos de **`TseSyncConfig`** do turno;
+  2. Todos os registros de **`ElectionScope`** da eleição (`scopeType`, `scopeKey`, `isCoverageArea`, UF e código/nome municipal);
+  3. Todos os registros de **`Office`** cadastrados (`code`, `name`, `type` e ordenação por `orderNumber`).
+- **Invalidação e Isolamento:**
+  - Requisições repetidas dentro de **15 segundos** (`TSE_CACHE_TTL_MS = 15_000`) para o mesmo contexto e fingerprint reutilizam a resposta em memória e emitem `Cache-Control: public, max-age=15, stale-while-revalidate=15`.
+  - Após 15 segundos, a entrada expira deterministicamente.
+  - Qualquer alteração em `TseSyncConfig`, `ElectionScope`, `Office` (cadastro, código, nome ou ordenação), troca de eleição ou turno altera o fingerprint e purga imediatamente entradas obsoletas do mesmo `(electionId, roundNumber)`.
+- **Política Explícita de Cacheabilidade por Cenário (`isCacheableTseResponse`):**
+
+| Cenário | Status Retornado | HTTP | Entra no Cache (15s)? | Cabeçalho HTTP |
+| :--- | :--- | :---: | :---: | :--- |
+| **Resposta integralmente válida** (todos os cargos `AVAILABLE`) | `AVAILABLE` | `200` | **Sim** | `public, max-age=15, stale-while-revalidate=15` |
+| **Resposta parcialmente disponível** (≥1 cargo `AVAILABLE` e outro(s) em `404`/`NOT_YET_AVAILABLE`, `TEMPORARILY_UNAVAILABLE` ou `INVALID_RESPONSE`) | `AVAILABLE` (mantém exibição parcial por cargo no painel) | `200` | **Não** | `no-store, no-cache, must-revalidate` |
+| **Cargo ainda não publicado** (`404` em todos os cargos) | `NOT_YET_AVAILABLE` | `200` | **Não** | `no-store, no-cache, must-revalidate` |
+| **Falha de rede / DNS / HTTP 5xx** (todos os cargos indisponíveis) | `TEMPORARILY_UNAVAILABLE` | `503` | **Não** | `no-store, no-cache, must-revalidate` |
+| **Timeout externo** | `TEMPORARILY_UNAVAILABLE` | `503` | **Não** | `no-store, no-cache, must-revalidate` |
+| **Payload inválido** (JSON corrompido, vazio ou divergente) | `INVALID_RESPONSE` | `502` | **Não** | `no-store, no-cache, must-revalidate` |
+
+### 10.5. Tratamento de Falhas Externas e Limitações Conhecidas
+- **Timeouts, Rede e Conexão Segura:** Cada consulta ao endpoint EA20 utiliza transporte com IP previamente validado e fixado (`executePinnedHttpGetJson`), `AbortController` com corrida temporal (`Promise.race`, padrão 5.000 ms) e bloqueio de redirecionamentos `3xx`. Timeouts, erros de rede/DNS e HTTP 5xx externos retornam status `TEMPORARILY_UNAVAILABLE` (**HTTP 503** quando nenhum cargo responder com sucesso), sem expor URLs internas, IPs privados, tokens ou stack traces.
+- **Validação Estrita de Payload EA20:** Respostas JSON corrompidas, vazias (`{}`) ou com divergência em `t` (turno), `cdabr` (município/UF), `ele` (código da eleição) ou código do cargo são classificadas como `INVALID_RESPONSE` (**HTTP 502** quando nenhum cargo for válido).
+- **Limitação Conhecida (Cache em Memória por Processo):** O cache contextual de 15 segundos reside em memória por instância do servidor Node.js. Em implantações multi-réplica sem stickiness, cada instância mantém seu próprio ciclo de 15s (mitigado pelo cabeçalho HTTP `max-age=15` e sem risco de mistura entre contextos).
