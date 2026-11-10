@@ -1,28 +1,36 @@
 # Rotina de Backup e Disaster Recovery
 
-A integridade eleitoral da base requer backup contínuo do banco primário.
+A integridade eleitoral da base exige cópias regulares do arquivo SQLite operacional e exportações contábeis auditáveis.
 
-## Frequência
-- **Logs de Auditoria:** Contínuo (WALS no Postgres).
-- **Snapshot Frio:** A cada 30 minutos na data das eleições.
-- **Retenção:** 5 anos.
+---
 
-## Script de Backup (PostgreSQL)
+## 1. Runtime Padrão (SQLite)
 
-```bash
-#!/bin/bash
-TIMESTAMP=$(date +"%F_%T")
-BACKUP_DIR="/var/backups/apuracao2026"
-pg_dump -U postgres -d apuracao2026 -F c -f "$BACKUP_DIR/apuracao_$TIMESTAMP.dump"
-```
+No schema ativo (`prisma/schema.prisma`), toda a persistência reside em um arquivo SQLite único (`prisma/dev.db` em desenvolvimento ou `/data/prod.db` no volume persistente em produção).
 
-## Restauração e Verificação
+### Scripts PowerShell Disponíveis (Operação Windows/Local)
+- **Gerar backup online seguro (`.backup` do CLI `sqlite3`):**
+  ```powershell
+  .\scripts\backup-operacional.ps1 -DbPath "prisma\prod.db" -BackupDir "backups"
+  ```
+- **Verificar integridade e contagem mínima (`PRAGMA integrity_check` em banco temporário isolado):**
+  ```powershell
+  .\scripts\verify-backup.ps1 -BackupFile "backups\prod-YYYYMMDD-HHMMSS.db"
+  ```
+> Requer o executável `sqlite3` disponível no `PATH`.
 
-Em caso de corrompimento do banco primário:
-1. Parar a aplicação (Downtime).
-2. Restaurar dump: `pg_restore -U postgres -d apuracao2026_restore /var/backups/apuracao2026/apuracao_XXX.dump`
-3. Como os agregados (Totalização) no painel `/apuracao` não são cacheados permanentemente e são derivados estritos de Live Query sobre `BallotVote`, a restauração garante que a soma reflita imediatamente o último BU salvo sem necessidade de reconstrução manual.
-4. (Opcional) Executar o endpoint de recalculo em `/admin/recalcular` caso caches de Redis venham a ser implementados.
+### Backup Offsite em Volume Persistente (Railway)
+Em produção gerenciada sobre volume `/data`, consulte os comandos completos de snapshot, hash SHA-256 e restore na Seção **Produção** de [`docs/OPERACAO.md`](./OPERACAO.md).
 
-## Exportação Contábil
-Independentemente do dump, operadores devem acionar `/api/export?format=csv` a cada fechamento de turno para possuir o dado espelhado em Excel (Disaster Recovery não-técnico).
+---
+
+## 2. Exportação Contábil Independente
+
+Além do backup físico do banco, operadores autorizados podem exportar os resultados via:
+- `GET /api/export?format=csv` (recomendado a cada marco de fechamento/turno para arquivo imutável e conferência externa).
+
+---
+
+## 3. Cenário Alternativo PostgreSQL (`prisma/schema.postgresql.prisma`)
+
+Caso a implantação adote PostgreSQL com o schema alternativo (`prisma/schema.postgresql.prisma`), utilize snapshots nativos via `pg_dump` / `pg_restore` antes de janelas de manutenção e valide a contagem de `BallotReport` e `BallotVote` após restauração.
