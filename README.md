@@ -5,7 +5,7 @@
 **Plataforma cívica independente e universal para coleta, conferência e totalização paralela de Boletins de Urna (QRBU)**
 
 [![Versão](https://img.shields.io/badge/Vers%C3%A3o-2.0.0--prep-indigo?style=flat-square)](CHANGELOG.md)
-[![Next.js](https://img.shields.io/badge/Next.js-16.3-black?style=flat-square&logo=next.js)](https://nextjs.org/)
+[![Next.js](https://img.shields.io/badge/Next.js-16.4-black?style=flat-square&logo=next.js)](https://nextjs.org/)
 [![React](https://img.shields.io/badge/React-19.2-61DAFB?style=flat-square&logo=react)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=flat-square&logo=typescript)](https://www.typescriptlang.org/)
 [![Tailwind CSS](https://img.shields.io/badge/Tailwind-4-06B6D4?style=flat-square&logo=tailwindcss)](https://tailwindcss.com/)
@@ -20,12 +20,12 @@
 
 ## Sobre o Projeto
 
-O **Apuração Paralela 2.0** é uma aplicação web open source independente desenvolvida para coletar, verificar criptograficamente, conferir, totalizar e publicar resultados extraídos diretamente dos Boletins de Urna (BUs) físicos impressos nas seções eleitorais brasileiras após o encerramento da votação.
+O **Apuração Paralela 2.0** é uma aplicação web independente, com código-fonte disponível neste repositório, desenvolvida para coletar, verificar criptograficamente, conferir, totalizar e publicar resultados extraídos diretamente dos Boletins de Urna (BUs) físicos impressos nas seções eleitorais brasileiras após o encerramento da votação.
 
 Originado na experiência cívica de acompanhamento eleitoral em Concórdia/SC (v1.0), o projeto foi reestruturado na versão **2.0** para operar como **plataforma universal multi-eleição**, configurável pelo Setup Wizard administrativo para pleitos **Municipais**, **Estaduais**, **Nacionais** ou **Consultas Populares**, com suporte simultâneo a múltiplos cargos, turnos independentes e acompanhamento em estúdio para imprensa e rádios.
 
 > [!IMPORTANT]
-> **Aviso de Isenção Institucional:** Esta plataforma é uma iniciativa cívica independente e de código aberto. **Não possui qualquer vínculo institucional, técnico ou operacional com o Tribunal Superior Eleitoral (TSE) ou com Tribunais Regionais Eleitorais (TREs)** e **não substitui os resultados oficiais da Justiça Eleitoral**. A validação SHA-512 garante integridade do conteúdo lido no QR Code em relação ao impresso na urna, mas não realiza verificação criptográfica PKI/ICP-Brasil da assinatura digital da urna.
+> **Aviso de Isenção Institucional:** Esta plataforma é uma iniciativa cívica independente com código-fonte público para fins de transparência técnica. **Não possui qualquer vínculo institucional, técnico ou operacional com o Tribunal Superior Eleitoral (TSE) ou com Tribunais Regionais Eleitorais (TREs)** e **não substitui os resultados oficiais da Justiça Eleitoral**. A validação SHA-512 garante integridade do conteúdo lido no QR Code em relação ao impresso na urna, mas não realiza verificação criptográfica PKI/ICP-Brasil da assinatura digital da urna.
 
 ---
 
@@ -195,4 +195,4 @@ Detalhes sobre cada suíte e suas limitações estão documentados em [`docs/TES
 
 ## Licença
 
-Este projeto ainda não possui um arquivo `LICENSE` definido no diretório raiz do repositório. A adoção formal de uma licença open source está pendente de definição e aprovação expressa pelo mantenedor do projeto antes da publicação final da tag/release `v2.0.0`.
+O código-fonte deste projeto encontra-se disponível neste repositório, porém **ainda não há um arquivo `LICENSE` definido no diretório raiz**. A definição formal dos termos de licenciamento permanece pendente de escolha e aprovação expressa pelo mantenedor do projeto antes da eventual publicação da release `v2.0.0`.

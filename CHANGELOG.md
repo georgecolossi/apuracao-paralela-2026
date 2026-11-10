@@ -5,9 +5,9 @@ O versionamento segue o padrão [Semantic Versioning](https://semver.org/lang/pt
 
 ---
 
-## [2.0.0] — Preparação de Release (PR0–PR9 em `feature/v2-universal`)
+## [2.0.0] — Preparação de Release (PR 0–PR 8 integrados em `feature/v2-universal`; PR 9 em revisão no PR #20)
 
-> **Status:** Preparação concluída em PR 9, aguardando revisão final, aprovação de licença pelo mantenedor e publicação manual da tag `v2.0.0` e GitHub Release.
+> **Status:** PR 0–PR 8 já integrados em `feature/v2-universal`. PR 9 implementado na branch `feature/v2-pr9-release` (PR #20) aguardando auditoria e integração; sem definição formal de licença nem publicação de tag/release `v2.0.0`.
 
 ### Adicionado
 - **Modelo de Dados Universal (PR 1 / #12):** Entidades `Election`, `ElectionRound`, `ElectionScope`, `RoundCoverage`, `Office` por eleição e `TseSyncConfig`, suportando múltiplas eleições simultâneas/históricas e abrangências `MUNICIPAL`, `ESTADUAL` e `NACIONAL`.
@@ -24,13 +24,13 @@ O versionamento segue o padrão [Semantic Versioning](https://semver.org/lang/pt
 
 ### Corrigido e Aprimorado
 - **Persistência e Exposição de `hashStatus` / `sigStatus` (PR 9):** `POST /api/scan` passou a persistir explicitamente as colunas `hashStatus` e `sigStatus` em `BallotReport` via `toCryptographicStatus`, e as APIs `/api/urnas` e `/api/urnas/[id]` passaram a utilizar `resolveCryptographicStatus` (com fallback seguro para `validationData` em boletins legados), garantindo exibição fiel de **`SHA-512 Verificado`** e no roteiro de locução da sala de imprensa.
-- **Compatibilização Completa da Suíte E2E (PR 9):** Atualização de `playwright.config.ts` e das 8 specs Playwright pré-existentes para tokens CSRF (`/api/csrf-token`), limpeza em ordem de FKs no schema universal, cobertura por turno (`RoundCoverage`) e asserções agnósticas.
+- **Compatibilização Completa e Fidelidade de Produção da Suíte E2E (PR 9):** Atualização de `playwright.config.ts` e das 8 specs Playwright pré-existentes para tokens CSRF (`/api/csrf-token`), schema universal, `RoundCoverage` e uso exclusivo/fail-closed de `file:./e2e.db` via `e2e/helpers/e2eSupport.ts`; execução E2E com `ALLOW_SIMULATED_FASE="false"`, payloads oficiais `FASE:O` com SHA-512 válido, validação explícita de rejeição de `FASE:S` em modo oficial (`SIMULATED_QRBU_REJECTED`) e isolamento de `isSimulation: true` em `/api/totals` e `/api/urnas`.
 - **Saneamento Integral de Documentação e Encoding (PR 9):** Remoção de 297 *null bytes* e mojibake em `docs/ARCHITECTURE.md` e `docs/TESTING.md`; remoção de variáveis inexistentes em `.env.example` (`COVERAGE_CITY_CODES`, `ADMIN_INITIAL_PASSWORD`) e de script inexistente em `docs/OPERACAO.md` (`pre-election-readiness.mjs`); separação explícita entre Desenvolvimento Local, Homologação e Produção em `docs/OPERACAO.md`; alinhamento de `README.md`, `docs/BACKUP.md` e `docs/DEPLOY.md` ao runtime SQLite + Prisma 2.0.
 
 ### Segurança
 - Endurecimento anti-SSRF e anti-DNS-rebinding em `validateTseSourceUrl` / `executePinnedHttpGetJson` (`src/lib/validation/electionContext.ts` e `src/lib/tse/tseResultsService.ts`).
 - Política CSRF fail-closed em rotas mutáveis autenticadas (`src/lib/security/csrf.ts`).
-- Documentação explícita de 17 vulnerabilidades reportadas pelo `npm audit` nas dependências atuais sem alteração de versões em PR 9 para preservar compatibilidade binária do ciclo homologado (ver [`docs/RELEASE_V2.0.0.md`](docs/RELEASE_V2.0.0.md)).
+- Atualização de dependências de runtime e segurança sem breaking changes: `next` (`16.3.7` → `16.4.6`), `eslint-config-next` (`16.3.7` → `16.4.6`), `zod` (`4.6.5` → `4.6.7`, corrigindo `GHSA-mrhx-c7xc-m3w5`) e `source-map-js` (`1.2.1` → `1.2.2`, corrigindo `GHSA-68fv-2mgg-jv7q`), resultando em **0 vulnerabilidades de produção (`npm audit --omit=dev`)**; 14 vulnerabilidades transitivas/devDependencies remanescentes em ferramentas de teste/lint documentadas em [`docs/RELEASE_V2.0.0.md`](docs/RELEASE_V2.0.0.md).
 
 ---
 

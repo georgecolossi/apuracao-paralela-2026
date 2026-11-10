@@ -9,10 +9,10 @@ A suíte automatizada valida integridade criptográfica de Boletins de Urna (QRB
 Os testes **nunca** utilizam o banco de desenvolvimento (`prisma/dev.db`) nem bancos de produção:
 
 - **Vitest (`npm run test`):** executado por [`scripts/run-tests.mjs`](../scripts/run-tests.mjs), que limpa e recria `prisma/test.db` com `prisma db push`, popula o contexto de teste via `prisma/seeds/test-seed.ts`, roda o Vitest sequencialmente (`--no-file-parallelism --exclude e2e`) e remove `test.db` ao finalizar.
-- **Playwright E2E (`npm run test:e2e`):** executado por [`scripts/run-e2e.mjs`](../scripts/run-e2e.mjs), que cria `prisma/e2e.db`, aplica o schema, executa `seed-test-coverage.ts`, sobe o servidor de testes configurado em `playwright.config.ts` e remove `e2e.db` após concluir.
+- **Playwright E2E (`npm run test:e2e`):** executado por [`scripts/run-e2e.mjs`](../scripts/run-e2e.mjs), que cria `prisma/e2e.db`, aplica o schema, executa `seed-test-coverage.ts`, sobe o servidor de testes configurado em `playwright.config.ts` e remove `e2e.db` após concluir. Todos os workers e chamadas a `PrismaClient` no diretório `e2e/` utilizam [`createE2EPrismaClient`](../e2e/helpers/e2eSupport.ts) com verificação fail-closed de `DATABASE_URL="file:./e2e.db"`.
 
 > [!NOTE]
-> Para testar fixtures públicos oficiais do TSE que carregam cabeçalho de simulação (`FASE:S`), o runner E2E define `ALLOW_SIMULATED_FASE="true"` exclusivamente no processo de teste definido em `playwright.config.ts`. A rejeição estrita de `FASE !== "O"` sem essa flag (`SIMULATED_QRBU_REJECTED`) é validada diretamente na suíte Vitest (`tests/t2-scanner-validation.test.ts` e `tests/pre-election-audit.test.ts`).
+> A suíte E2E executa com `ALLOW_SIMULATED_FASE="false"` em [`playwright.config.ts`](../playwright.config.ts), reproduzindo fielmente o comportamento de produção. Os fluxos oficiais utilizam payloads `FASE:O` com hash SHA-512 válido (`e2e/helpers/e2eSupport.ts`), enquanto boletins com `FASE:S` enviados como oficiais (`isSimulation: false`) são testados para confirmar rejeição estrita (`HTTP 400 SIMULATED_QRBU_REJECTED`). Testes de simulação (`isSimulation: true`) permanecem isolados e validam ausência de vazamento para `/api/totals` e `/api/urnas`.
 
 ---
 
