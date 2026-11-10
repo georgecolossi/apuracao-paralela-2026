@@ -7,15 +7,14 @@ import { BallotReportData } from '../src/lib/parser';
 test.describe('E2E OFFICIAL FIXTURE', () => {
   const examplesDir = path.join(__dirname, '../tests/fixtures/tse-2026/official/examples');
 
-  test('Fluxo completo usando payload OFICIAL TSE 2026', async ({ request, page }) => {
+  test('Fluxo completo usando payload OFICIAL TSE 2026', async ({ page }) => {
     let examples: string[] = [];
     if (fs.existsSync(examplesDir)) {
-      examples = fs.readdirSync(examplesDir).filter(dir => 
+      examples = fs.readdirSync(examplesDir).filter(dir =>
         fs.statSync(path.join(examplesDir, dir)).isDirectory()
       );
     }
-    
-    // Fail se não existir fixture oficial
+
     expect(examples.length).toBeGreaterThan(0);
 
     const firstExample = examples[0];
@@ -28,32 +27,80 @@ test.describe('E2E OFFICIAL FIXTURE', () => {
       return fs.readFileSync(path.join(decodedDir, file), 'utf8').trim();
     });
 
-    // 1. Precisamos criar a eleição que dê match no PLEI/TURN desse BU
-    // Vamos ler manualmente pra setup:
     const setupParser = new Tse2026BallotReportParser();
     const full = setupParser.reconstruct(partsPayloads) as string;
     const parsed = setupParser.parseReport(full, partsPayloads) as BallotReportData;
     expect(parsed.electionId).toBeDefined();
 
-    // 2. Setup Election DB context
     const { PrismaClient } = await import('@prisma/client');
     const prisma = new PrismaClient();
 
-    // Limpar o banco de dados inteiro para E2E
     await prisma.ballotVote.deleteMany({});
     await prisma.ballotReportPart.deleteMany({});
     await prisma.ballotReport.deleteMany({});
     await prisma.scanSession.deleteMany({});
+    await prisma.roundCoverage.deleteMany({});
+    await prisma.tseSyncConfig.deleteMany({});
+    await prisma.candidate.deleteMany({});
+    await prisma.office.deleteMany({});
+    await prisma.party.deleteMany({});
+    await prisma.electionScope.deleteMany({});
     await prisma.electionRound.deleteMany({});
     await prisma.election.deleteMany({});
+
+    const stateObj = await prisma.state.upsert({
+      where: { abbreviation: parsed.stateCode },
+      update: {},
+      create: { abbreviation: parsed.stateCode, name: parsed.stateCode }
+    });
+    const paddedCity = parsed.cityCode.padStart(5, '0');
+    const muniObj = await prisma.municipality.upsert({
+      where: { officialCode: paddedCity },
+      update: { isCoverage: true },
+      create: { officialCode: paddedCity, name: `Município ${paddedCity}`, stateId: stateObj.id, isCoverage: true }
+    });
+    await prisma.pollingZone.upsert({
+      where: {
+        municipalityId_zoneNumber: {
+          municipalityId: muniObj.id,
+          zoneNumber: parsed.zoneCode.padStart(4, '0')
+        }
+      },
+      update: {},
+      create: {
+        municipalityId: muniObj.id,
+        zoneNumber: parsed.zoneCode.padStart(4, '0')
+      }
+    });
 
     await prisma.election.create({
       data: {
         plei: parsed.electionId,
         name: `Eleição Oficial Teste ${parsed.electionId}`,
         year: 2026,
+        type: 'GENERAL',
         status: 'ACTIVE',
-        rounds: { create: [{ roundNumber: parsed.roundNumber, status: 'ACTIVE' }] }
+        rounds: { create: [{ roundNumber: parsed.roundNumber, plei: parsed.electionId, status: 'ACTIVE' }] },
+        scopes: {
+          create: {
+            scopeType: 'MUNICIPAL',
+            scopeKey: `MUNICIPAL:${parsed.stateCode}:${paddedCity}`,
+            stateId: stateObj.id,
+            municipalityId: muniObj.id,
+            isCoverageArea: true
+          }
+        },
+        offices: {
+          create: [
+            { code: '1', name: 'Presidente', type: 'MAJORITARIO', orderNumber: 1 },
+            { code: '3', name: 'Governador', type: 'MAJORITARIO', orderNumber: 2 },
+            { code: '5', name: 'Senador', type: 'MAJORITARIO', orderNumber: 3 },
+            { code: '6', name: 'Deputado Federal', type: 'PROPORCIONAL', orderNumber: 4 },
+            { code: '7', name: 'Deputado Estadual', type: 'PROPORCIONAL', orderNumber: 5 },
+            { code: '11', name: 'Prefeito', type: 'MAJORITARIO', orderNumber: 6 },
+            { code: '13', name: 'Vereador', type: 'PROPORCIONAL', orderNumber: 7 }
+          ]
+        }
       }
     });
 
@@ -64,12 +111,16 @@ test.describe('E2E OFFICIAL FIXTURE', () => {
     await page.click('button[type="submit"]');
     await expect(page).toHaveURL('/admin/scanner');
 
+    const csrfRes = await page.request.get('/api/csrf-token');
+    const { csrfToken } = await csrfRes.json();
+
     const sessionId = `E2E-OFFICIAL-${Date.now()}`;
 
     // 4. Scan Parts
     let reportId = '';
     for (let i = 0; i < partsPayloads.length; i++) {
       const scanPart = await page.request.post('/api/scan', {
+        headers: { 'x-csrf-token': csrfToken },
         data: {
           content: partsPayloads[i],
           isSimulation: false,
@@ -78,7 +129,7 @@ test.describe('E2E OFFICIAL FIXTURE', () => {
       });
       const res = await scanPart.json();
       expect(scanPart.status()).toBe(200);
-      
+
       if (i === partsPayloads.length - 1) {
         expect(res.status).toBe('COMPLETO');
         reportId = res.reportId;
@@ -90,30 +141,25 @@ test.describe('E2E OFFICIAL FIXTURE', () => {
     // 5. Conferência
     await page.goto(`/admin/conferir/${reportId}`);
     await expect(page.locator(`text=${parsed.cityCode}`).first()).toBeVisible();
-    
+
     // 6. Confirma Processamento
     await page.click('button:has-text("Confirmar e Totalizar")');
     await expect(page).toHaveURL('/admin/scanner');
 
-    // 7. Confirma que apareceu no Painel
-    await page.goto('/apuracao');
-    await expect(page.locator('text=Apuração Paralela — Concórdia')).toBeVisible();
+    // 7. Confirma que apareceu no Painel Público Dinâmico
+    await page.goto(`/apuracao?round=${parsed.roundNumber}`);
+    await expect(page.locator('body')).toContainText(`Eleição Oficial Teste ${parsed.electionId}`);
+    await expect(page.locator('body')).toContainText('Presidente');
 
     // 7.1 Verificar agregação comparando com parsed.votes
-    const totalsResponse = await page.request.get('/api/totals');
+    const totalsResponse = await page.request.get(`/api/totals?round=${parsed.roundNumber}`);
     expect(totalsResponse.status()).toBe(200);
     const totalsBody = await totalsResponse.json();
 
     const expectedAgg: Record<string, number> = {};
     for (const v of parsed.votes) {
-      const officeName = v.officeName;
-      const candidateNumber = v.candidateNumber || null;
-      const partyNumber = v.partyNumber || null;
-      const voteType = v.type;
-      
-      const key = `${officeName}|${candidateNumber}|${partyNumber}|${voteType}`;
-      if (!expectedAgg[key]) expectedAgg[key] = 0;
-      expectedAgg[key] += v.quantity;
+      const key = `${v.officeName}|${v.candidateNumber || null}|${v.partyNumber || null}|${v.type}`;
+      expectedAgg[key] = (expectedAgg[key] || 0) + v.quantity;
     }
 
     interface TotalRow {
@@ -129,29 +175,22 @@ test.describe('E2E OFFICIAL FIXTURE', () => {
       const expectedCNum = cNumStr === 'null' ? null : cNumStr;
       const expectedPNum = pNumStr === 'null' ? null : pNumStr;
 
-      const found = totalsBody.totals.find((t: TotalRow) => 
+      const found = totalsBody.totals.find((t: TotalRow) =>
         t.officeName === oName &&
-        (t.candidateNumber === expectedCNum || String(t.candidateNumber) === String(expectedCNum)) &&
-        (t.partyNumber === expectedPNum || String(t.partyNumber) === String(expectedPNum)) &&
+        (t.candidateNumber ?? null) === expectedCNum &&
+        (t.partyNumber ?? null) === expectedPNum &&
         t.voteType === vType
       );
-      
+
       expect(found, `Expected to find total for ${key}`).toBeDefined();
       expect(found.quantity, `Quantity mismatch for ${key}`).toBe(expectedQuantity);
     }
 
-    // 8. Tentar duplicar deve rejeitar
-    const duplicateScan = await page.request.post('/api/scan', {
-        data: {
-          content: partsPayloads[partsPayloads.length - 1], // manda a última parte numa nova sessao
-          isSimulation: false,
-          sessionId: sessionId + '-DUP'
-        }
-    });
-    // Se mandar só a última, não fecha o BU, entao manda todas de novo numa nova sessao
+    // 8. Tentar duplicar em nova sessão deve rejeitar (409 DUPLICADO)
     const sessionIdDup = sessionId + '-DUP';
     for (let i = 0; i < partsPayloads.length; i++) {
       const scanPart = await page.request.post('/api/scan', {
+        headers: { 'x-csrf-token': csrfToken },
         data: {
           content: partsPayloads[i],
           isSimulation: false,
@@ -159,7 +198,7 @@ test.describe('E2E OFFICIAL FIXTURE', () => {
         }
       });
       if (i === partsPayloads.length - 1) {
-        expect(scanPart.status()).toBe(409); // CONFLICT / DUPLICATE
+        expect(scanPart.status()).toBe(409);
         const resDup = await scanPart.json();
         expect(resDup.status).toBe('DUPLICADO');
       }

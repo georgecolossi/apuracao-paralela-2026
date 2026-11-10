@@ -22,7 +22,11 @@ export default defineConfig({
     reuseExistingServer: false,
     env: {
       DATABASE_URL: 'file:./e2e.db',
-      ALLOW_OPERATIONAL_RESET: 'true'
+      JWT_SECRET: process.env.JWT_SECRET || 'e2e-isolated-test-jwt-secret-key-min-32-chars',
+      ALLOW_OPERATIONAL_RESET: 'true',
+      // Habilitado exclusivamente no runner E2E isolado para exercitar fixtures publicas do TSE (FASE:S)
+      ALLOW_SIMULATED_FASE: 'true',
+      TSE_FETCH_TIMEOUT_MS: '2000'
     }
   },
 });
