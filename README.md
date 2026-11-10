@@ -1,22 +1,18 @@
 <div align="center">
 
-# Apuração Paralela 2026
+# Apuração Paralela 2.0
 
-**Sistema independente de acompanhamento eleitoral — Concórdia/SC**
+**Plataforma cívica independente e universal para coleta, conferência e totalização paralela de Boletins de Urna (QRBU)**
 
-[![Next.js](https://img.shields.io/badge/Next.js-16.3-black?style=flat-square&logo=next.js)](https://nextjs.org/)
-[![React](https://img.shields.io/badge/React-19.0-61DAFB?style=flat-square&logo=react)](https://react.dev/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.0-3178C6?style=flat-square&logo=typescript)](https://www.typescriptlang.org/)
-[![Tailwind CSS](https://img.shields.io/badge/Tailwind-4.0-06B6D4?style=flat-square&logo=tailwindcss)](https://tailwindcss.com/)
+[![Versão](https://img.shields.io/badge/Vers%C3%A3o-2.0.0--prep-indigo?style=flat-square)](CHANGELOG.md)
+[![Next.js](https://img.shields.io/badge/Next.js-16.4-black?style=flat-square&logo=next.js)](https://nextjs.org/)
+[![React](https://img.shields.io/badge/React-19.2-61DAFB?style=flat-square&logo=react)](https://react.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?style=flat-square&logo=typescript)](https://www.typescriptlang.org/)
+[![Tailwind CSS](https://img.shields.io/badge/Tailwind-4-06B6D4?style=flat-square&logo=tailwindcss)](https://tailwindcss.com/)
 [![Prisma](https://img.shields.io/badge/Prisma-5.22-2D3748?style=flat-square&logo=prisma)](https://www.prisma.io/)
-[![SQLite](https://img.shields.io/badge/SQLite-3.0-003B57?style=flat-square&logo=sqlite)](https://www.sqlite.org/)
-[![Railway](https://img.shields.io/badge/Railway-Deploy-0B0D0E?style=flat-square&logo=railway)](https://railway.app/)
+[![SQLite](https://img.shields.io/badge/SQLite-3-003B57?style=flat-square&logo=sqlite)](https://www.sqlite.org/)
 [![Vitest](https://img.shields.io/badge/Vitest-2.1-6E9F18?style=flat-square&logo=vitest)](https://vitest.dev/)
 [![Playwright](https://img.shields.io/badge/Playwright-1.63-2EAD33?style=flat-square&logo=playwright)](https://playwright.dev/)
-
----
-
-### [Acessar Painel Público em Produção](https://apuracao-paralela-2026-production.up.railway.app/apuracao)
 
 </div>
 
@@ -24,161 +20,182 @@
 
 ## Sobre o Projeto
 
-O **Apuração Paralela 2026** é uma aplicação web independente desenvolvida para coletar, validar, contabilizar e acompanhar os Boletins de Urna (BUs) impressos e fixados nas seções eleitorais ao término da votação.
+O **Apuração Paralela 2.0** é uma aplicação web independente, com código-fonte disponível neste repositório, desenvolvida para coletar, verificar criptograficamente, conferir, totalizar e publicar resultados extraídos diretamente dos Boletins de Urna (BUs) físicos impressos nas seções eleitorais brasileiras após o encerramento da votação.
 
-O sistema permite que cidadãos, fiscais e a comunidade de Concórdia/SC acompanhem em tempo real a evolução da contagem dos votos no município através de um painel público de acesso livre, de forma independente do processamento central da Justiça Eleitoral.
+Originado na experiência cívica de acompanhamento eleitoral em Concórdia/SC (v1.0), o projeto foi reestruturado na versão **2.0** para operar como **plataforma universal multi-eleição**, configurável pelo Setup Wizard administrativo para pleitos **Municipais**, **Estaduais**, **Nacionais** ou **Consultas Populares**, com suporte simultâneo a múltiplos cargos, turnos independentes e acompanhamento em estúdio para imprensa e rádios.
 
 > [!IMPORTANT]
-> **Aviso de Isenção:** Esta plataforma é um projeto independente da sociedade civil. Não possui qualquer vínculo com o Tribunal Superior Eleitoral (TSE) ou com Tribunais Regionais Eleitorais (TREs) e **não substitui os resultados oficiais da Justiça Eleitoral**.
+> **Aviso de Isenção Institucional:** Esta plataforma é uma iniciativa cívica independente com código-fonte público para fins de transparência técnica. **Não possui qualquer vínculo institucional, técnico ou operacional com o Tribunal Superior Eleitoral (TSE) ou com Tribunais Regionais Eleitorais (TREs)** e **não substitui os resultados oficiais da Justiça Eleitoral**. É essencial distinguir três níveis de verificação:
+> 1. **Integridade de conteúdo (SHA-512):** verificada matematicamente sobre o texto do QRBU em relação ao hash informado no envelope;
+> 2. **Assinatura digital (`ASSI:` / PKI/ICP-Brasil):** **não** é verificada offline pela plataforma (`sigStatus` permanece `'UNCHECKED'`);
+> 3. **Autenticidade/origem de um BU oficial:** os testes automatizados E2E `FASE:O` usam payloads sintéticos de teste com SHA-512 válido, não comprovando assinatura digital oficial nem emissão genuína pelo TSE.
 
 ---
 
-## Funcionalidades
+## Funcionalidades Principais (v2.0)
 
-- **Scanner Ótico de QRBU:** Leitura contínua pela câmera do celular ou desktop (`html5-qrcode`), com suporte adicional a envio manual de payload.
-- **Suporte a QR Codes Multipartes:** Montagem automática de boletins impressos em múltiplos fragmentos QR Code (`QRBU:n:m`), tolerante a recepção fora de ordem.
-- **Validação Criptográfica de Integridade:** Recálculo e verificação do hash SHA-512 informado no cabeçalho do BU para garantir que nenhum voto ou dado foi adulterado.
-- **Prevenção de Duplicidades e Conflitos:** Identificação determinística unívoca (`deterministicId`) por pleito, turno, zona, seção e urna, rejeitando envios repetidos ou conflitantes.
-- **Conferência Administrativa de BUs:** Interface visual para conferência lote a lote entre as informações digitadas/escaneadas e a fita física de papel.
-- **Cadastro Dinâmico de Seções Elegíveis:** No segundo turno, o sistema cadastra dinamicamente novas seções legítimas do município atendido, sem necessidade de lista estática prévia.
-- **Isolamento Estrito de Turnos (RoundContext Isolation):** O 1º turno e o 2º turno operam com contextos de pleito (`plei`), candidatos, regras de apuração e coberturas completamente independentes.
-- **Totalização Transparente:** Agregação de votos nominais por candidato, votos brancos, votos nulos, total de votos apurados, comparecimento e abstenção.
-- **Indicadores de Cobertura Eleitoral:** Exibição clara das urnas apuradas contra o denominador esperado, com sinalização explícita de cobertura provisória quando aplicável.
-- **Projeção Matemática Linear:** Extrapolação provisória de votos com base no percentual apurado; inicia-se a partir do primeiro BU recebido e oculta-se automaticamente ao atingir 100%.
-- **Painel Público em Tempo Real:** Atualização automática periódica via polling com cabeçalhos HTTP `Cache-Control: no-store`, garantindo que os dados não fiquem retidos em cache.
-- **Trilha de Auditoria (AuditLog):** Registro cronológico de todas as ações administrativas, acessos, ativações de turno e rejeições operacionais.
+- **Modelo Universal Multi-Eleição e Multi-Escopo:** Suporte a eleições `GENERAL`, `MUNICIPAL`, `SUPPLEMENTARY` e `CONSULTA`, abrangências nacional (`BR`), estadual (`UF:*`) e municipal (`MUN:*`) em `ElectionScope`, além de isolamento completo de turnos (`1º` e `2º`) e preservação histórica de pleitos encerrados (`FINISHED`).
+- **Setup Wizard Administrativo (`/admin/wizard`):** Criação, edição, rascunho (`DRAFT`) e ativação (`ACTIVE`) de eleições, cargos (`Office`), códigos de pleito (`plei`), turnos (`ElectionRound`), abrangências e sincronização TSE via interface web.
+- **Adaptador Universal de QRBU (`UniversalQrBuParser`):** Compatível com múltiplos leiautes VRQR do TSE (`Vrqr4Adapter`, `Vrqr5Adapter`, `Vrqr6Adapter`), reconstrução de boletins fragmentados em múltiplos QR Codes fora de ordem, validação estrita de hash **SHA-512**, checagem de invariantes eleitorais e rejeição automática de boletins não oficiais (`FASE !== 'O'`) fora do modo simulação.
+- **Scanner Mobile e Contingência (`/admin/scanner`):** Interface responsiva otimizada para campo com seleção/foco de câmera (`html5-qrcode`), upload de foto do BU e entrada manual de payload para áreas sem conexão estável.
+- **Conferência Humana e Trilha de Auditoria (`/admin/conferencia`, `/admin/conferir/[id]`, `/admin/audit`):** Fluxo de dupla verificação antes da publicação de um BU, prevenção atômica contra duplicidade via `deterministicId` (`UNIQUE`), registro em `AuditLog` e exportação contábil CSV (`/api/export?format=csv`).
+- **Segurança, RBAC e CSRF Fail-Closed:**
+  - Perfis administrativos diferenciados (`ADMIN`, `OPERATOR`, `VIEWER`) geridos em `/admin/usuarios`.
+  - Revogação imediata de sessões via `sessionVersion`, proteção fail-closed de `JWT_SECRET` e bloqueio de autoexclusão/rebaixamento do último `ADMIN` ativo.
+  - Setup inicial protegido (`scripts/create-initial-admin.mjs` ou `POST /api/setup` condicionado a `ADMIN_SETUP_TOKEN` e desativável por `DISABLE_HTTP_SETUP=true`).
+  - Validação CSRF fail-closed (`Origin`/`Referer`/`Sec-Fetch-Site` + token HMAC em `x-csrf-token`) e isolamento estrito de boletins de simulação (`isSimulation = true`).
+- **Painel Público Universal (`/apuracao`):** Visualização agnóstica a pleito e cargo com seleção dinâmica (`?election=...&round=...`), votos nominais, de legenda, brancos, nulos, comparecimento, abstenções, cobertura provisória vs homologada e projeção linear provisória.
+- **Imprensa & Rádio (`/imprensa`):** Feed em tempo real **Últimas Urnas Apuradas** com paginação por cursor, filtros por Zona/Seção, modal de detalhamento com status SHA-512, geração automática de **roteiro de locução para rádio** e modo **Teleprompter** de alto contraste.
+- **Adaptador Dinâmico TSE (`/api/tse-results`):** Consumo dinâmico das parciais oficiais EA20 orientado por `TseSyncConfig` e Setup Wizard, com cache contextual de 15 segundos, bloqueio anti-proxy de parâmetros externos e proteção anti-SSRF multi-camada (validação CIDR IPv4/IPv6, DNS pinning e bloqueio de redirecionamentos `3xx`).
 
 ---
 
-## Como Funciona
-
-O fluxo operacional de ingestão e totalização de votos é estruturado nas seguintes etapas:
+## Arquitetura Resumida
 
 ```mermaid
 flowchart LR
-    A["BU Impresso"] --> B["Leitura QRBU"]
-    B --> C["Validação SHA-512"]
-    C --> D["Conferência Administrativa"]
-    D --> E["Persistência SQLite"]
-    E --> F["Totalização"]
-    F --> G["Painel Público"]
+    OP["Operador / Coordenador"] --> WZ["Setup Wizard & RBAC (/admin)"]
+    OP --> SC["Scanner QRBU (/admin/scanner)"]
+    SC -->|"POST /api/scan + CSRF"| PRS["UniversalQrBuParser + SHA-512"]
+    PRS --> CF["Conferência (/admin/conferir/[id])"]
+    CF -->|"Transação Atômica"| DB[("SQLite via Prisma ORM")]
+    WZ --> DB
+    DB --> TOT["/apuracao + GET /api/totals"]
+    DB --> IMP["/imprensa + GET /api/urnas"]
+    DB --> TSE["Adaptador TSE (Anti-SSRF) -> GET /api/tse-results"]
 ```
 
-1. **BU Impresso:** A urna eletrônica imprime o espelho do Boletim de Urna ao encerrar a votação às 17h00.
-2. **Leitura QRBU:** O operador voluntário posiciona a câmera do dispositivo móvel e faz a leitura do QR Code na página 1 do BU.
-3. **Validação SHA-512:** O backend valida o cabeçalho (`QRBU`), a fase oficial (`FASE:O`), o pleito ativo e recalcula o hash criptográfico do payload.
-4. **Conferência Administrativa:** Fiscais podem confrontar a parcial registrada contra a fita de papel através do painel de conferência.
-5. **Persistência SQLite:** O boletim e seus votos associados são gravados em transação única no banco de dados SQLite persistente.
-6. **Totalização:** O motor de apuração recalcula a soma de votos nominais, votos brancos, nulos e comparecimento.
-7. **Painel Público:** O resultado é disponibilizado instantaneamente no painel `/apuracao`.
+Consulte detalhes completos dos modelos e módulos em [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ---
 
 ## Tecnologias Utilizadas
 
-A pilha tecnológica foi selecionada com foco em simplicidade operacional, robustez, ausência de dependências externas pesadas e execução performática:
-
-- **Next.js 16 (App Router):** Framework full-stack com React Server Components e Turbopack.
-- **React 19:** Biblioteca de interface reativa para o painel público e consoles administrativos.
-- **TypeScript:** Tipagem estrita de ponta a ponta, cobrindo modelos de dados, rotas de API e parsers.
-- **Tailwind CSS 4:** Estilização utilitária de alto desempenho e design responsivo.
-- **Prisma ORM 5:** Mapeamento objeto-relacional com migrações declarativas para SQLite.
-- **SQLite:** Banco de dados relacional em arquivo único, leve e persistido em disco local/volume montado.
-- **Vitest:** Suíte de testes unitários e de integração de execução ultra-rápida.
-- **Playwright:** Framework de testes ponta a ponta (E2E) e simulação de concorrência com múltiplos dispositivos.
-- **Railway:** Plataforma de hospedagem com deploy contínuo e volume persistente dedicado.
+- **Core:** Next.js 16 (App Router), React 19, TypeScript 5
+- **Interface:** Tailwind CSS 4, `lucide-react`, `html5-qrcode`, `qrcode.react`
+- **Banco e ORM:** Prisma ORM 5 + SQLite (schema alternativo legado PostgreSQL em `prisma/schema.postgresql.prisma`)
+- **Validação & Segurança:** `zod`, `jsonwebtoken`, `bcryptjs`, `asn1js`, `pvutils`
+- **Qualidade & Testes:** Vitest 2.1 (`happy-dom`), Playwright 1.63, ESLint 9
 
 ---
 
-## Instalação e Desenvolvimento Local
+## Instalação e Execução Local
 
 ### Pré-requisitos
-- **Node.js** (versão 20 ou superior)
-- **npm** (versão 10 ou superior)
+- **Node.js** 20+
+- **npm** 10+
 - **Git**
 
 ### Passo a Passo
 
-1. **Clonar o repositório:**
+1. **Clonar o repositório e instalar dependências:**
    ```bash
    git clone https://github.com/georgecolossi/apuracao-paralela-2026.git
    cd apuracao-paralela-2026
-   ```
-
-2. **Instalar dependências:**
-   ```bash
    npm install
    ```
 
-3. **Configurar variáveis de ambiente:**
+2. **Configurar variáveis de ambiente:**
    ```bash
    cp .env.example .env
    ```
-   *Edite o arquivo `.env` para ajustar o `DATABASE_URL` e definir um `JWT_SECRET` para desenvolvimento local.*
+   Edite `.env` definindo pelo menos `DATABASE_URL="file:./dev.db"` e um `JWT_SECRET` seguro (a aplicação falha fechada caso `JWT_SECRET` não esteja configurado).
 
-4. **Inicializar o banco de dados local:**
+3. **Inicializar banco SQLite local e criar o primeiro administrador:**
    ```bash
    npx prisma db push
+   node scripts/create-initial-admin.mjs "admin@local.test" "SenhaForteLocal123" "Administrador"
    ```
 
-5. **Iniciar o servidor de desenvolvimento:**
+4. **Executar em modo desenvolvimento:**
    ```bash
    npm run dev
    ```
-   O painel público estará disponível em `http://localhost:3000/apuracao` e o acesso administrativo em `http://localhost:3000/login`.
+   - Painel Público: `http://localhost:3000/apuracao`
+   - Imprensa & Rádio: `http://localhost:3000/imprensa`
+   - Metodologia: `http://localhost:3000/metodologia`
+   - Acesso Administrativo: `http://localhost:3000/login`
 
-6. **Verificações de qualidade:**
+5. **Build e execução em modo produção:**
    ```bash
-   # Validação de encoding (prevenção de caracteres corrompidos UTF-8)
-   npm run check:encoding
-
-   # Checagem de tipos estáticos TypeScript
-   npm run typecheck
-
-   # Execução da suíte de testes automatizados
-   npm run test
-
-   # Compilação para produção
    npm run build
+   npm start
    ```
 
 ---
 
-## Testes Automatizados
+## Verificações e Testes Automatizados
 
-O sistema conta com suítes automatizadas cobrindo todos os fluxos críticos de integridade e apuração:
+Todos os testes rodam contra bancos SQLite isolados (`prisma/test.db` e `prisma/e2e.db`), nunca tocando `dev.db` ou bancos operacionais:
 
-- **Parser e Tokenizer de QRBU:** Verificação da extração de metadados, identificadores eleitorais, candidatos e totais de votos a partir de strings brutas de QRBU.
-- **Integridade Criptográfica SHA-512:** Validação matemática do recálculo do hash informado, incluindo rejeição de payloads adulterados (`INVALID_HASH`).
-- **Prevenção de Duplicidades e Concorrência:** Testes de envio concorrente de múltiplos BUs e tentativas de retransmissão do mesmo boletim por dispositivos diferentes.
-- **Isolamento de Contexto de Turnos:** Garantia de que a apuração do 2º turno não altera votos, totais ou históricos do 1º turno.
-- **Testes Multi-Dispositivo com Playwright:** Validação de login simultâneo da mesma conta em múltiplos contextos de navegador (dispositivos móveis e desktop) sem desconexão mútua.
-- **Exemplos Oficiais do TSE (2º Turno 2026):** Validação dos fixtures oficiais simulados disponibilizados pelo TSE (`Pres-T2`, `PresGov-T2`, `PresGovConMunic-T2` e `PresGovPrefeito-T2`), com extração real de QR Codes a partir de PDFs e confrontação com arquivos binários ASN.1 (`.dat`).
+```bash
+# Auditoria de integridade UTF-8 nos arquivos-fonte e documentação
+npm run check:encoding
 
-> [!NOTE]
-> Os testes atestam conformidade estrita com o padrão de especificações técnicas do TSE para as Eleições 2026. Novas variantes teóricas não documentadas pelo TSE são tratadas de forma fail-safe pelo parser.
+# Validação do schema Prisma
+npx prisma validate
 
----
+# Checagem estática de tipos TypeScript
+npm run typecheck
 
-## Limitações e Transparência
+# Suíte unitária e de integração (Vitest + fixtures oficiais TSE)
+npm run test
 
-- **Independência Institucional:** O sistema é uma ferramenta cidadã independente, sem afiliação governamental.
-- **Escopo do Hash SHA-512:** A validação do hash SHA-512 comprova que o conteúdo do QR Code escaneado não sofreu alteração desde a sua impressão na seção eleitoral. O sistema não executa verificação de chave assimétrica PKI (ICP-Brasil) da assinatura digital da urna.
-- **Fidelidade da Coleta:** Os totais publicados refletem exclusivamente os boletins físicos efetivamente recolhidos e transmitidos pelos operadores locais.
-- **Cobertura Provisória:** A referência de 193 urnas para o 2º turno em Concórdia/SC baseia-se na malha histórica do 1º turno até a publicação definitiva das tabelas de correspondência pelo TSE.
-- **Caráter da Projeção Linear:** A projeção de votos é uma extrapolação aritmética direta baseada nas urnas lidas até o momento, não constituindo previsão probabilística ou amostragem estatística.
-- **Primazia do Resultado Oficial:** Os dados da Apuração Paralela possuem caráter informativo e de transparência cívica, não substituindo a totalização oficial homologada pela Justiça Eleitoral.
+# Suíte Ponta a Ponta em navegador real (Playwright)
+npm run test:e2e
 
----
+# Análise estática ESLint
+npm run lint
+```
 
-## Documentação Técnica e Operacional
-
-Para detalhes aprofundados sobre deploy no Railway, volumes persistentes, rotas do painel admin, contingência em campo e procedimentos no dia da eleição, consulte:
-
-📖 **[Manual Operacional e de Infraestrutura (`docs/OPERACAO.md`)](docs/OPERACAO.md)**
+Detalhes sobre cada suíte e suas limitações estão documentados em [`docs/TESTING.md`](docs/TESTING.md).
 
 ---
 
-<div align="center">
-Desenvolvido com foco em transparência, rigor técnico e integridade eleitoral.
-</div>
+## Organização do Repositório
+
+```text
+├── .env.example                 # Variáveis de ambiente suportadas no runtime e bootstrap
+├── CHANGELOG.md                 # Histórico evolutivo até a v2.0.0
+├── docs/
+│   ├── ARCHITECTURE.md          # Visão arquitetural e modelo de dados v2.0
+│   ├── OPERACAO.md              # Manual operacional separado (Local, Homologação, Produção e PR8)
+│   ├── TESTING.md               # Estratégia de testes unitários, integração e E2E
+│   ├── DEPLOY.md / BACKUP.md    # Diretrizes de implantação e contingência
+│   ├── RELEASE_V2.0.0.md        # Notas de lançamento e checklist de publicação v2.0.0
+│   └── TSE-2026*.md             # Documentação criptográfica e auditoria de fixtures TSE
+├── e2e/                         # Testes E2E Playwright (incluindo e2e/v2-homologation.spec.ts)
+├── prisma/                      # Schema Prisma ativo (SQLite), schema legado Postgres, migrações e seeds
+├── scripts/                     # Runners isolados de teste, setup CLI, importadores e backup/verify PowerShell
+├── src/
+│   ├── app/                     # Páginas públicas, área /admin e rotas de API REST
+│   ├── components/              # Shell administrativo e sala de imprensa
+│   └── lib/                     # Parser QRBU universal, RBAC/CSRF, TSE dinâmico anti-SSRF, totalização e wizard
+└── tests/                       # Suítes Vitest e fixtures oficiais/derivadas do TSE
+```
+
+---
+
+## Documentação Complementar
+
+- **[Manual Operacional e de Infraestrutura (`docs/OPERACAO.md`)](docs/OPERACAO.md)**
+- **[Arquitetura do Sistema (`docs/ARCHITECTURE.md`)](docs/ARCHITECTURE.md)**
+- **[Estratégia de Testes (`docs/TESTING.md`)](docs/TESTING.md)**
+- **[Notas da Release v2.0.0 (`docs/RELEASE_V2.0.0.md`)](docs/RELEASE_V2.0.0.md)**
+- **[Formatos QRBU Suportados (`docs/QRBU-ADAPTER-SUPPORTED-LAYOUTS.md`)](docs/QRBU-ADAPTER-SUPPORTED-LAYOUTS.md)**
+
+---
+
+## Como Contribuir
+
+1. Crie uma branch a partir da branch de integração ativa do ciclo correspondente (nunca envie alterações diretamente para `main`).
+2. Mantenha todos os arquivos em UTF-8 limpo (sem caracteres corrompidos ou *null bytes*), preservando comentários existentes fora do escopo alterado.
+3. Adicione ou atualize testes automatizados em `tests/` ou `e2e/` cobrindo qualquer alteração comportamental.
+4. Execute `npm run check:encoding`, `npm run typecheck`, `npm run test`, `npm run test:e2e`, `npm run build` e verifique que novos arquivos não introduzem violações no `npm run lint`.
+5. Abra Pull Request com descrição clara de escopo, riscos, limitações conhecidas e evidências de execução dos testes.
+
+---
+
+## Licença
+
+O código-fonte deste projeto encontra-se disponível neste repositório, porém **ainda não há um arquivo `LICENSE` definido no diretório raiz**. A definição formal dos termos de licenciamento permanece pendente de escolha e aprovação expressa pelo mantenedor do projeto antes da eventual publicação da release `v2.0.0`.

@@ -7,11 +7,13 @@ import { requireAuthenticatedUser } from '@/lib/auth';
 import { validateCsrfProtection } from '@/lib/security/csrf';
 import { OFFICE_NAME_TO_CODE } from '@/lib/metadata/voteEnricher';
 import { extractEnvelopeKeyFromContent } from '@/lib/scanner/envelopeIdentifier';
+import { validateScanSessionCompatibility } from '@/lib/scanner/sessionValidator';
 import {
   validateBallotIngestionInvariants,
   ElectionInvariantError,
   getSafeOperatorErrorMessage
 } from '@/lib/validation/electionContext';
+import { toCryptographicStatus } from '@/lib/presentation/pressDto';
 import crypto from 'crypto';
 
 export async function POST(req: Request) {
@@ -33,27 +35,53 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Falha na validação de origem (CSRF).', reason: csrf.reason }, { status: 403 });
     }
 
-    const { content, isSimulation = false, sessionId } = await req.json();
+    const body = await req.json();
+    const { content, sessionId } = body || {};
+    const rawIsSimulation = body?.isSimulation === undefined ? false : body.isSimulation;
+    if (typeof rawIsSimulation !== 'boolean') {
+      return NextResponse.json(
+        {
+          error: 'INVALID_SIMULATION_FLAG',
+          message: 'O parâmetro isSimulation deve ser booleano.'
+        },
+        { status: 400 }
+      );
+    }
+    const isSimulation: boolean = rawIsSimulation;
     const operatorId = auth.user.userId;
 
-    const parser = isSimulation ? new Tse2026SimulationParser() : new UniversalQrBuParser();
+    const sequenceId = typeof sessionId === 'string' ? sessionId.trim() : '';
+    if (!sequenceId) {
+      return NextResponse.json({ error: 'SCAN_SESSION_REQUIRED' }, { status: 400 });
+    }
+
+    // Verifica compatibilidade de sessão existente ANTES de selecionar parser ou persistir partes
+    let session = await prisma.scanSession.findUnique({
+      where: { sequenceId }
+    });
+
+    if (session) {
+      const preCheck = validateScanSessionCompatibility(session, {
+        isSimulation,
+        operatorId
+      });
+      if (!preCheck.valid) {
+        return NextResponse.json(
+          { error: preCheck.code, message: preCheck.message },
+          { status: preCheck.status }
+        );
+      }
+    }
+
+    const effectiveSimulation = session ? session.isSimulation : isSimulation;
+    const parser = effectiveSimulation ? new Tse2026SimulationParser() : new UniversalQrBuParser();
 
     const partInfo = parser.parsePart(content);
     if ('code' in partInfo) {
       return NextResponse.json({ error: partInfo.code || partInfo.message }, { status: 400 });
     }
 
-    if (!sessionId) {
-      return NextResponse.json({ error: 'SCAN_SESSION_REQUIRED' }, { status: 400 });
-    }
-
-    const { partIndex, totalParts, payload } = partInfo;
-    const sequenceId = sessionId;
-
-    // Resolve ScanSession
-    let session = await prisma.scanSession.findUnique({
-      where: { sequenceId }
-    });
+    const { partIndex, totalParts } = partInfo;
 
     if (!session) {
       try {
@@ -62,7 +90,7 @@ export async function POST(req: Request) {
             sequenceId,
             expectedParts: totalParts,
             operatorId,
-            isSimulation
+            isSimulation: effectiveSimulation
           }
         });
       } catch (dbError: unknown) {
@@ -75,6 +103,19 @@ export async function POST(req: Request) {
           throw dbError;
         }
       }
+    }
+
+    // Valida compatibilidade completa (incluindo expectedParts e concorrência P2002) antes de inserir BallotReportPart
+    const postCheck = validateScanSessionCompatibility(session, {
+      isSimulation,
+      totalParts,
+      operatorId
+    });
+    if (!postCheck.valid) {
+      return NextResponse.json(
+        { error: postCheck.code, message: postCheck.message },
+        { status: postCheck.status }
+      );
     }
 
     // Ignore duplicate part
@@ -565,6 +606,8 @@ export async function POST(req: Request) {
             vrqrVersion: reportData.vrqrVersion || null,
             hash: reportData.hash || '',
             signature: reportData.signature || '',
+            hashStatus: toCryptographicStatus(reportData.hashStatus),
+            sigStatus: toCryptographicStatus(reportData.sigStatus),
             status: 'PENDENTE_CONFIRMACAO',
             validationData: JSON.stringify({
               parsed: true,

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { validateTerritoryCode, getTerritoryVariants } from '@/lib/presentation/territoryValidator';
 import { validateAndDecodeCursor, encodeUrnaCursor, CursorContext } from '@/lib/presentation/urnaCursor';
-import { UrnaFeedItemDTO, UrnaFeedResponse } from '@/lib/presentation/pressDto';
+import { UrnaFeedItemDTO, UrnaFeedResponse, resolveCryptographicStatus } from '@/lib/presentation/pressDto';
 import { Prisma } from '@prisma/client';
 
 export const dynamic = 'force-dynamic';
@@ -399,8 +399,8 @@ export async function GET(req: Request) {
         },
         integrity: {
           vrqrVersion: r.vrqrVersion || null,
-          hashStatus: (r.hashStatus as any) || 'UNCHECKED',
-          sigStatus: (r.sigStatus as any) || 'UNCHECKED'
+          hashStatus: resolveCryptographicStatus(r.hashStatus, r.validationData, 'hashStatus'),
+          sigStatus: resolveCryptographicStatus(r.sigStatus, r.validationData, 'sigStatus')
         },
         summary: {
           totalVotes,
