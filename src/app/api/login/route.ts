@@ -4,9 +4,11 @@ import * as bcrypt from 'bcryptjs';
 import * as jwt from 'jsonwebtoken';
 import { prisma } from '@/lib/db';
 import {
-  checkLoginRateLimit,
-  clearLoginPairFailures,
-  recordLoginFailure,
+  acquireLoginRateLimitReservation,
+  commitLoginFailure,
+  commitLoginSuccess,
+  type LoginRateLimitReservation,
+  releaseLoginRateLimitReservation,
 } from '@/lib/security/loginRateLimiter';
 
 // Hash bcrypt sintaticamente válido usado quando o usuário não existe ou está inativo
@@ -16,11 +18,11 @@ const DUMMY_BCRYPT_HASH = '$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZd
 const NO_STORE_HEADERS = { 'Cache-Control': 'no-store' };
 
 async function recordFailureAndBuildUnauthorizedResponse(
-  clientIp: string,
+  reservation: LoginRateLimitReservation,
   normalizedUsername: string,
   userId: string | null
 ) {
-  const failure = recordLoginFailure(clientIp, normalizedUsername);
+  const failure = commitLoginFailure(reservation);
   if (failure.newlyBlocked) {
     try {
       await prisma.auditLog.create({
@@ -29,11 +31,13 @@ async function recordFailureAndBuildUnauthorizedResponse(
           action: 'LOGIN_RATE_LIMITED',
           result: 'BLOCKED',
           identifiers: JSON.stringify({ account: normalizedUsername }),
-          ipAddress: clientIp,
+          ipAddress: reservation.clientIp,
           metadata: JSON.stringify({
-            pairCount: failure.pairCount,
+            pairOrAccountCount: failure.pairOrAccountCount,
             ipCount: failure.ipCount,
             retryAfterSeconds: failure.retryAfterSeconds,
+            ipResolutionStatus: reservation.ipResolutionStatus,
+            capacitySaturated: reservation.capacitySaturated,
           }),
         },
       });
@@ -82,77 +86,81 @@ export async function POST(req: Request) {
     );
   }
 
-  const rateLimitCheck = checkLoginRateLimit(req, normalizedUsername);
-  if (!rateLimitCheck.allowed) {
+  const reservation = acquireLoginRateLimitReservation(req, normalizedUsername);
+  if (!reservation.allowed) {
     return NextResponse.json(
       {
         error: 'Muitas tentativas de login. Aguarde antes de tentar novamente.',
         code: 'TOO_MANY_ATTEMPTS',
-        retryAfterSeconds: rateLimitCheck.retryAfterSeconds,
+        retryAfterSeconds: reservation.retryAfterSeconds,
       },
       {
         status: 429,
         headers: {
-          'Retry-After': String(rateLimitCheck.retryAfterSeconds),
+          'Retry-After': String(reservation.retryAfterSeconds),
           ...NO_STORE_HEADERS,
         },
       }
     );
   }
 
-  const user = await prisma.user.findUnique({ where: { email: normalizedUsername } });
-  if (!user || !user.isActive) {
-    await bcrypt.compare(password, DUMMY_BCRYPT_HASH);
-    return recordFailureAndBuildUnauthorizedResponse(
-      rateLimitCheck.clientIp,
-      normalizedUsername,
-      user?.id ?? null
-    );
-  }
-
-  // Preserva integralmente a senha informada, sem trim() ou mutações ocultas
-  const isValid = await bcrypt.compare(password, user.passwordHash);
-  if (!isValid) {
-    return recordFailureAndBuildUnauthorizedResponse(
-      rateLimitCheck.clientIp,
-      normalizedUsername,
-      user.id
-    );
-  }
-
-  clearLoginPairFailures(rateLimitCheck.clientIp, normalizedUsername);
-
-  const sessionVersion = typeof user.sessionVersion === 'number' ? user.sessionVersion : 0;
-  const { getJwtSecret } = await import('@/lib/auth');
-  const token = jwt.sign(
-    { 
-      userId: user.id, 
-      role: user.role,
-      sessionVersion 
-    },
-    getJwtSecret(),
-    { expiresIn: '8h' }
-  );
-
-  const cookieStore = await cookies();
-  cookieStore.set('admin_session', token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
-    path: '/'
-  });
-
-  await prisma.auditLog.create({
-    data: {
-      userId: user.id,
-      action: 'LOGIN',
-      result: 'SUCCESS',
-      ipAddress: rateLimitCheck.clientIp
+  try {
+    const user = await prisma.user.findUnique({ where: { email: normalizedUsername } });
+    if (!user || !user.isActive) {
+      await bcrypt.compare(password, DUMMY_BCRYPT_HASH);
+      return await recordFailureAndBuildUnauthorizedResponse(
+        reservation,
+        normalizedUsername,
+        user?.id ?? null
+      );
     }
-  });
 
-  const { generateCsrfToken } = await import('@/lib/security/csrf');
-  const csrfToken = generateCsrfToken(user.id, sessionVersion);
+    // Preserva integralmente a senha informada, sem trim() ou mutações ocultas
+    const isValid = await bcrypt.compare(password, user.passwordHash);
+    if (!isValid) {
+      return await recordFailureAndBuildUnauthorizedResponse(
+        reservation,
+        normalizedUsername,
+        user.id
+      );
+    }
 
-  return NextResponse.json({ success: true, role: user.role, csrfToken }, { headers: NO_STORE_HEADERS });
+    commitLoginSuccess(reservation);
+
+    const sessionVersion = typeof user.sessionVersion === 'number' ? user.sessionVersion : 0;
+    const { getJwtSecret } = await import('@/lib/auth');
+    const token = jwt.sign(
+      { 
+        userId: user.id, 
+        role: user.role,
+        sessionVersion 
+      },
+      getJwtSecret(),
+      { expiresIn: '8h' }
+    );
+
+    const cookieStore = await cookies();
+    cookieStore.set('admin_session', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      path: '/'
+    });
+
+    await prisma.auditLog.create({
+      data: {
+        userId: user.id,
+        action: 'LOGIN',
+        result: 'SUCCESS',
+        ipAddress: reservation.clientIp
+      }
+    });
+
+    const { generateCsrfToken } = await import('@/lib/security/csrf');
+    const csrfToken = generateCsrfToken(user.id, sessionVersion);
+
+    return NextResponse.json({ success: true, role: user.role, csrfToken }, { headers: NO_STORE_HEADERS });
+  } finally {
+    releaseLoginRateLimitReservation(reservation);
+  }
 }

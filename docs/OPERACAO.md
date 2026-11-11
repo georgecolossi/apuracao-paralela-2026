@@ -93,10 +93,10 @@ Este manual orienta a configuração, operação, homologação e manutenção e
 | `ALLOW_SIMULATED_FASE` | `false` | Garante rejeição (`SIMULATED_QRBU_REJECTED`) de qualquer BU que não seja `FASE:O`. |
 | `ALLOW_EXPERIMENTAL_VRQR` | `false` | Bloqueia versões experimentais não homologadas do QRBU. |
 | `TSE_FETCH_TIMEOUT_MS` | `5000` | Timeout externo para consultas EA20 ao TSE. |
-| `LOGIN_TRUSTED_PROXY_HOPS` | `1` (em proxy único) ou `0` | Número de proxies reversos confiáveis à frente do app para leitura de `X-Forwarded-For` da direita para a esquerda em `POST /api/login`. |
+| `LOGIN_TRUSTED_PROXY_HOPS` | `1` (Railway direto) / `2+` (CDN + proxy) / `0` (sem proxy confiável) | Número exato de proxies reversos confiáveis à frente do app para leitura posicional de `X-Forwarded-For` da direita para esquerda em `POST /api/login` (validar cadeia real no ambiente de produção antes de elevar de `0`). |
 | `LOGIN_RATE_LIMIT_WINDOW_MS` | `900000` (opcional) | Janela em ms do rate limiting de login (padrão: 15 minutos). |
-| `LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_PAIR` | `5` (opcional) | Máximo de falhas consecutivas por par `(IP, conta)` na janela (evita DoS de terceiros contra a conta). |
-| `LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_IP` | `20` (opcional) | Máximo agregado de falhas por `IP` na janela. |
+| `LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_PAIR` | `5` (opcional) | Máximo de falhas/reservas por par `(IP, conta)` — ou por conta quando o IP é desconhecido — na janela. |
+| `LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_IP` | `20` (opcional) | Máximo agregado por `IP` verificado na janela (inativo quando não há IP confiável). |
 
 #### Bootstrap Inicial Seguro em Produção
 1. Com o volume `/data` montado e `npx prisma db push` aplicado:
@@ -106,7 +106,10 @@ Este manual orienta a configuração, operação, homologação e manutenção e
      ```
    - **Opção B (HTTP temporário com token):** configure temporariamente `ADMIN_SETUP_TOKEN` (mínimo 16 caracteres CSPRNG), chame `POST /api/setup` enviando `{ name, email, password, setupToken }`, remova `ADMIN_SETUP_TOKEN` e fixe `DISABLE_HTTP_SETUP="true"`.
 2. Faça `npm run build` e `npm start` sempre atrás de proxy reverso com TLS/HTTPS (`X-Forwarded-Proto: https`). Em `NODE_ENV=production`, mutações HTTP sem HTTPS são rejeitadas pela proteção CSRF.
-3. **Proxy Reverso e Rate Limiting de Login:** Configure `LOGIN_TRUSTED_PROXY_HOPS="1"` atrás de um proxy reverso confiável (ex.: Railway ou Nginx) que anexe o IP real do cliente no cabeçalho `X-Forwarded-For`; o servidor extrai o IP da direita para a esquerda de modo a ignorar entradas forjadas pelo cliente na ponta esquerda. Se a aplicação não estiver atrás de proxy confiável, mantenha `LOGIN_TRUSTED_PROXY_HOPS="0"` para ignorar cabeçalhos de encaminhamento. Os contadores do limiter residem em memória limitada no processo Node.js (voláteis em reinicializações e não compartilhados entre múltiplas réplicas horizontais).
+3. **Configuração de Proxy Reverso (Railway / Nginx) e Rate Limiting de Login:**
+   - **Em produção no Railway (proxy gerenciado único na borda):** configure `LOGIN_TRUSTED_PROXY_HOPS="1"` caso a aplicação receba o tráfego diretamente do proxy de borda do Railway (ou `"2"`/`"3"` caso exista CDN/WAF adicional à frente, como Cloudflare). **Ressalva operacional:** este repositório não validou empiricamente a cadeia real de `X-Forwarded-For` do serviço de produção no Railway; antes de depender do limite por IP, confirme em log/requisição de teste no ambiente alvo quantos hops confiáveis são anexados à direita.
+   - **Leitura estrita e fail-safe:** com `LOGIN_TRUSTED_PROXY_HOPS >= 1`, o servidor lê `X-Forwarded-For` posicionalmente da direita para esquerda sem filtrar entradas malformadas (evitando deslocamento de índice para valores à esquerda forjados pelo cliente) e ignora `X-Real-IP`. Se `LOGIN_TRUSTED_PROXY_HOPS="0"`, ou se o cabeçalho estiver ausente, insuficiente ou malformado no sufixo confiável, nenhum identificador IP compartilhado é criado — o rate limiter aplica proteção individual por conta (`acct:<conta>`), impedindo bloqueio coletivo entre contas legítimas.
+   - **Concorrência, capacidade e escopo:** cada requisição reserva capacidade antes da consulta ao banco e do `bcrypt` (evitando bypass por rajada concorrente) e libera em `finally`. Bloqueios ativos nunca são descartados sob saturação de memória (`10.000` entradas na store primária; excesso isolado em tabela de overflow fixa). Os contadores permanecem em memória volátil por instância Node.js e não são compartilhados entre múltiplas réplicas horizontais.
 
 ---
 

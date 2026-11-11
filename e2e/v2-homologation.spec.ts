@@ -676,7 +676,12 @@ test.describe('PR 9 — Homologação E2E Completa v2.0.0', () => {
     expect(Number(rateLimitedResponse.headers()['retry-after'])).toBeGreaterThan(0);
     await expect(page.locator('body')).toContainText(/Muitas tentativas de login/i);
 
-    // 4. Outra conta na mesma rede/IP não é bloqueada pelo par bloqueado
+    // 4. Outra conta isolada (mesmo sem proxy confiável) não sofre bloqueio coletivo e admin autentica normalmente
+    const unrelatedProbeRes = await request.post('/api/login', {
+      data: { username: `unrelated-probe-${Date.now()}@apuracao.local`, password: 'wrong-password' }
+    });
+    expect(unrelatedProbeRes.status()).toBe(401);
+
     await page.fill('input[name="username"]', 'admin@apuracao.local');
     await page.fill('input[type="password"]', 'admin123');
     await page.click('button[type="submit"]');

@@ -3,7 +3,10 @@ import { POST } from '../src/app/api/login/route';
 import { prisma } from '../src/lib/db';
 import * as bcrypt from 'bcryptjs';
 import * as jwt from 'jsonwebtoken';
-import { resetLoginRateLimitStore } from '../src/lib/security/loginRateLimiter';
+import {
+  getLoginRateLimitDiagnostics,
+  resetLoginRateLimitStore,
+} from '../src/lib/security/loginRateLimiter';
 
 vi.mock('@/lib/db', () => ({
   prisma: {
@@ -200,5 +203,155 @@ describe('POST /api/login', () => {
       )
     );
     expect(blockedRes.status).toBe(429);
+  });
+
+  it('M) should NOT block unrelated legitimate accounts when IP is unknown and another account/attacker saturates failures', async () => {
+    process.env.LOGIN_TRUSTED_PROXY_HOPS = '0';
+    vi.mocked(prisma.user.findUnique).mockResolvedValue(null);
+    vi.mocked(bcrypt.compare).mockImplementation(async () => false);
+
+    // 25 falhas distribuídas em 25 contas distintas sem IP confiável
+    for (let i = 0; i < 25; i++) {
+      const failRes = await POST(mockReq({ username: `spray-${i}@local`, password: 'wrong' }));
+      expect(failRes.status).toBe(401);
+    }
+
+    // Bloqueia uma conta específica após 5 falhas
+    for (let i = 0; i < 5; i++) {
+      expect((await POST(mockReq({ username: 'blocked-target@local', password: 'wrong' }))).status).toBe(401);
+    }
+    expect((await POST(mockReq({ username: 'blocked-target@local', password: 'wrong' }))).status).toBe(429);
+
+    // Contas legítimas distintas não sofrem bloqueio coletivo e autenticam com 200
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      id: 'u-legit',
+      email: 'legit1@local',
+      role: 'ADMIN',
+      passwordHash: 'hash',
+      isActive: true,
+      sessionVersion: 0,
+    } as NonNullable<Awaited<ReturnType<typeof prisma.user.findUnique>>>);
+    vi.mocked(bcrypt.compare).mockImplementation(async () => true);
+
+    expect((await POST(mockReq({ username: 'legit1@local', password: 'ok' }))).status).toBe(200);
+    expect((await POST(mockReq({ username: 'legit2@local', password: 'ok' }))).status).toBe(200);
+    expect(getLoginRateLimitDiagnostics().totalPendingCount).toBe(0);
+  });
+
+  it('N) should prevent TOCTOU bypass across 20 concurrent attempts on the same pair and respect IP burst limit', async () => {
+    process.env.LOGIN_TRUSTED_PROXY_HOPS = '1';
+
+    vi.mocked(prisma.user.findUnique).mockImplementation(
+      (async () => {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        return {
+          id: 'u-race',
+          email: 'race@local',
+          role: 'OPERATOR',
+          passwordHash: 'hash',
+          isActive: true,
+          sessionVersion: 0,
+        };
+      }) as unknown as typeof prisma.user.findUnique
+    );
+    vi.mocked(bcrypt.compare).mockImplementation((async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return false;
+    }) as unknown as typeof bcrypt.compare);
+
+    // 1. 20 tentativas concorrentes no mesmo par -> exatamente 5 chegam ao banco/bcrypt (401) e 15 são barrada com 429
+    const pairResponses = await Promise.all(
+      Array.from({ length: 20 }, () =>
+        POST(
+          mockReq(
+            { username: 'race@local', password: 'wrong' },
+            { 'x-forwarded-for': '203.0.113.61' }
+          )
+        )
+      )
+    );
+    const pairStatuses = pairResponses.map((r) => r.status);
+    expect(pairStatuses.filter((s) => s === 401)).toHaveLength(5);
+    expect(pairStatuses.filter((s) => s === 429)).toHaveLength(15);
+    expect(vi.mocked(prisma.user.findUnique)).toHaveBeenCalledTimes(5);
+    expect(vi.mocked(bcrypt.compare)).toHaveBeenCalledTimes(5);
+    expect(getLoginRateLimitDiagnostics().totalPendingCount).toBe(0);
+
+    // 2. Rajada concorrente de 30 contas distintas a partir do mesmo IP confiável -> exatamente 20 chegam ao DB (401) e 10 recebem 429
+    vi.clearAllMocks();
+    resetLoginRateLimitStore();
+    const ipBurstResponses = await Promise.all(
+      Array.from({ length: 30 }, (_, idx) =>
+        POST(
+          mockReq(
+            { username: `burst-${idx}@local`, password: 'wrong' },
+            { 'x-forwarded-for': '203.0.113.62' }
+          )
+        )
+      )
+    );
+    const ipBurstStatuses = ipBurstResponses.map((r) => r.status);
+    expect(ipBurstStatuses.filter((s) => s === 401)).toHaveLength(20);
+    expect(ipBurstStatuses.filter((s) => s === 429)).toHaveLength(10);
+    expect(vi.mocked(prisma.user.findUnique)).toHaveBeenCalledTimes(20);
+    expect(getLoginRateLimitDiagnostics().totalPendingCount).toBe(0);
+  });
+
+  it('O) should release reservations cleanly on successful login bursts and on DB/bcrypt exceptions', async () => {
+    process.env.LOGIN_TRUSTED_PROXY_HOPS = '1';
+
+    // 1. 15 logins válidos seguidos nunca bloqueiam nem vazam pending
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      id: 'u-ok',
+      email: 'ok@local',
+      role: 'ADMIN',
+      passwordHash: 'hash',
+      isActive: true,
+      sessionVersion: 0,
+    } as NonNullable<Awaited<ReturnType<typeof prisma.user.findUnique>>>);
+    vi.mocked(bcrypt.compare).mockImplementation(async () => true);
+
+    for (let i = 0; i < 15; i++) {
+      const okRes = await POST(
+        mockReq({ username: 'ok@local', password: 'good' }, { 'x-forwarded-for': '203.0.113.70' })
+      );
+      expect(okRes.status).toBe(200);
+    }
+    expect(getLoginRateLimitDiagnostics().totalPendingCount).toBe(0);
+    expect(getLoginRateLimitDiagnostics().primarySize).toBe(0);
+
+    // 2. Exceções de banco e de bcrypt não deixam reserva presa
+    vi.mocked(prisma.user.findUnique).mockRejectedValue(new Error('DB_UNAVAILABLE'));
+    for (let i = 0; i < 8; i++) {
+      await expect(
+        POST(mockReq({ username: 'exc@local', password: 'pw' }, { 'x-forwarded-for': '203.0.113.71' }))
+      ).rejects.toThrow('DB_UNAVAILABLE');
+    }
+    expect(getLoginRateLimitDiagnostics().totalPendingCount).toBe(0);
+    expect(getLoginRateLimitDiagnostics().primarySize).toBe(0);
+
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({
+      id: 'u-exc',
+      email: 'exc@local',
+      role: 'ADMIN',
+      passwordHash: 'hash',
+      isActive: true,
+      sessionVersion: 0,
+    } as NonNullable<Awaited<ReturnType<typeof prisma.user.findUnique>>>);
+    vi.mocked(bcrypt.compare).mockRejectedValue(new Error('BCRYPT_CRASH'));
+    for (let i = 0; i < 8; i++) {
+      await expect(
+        POST(mockReq({ username: 'exc@local', password: 'pw' }, { 'x-forwarded-for': '203.0.113.71' }))
+      ).rejects.toThrow('BCRYPT_CRASH');
+    }
+    expect(getLoginRateLimitDiagnostics().totalPendingCount).toBe(0);
+    expect(getLoginRateLimitDiagnostics().primarySize).toBe(0);
+
+    // Logo após as exceções, login válido funciona normalmente com 200
+    vi.mocked(bcrypt.compare).mockImplementation(async () => true);
+    const recoverRes = await POST(
+      mockReq({ username: 'exc@local', password: 'good' }, { 'x-forwarded-for': '203.0.113.71' })
+    );
+    expect(recoverRes.status).toBe(200);
   });
 });
