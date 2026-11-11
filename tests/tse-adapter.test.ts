@@ -1,15 +1,122 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import { GET } from '../src/app/api/tse-results/route';
+import { prisma } from '../src/lib/db';
+import { buildTseSyncConfigKey } from '../src/lib/validation/electionContext';
+import { clearTseResultsCache } from '../src/lib/tse/tseResultsCache';
 
-describe('TSE Adapter (API)', () => {
-  beforeEach(() => {
+describe('TSE Adapter (API — Dinâmico via TseSyncConfig)', () => {
+  let activeElectionId: string;
+
+  async function seedActiveElectionWithConfigs(
+    configs: Array<{
+      roundNumber: number;
+      officeCode: string;
+      officialElectionCode: string;
+      scopeType?: string;
+      uf?: string;
+      muniTseCode?: string;
+    }>
+  ) {
+    await prisma.ballotVote.deleteMany();
+    await prisma.ballotReportPart.deleteMany();
+    await prisma.ballotReport.deleteMany();
+    await prisma.scanSession.deleteMany();
+    await prisma.roundCoverage.deleteMany();
+    await prisma.tseSyncConfig.deleteMany();
+    await prisma.electionRound.deleteMany();
+    await prisma.candidate.deleteMany();
+    await prisma.office.deleteMany();
+    await prisma.electionScope.deleteMany();
+    await prisma.election.deleteMany();
+    await prisma.pollingSection.deleteMany();
+    await prisma.pollingZone.deleteMany();
+    await prisma.municipality.deleteMany();
+    await prisma.state.deleteMany();
+
+    const state = await prisma.state.create({
+      data: { abbreviation: 'SC', name: 'Santa Catarina' }
+    });
+    const muni = await prisma.municipality.create({
+      data: { officialCode: '80837', name: 'Concórdia', stateId: state.id, isCoverage: true }
+    });
+
+    const election = await prisma.election.create({
+      data: {
+        name: 'Eleição Oficial Adaptador TSE',
+        slug: 'eleicao-adaptador-tse',
+        year: 2026,
+        type: 'GENERAL',
+        status: 'ACTIVE',
+        rounds: {
+          create: [
+            { roundNumber: 1, status: 'ACTIVE', plei: '3220' },
+            { roundNumber: 2, status: 'PLANNED', plei: '3221' }
+          ]
+        },
+        scopes: {
+          create: {
+            scopeType: 'MUNICIPAL',
+            scopeKey: 'MUNICIPAL:SC:80837',
+            stateId: state.id,
+            municipalityId: muni.id,
+            isCoverageArea: true
+          }
+        }
+      }
+    });
+    activeElectionId = election.id;
+
+    for (const cfg of configs) {
+      const scopeType = cfg.scopeType || 'MUNICIPAL';
+      const uf = cfg.uf || 'SC';
+      const muniCode = cfg.muniTseCode || '80837';
+      await prisma.tseSyncConfig.create({
+        data: {
+          electionId: election.id,
+          roundNumber: cfg.roundNumber,
+          configKey: buildTseSyncConfigKey({
+            roundNumber: cfg.roundNumber,
+            officeCode: cfg.officeCode,
+            scopeType,
+            uf,
+            muniTseCode: muniCode
+          }),
+          officeCode: cfg.officeCode,
+          officialElectionCode: cfg.officialElectionCode,
+          scopeType,
+          uf,
+          muniTseCode: muniCode,
+          status: 'ACTIVE',
+          isActive: true
+        }
+      });
+    }
+
+    return election;
+  }
+
+  beforeEach(async () => {
     vi.restoreAllMocks();
+    clearTseResultsCache();
+  });
+
+  afterAll(async () => {
+    clearTseResultsCache();
+    await prisma.tseSyncConfig.deleteMany();
+    await prisma.electionRound.deleteMany();
+    await prisma.electionScope.deleteMany();
+    await prisma.election.deleteMany();
+    await prisma.municipality.deleteMany();
+    await prisma.state.deleteMany();
   });
 
   const mockTseResponse = {
-    ele: '6257', t: '1', cdabr: '80837',
+    ele: '6257',
+    t: '1',
+    cdabr: '80837',
     carg: [{
-      cd: '1', nmf: 'Presidente',
+      cd: '1',
+      nmf: 'Presidente',
       agr: [{
         par: [{
           cand: [
@@ -30,10 +137,28 @@ describe('TSE Adapter (API)', () => {
     expect(res.status).toBe(400);
   });
 
-  it('2. Deve retornar AVAILABLE e estruturar corretamente o JSON para o T1 mockado', async () => {
+  it('2. Deve retornar AVAILABLE e estruturar corretamente o JSON para o T1 configurado via TseSyncConfig', async () => {
+    await seedActiveElectionWithConfigs([
+      { roundNumber: 1, officeCode: '1', officialElectionCode: '6257', scopeType: 'NACIONAL', uf: 'BR', muniTseCode: '80837' },
+      { roundNumber: 1, officeCode: '3', officialElectionCode: '6259' },
+      { roundNumber: 1, officeCode: '5', officialElectionCode: '6259' },
+      { roundNumber: 1, officeCode: '6', officialElectionCode: '6259' },
+      { roundNumber: 1, officeCode: '7', officialElectionCode: '6259' }
+    ]);
+
     global.fetch = vi.fn().mockImplementation(async (url: string) => {
-      if (url.includes('ele-c.json')) return { ok: false };
-      return { ok: true, json: async () => mockTseResponse };
+      const cargoMatch = url.match(/-c(\d{4})-/);
+      const eleMatch = url.match(/-e(\d{6})-/);
+      const cargoCd = cargoMatch ? String(parseInt(cargoMatch[1], 10)) : '1';
+      const eleCd = eleMatch ? String(parseInt(eleMatch[1], 10)) : '6257';
+      return {
+        ok: true,
+        json: async () => ({
+          ...mockTseResponse,
+          ele: eleCd,
+          carg: [{ ...mockTseResponse.carg[0], cd: cargoCd }]
+        })
+      } as any;
     });
 
     const req = new Request('http://localhost/api/tse-results?round=1');
@@ -42,37 +167,46 @@ describe('TSE Adapter (API)', () => {
 
     expect(data.status).toBe('AVAILABLE');
     expect(data.source).toBe('TSE');
+    expect(data.electionId).toBe(activeElectionId);
     expect(data.offices).toHaveLength(5);
   });
 
-  it('3. Deve retornar NOT_YET_AVAILABLE para T2 quando ele-c nao existir', async () => {
-    global.fetch = vi.fn().mockImplementation(async (url: string) => {
-      if (url.includes('ele-c.json')) return { ok: true, json: async () => ({ eleicoes: [] }) };
-      return { ok: false, status: 404 };
-    });
+  it('3. Deve retornar NOT_YET_AVAILABLE para T2 quando não houver TseSyncConfig configurado', async () => {
+    await seedActiveElectionWithConfigs([
+      { roundNumber: 1, officeCode: '1', officialElectionCode: '6257' }
+    ]);
+
+    global.fetch = vi.fn();
 
     const req = new Request('http://localhost/api/tse-results?round=2');
     const res = await GET(req);
     const data = await res.json();
 
+    expect(res.status).toBe(200);
     expect(data.status).toBe('NOT_YET_AVAILABLE');
+    expect(data.error).toBe('CONFIGURACAO_TSE_AUSENTE');
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 
-  it('4. T2_DYNAMIC_DISCOVERY: Deve descobrir eleicoes T2 por nome/cargos e usar os codigos corretos', async () => {
+  it('4. T2_DYNAMIC_DISCOVERY: Deve consultar T2 com os códigos oficiais configurados em TseSyncConfig', async () => {
     const synFed = '9991';
     const synEst = '9992';
-    
+
+    await seedActiveElectionWithConfigs([
+      { roundNumber: 2, officeCode: '1', officialElectionCode: synFed },
+      { roundNumber: 2, officeCode: '3', officialElectionCode: synEst }
+    ]);
+
+    const fetchedUrls: string[] = [];
     global.fetch = vi.fn().mockImplementation(async (url: string) => {
-      if (url.includes('ele-c.json')) {
-        return { ok: true, json: async () => ({
-          eleicoes: [
-            { cd: synFed, nm: 'Eleicao Fake Federal 2', t: '2' },
-            { cd: synEst, nm: 'Eleicao Fake Estadual 2', t: '2' }
-          ]
-        })};
+      fetchedUrls.push(url);
+      if (url.includes(`-e00${synFed}-`)) {
+        return { ok: true, json: async () => ({ ...mockTseResponse, ele: synFed, t: '2' }) } as any;
       }
-      
-      return { ok: true, json: async () => ({ ...mockTseResponse, t: '2' }) };
+      return {
+        ok: true,
+        json: async () => ({ ...mockTseResponse, ele: synEst, t: '2', carg: [{ cd: '3', nmf: 'Governador', agr: [] }] })
+      } as any;
     });
 
     const req = new Request('http://localhost/api/tse-results?round=2');
@@ -80,85 +214,74 @@ describe('TSE Adapter (API)', () => {
     const data = await res.json();
 
     expect(data.status).toBe('AVAILABLE');
+    expect(fetchedUrls.some(u => u.includes(`-e00${synFed}-`))).toBe(true);
+    expect(fetchedUrls.some(u => u.includes(`-e00${synEst}-`))).toBe(true);
     expect(data.offices.every((o: any) => o.status === 'AVAILABLE')).toBe(true);
   });
-  
+
   it('5. T2_PARTIAL_PUBLICATION_BEHAVIOR: Deve manter T2 parcialmente disponivel sem erro', async () => {
     const synFed = '8881';
     const synEst = '8882';
-    
+
+    await seedActiveElectionWithConfigs([
+      { roundNumber: 2, officeCode: '1', officialElectionCode: synFed },
+      { roundNumber: 2, officeCode: '3', officialElectionCode: synEst }
+    ]);
+
     global.fetch = vi.fn().mockImplementation(async (url: string) => {
-      if (url.includes('ele-c.json')) {
-        return { ok: true, json: async () => ({
-          eleicoes: [
-            { cd: synFed, nm: 'Fed', t: '2', cargos: [{cd: '1'}] },
-            { cd: synEst, nm: 'Est', t: '2', cargos: [{cd: '3'}] }
-          ]
-        })};
-      }
-      
       if (url.includes(`-e00${synFed}-`)) {
-        return { ok: true, json: async () => ({ ...mockTseResponse, t: '2' }) };
+        return { ok: true, json: async () => ({ ...mockTseResponse, ele: synFed, t: '2' }) } as any;
       }
-      return { ok: false, status: 404 };
+      return { ok: false, status: 404 } as any;
     });
 
     const req = new Request('http://localhost/api/tse-results?round=2');
     const res = await GET(req);
     const data = await res.json();
 
-    expect(data.status).toBe('AVAILABLE'); 
+    expect(data.status).toBe('AVAILABLE');
+    expect(res.headers.get('Cache-Control')).toContain('no-store');
     expect(data.offices.find((o: any) => o.cargo === '1').status).toBe('AVAILABLE');
     expect(data.offices.find((o: any) => o.cargo === '3').status).toBe('NOT_YET_AVAILABLE');
   });
 
   it('6. Deve normalizar os labels flexionados de cargos (GOVERNADORA -> Governador)', async () => {
+    await seedActiveElectionWithConfigs([
+      { roundNumber: 1, officeCode: '1', officialElectionCode: '6257' },
+      { roundNumber: 1, officeCode: '3', officialElectionCode: '6259' }
+    ]);
+
     const mockFlexionado = {
       ...mockTseResponse,
+      ele: '6259',
       carg: [{ cd: '3', nmf: 'Governadora', agr: [] }]
     };
+
     global.fetch = vi.fn().mockImplementation(async (url: string) => {
-      if (url.includes('ele-c.json')) return { ok: false };
-      if (url.includes('c0003')) return { ok: true, json: async () => mockFlexionado };
-      return { ok: true, json: async () => mockTseResponse };
+      if (url.includes('c0003')) return { ok: true, json: async () => mockFlexionado } as any;
+      return { ok: true, json: async () => mockTseResponse } as any;
     });
 
     const req = new Request('http://localhost/api/tse-results?round=1');
     const res = await GET(req);
     const data = await res.json();
-    
+
     const govOffice = data.offices.find((o: any) => o.cargo === '3');
     expect(govOffice.cargoName).toBe('Governador');
   });
 
-  it('7. T2_OFFICIAL_CATALOG_SCHEMA: Deve processar estrutura real de ele-c.json (pl[].e[]) e selecionar eleição 6258 para T2', async () => {
-    const mockRealEleC = {
-      pl: [
-        {
-          cd: '3220', c: 'ele2026', dt: '04/10/2026',
-          e: [
-            { cd: '6257', nm: 'Eleicao Federal T1', t: '1', tp: '8', abr: [{ cd: 'br', cp: [{ cd: '1' }] }] },
-            { cd: '6259', nm: 'Eleicao Estadual T1', t: '1', tp: '1', abr: [{ cd: 'br', cp: [{ cd: '3' }] }] }
-          ]
-        },
-        {
-          cd: '3221', c: 'ele2026', dt: '25/10/2026',
-          e: [
-            { cd: '6258', nm: 'Eleicao Ordinaria Federal - 2026 2º Turno', t: '2', tp: '8', abr: [{ cd: 'br', cp: [{ cd: '1' }] }] },
-            { cd: '6260', nm: 'Eleicao Ordinaria Estadual - 2026 2º Turno', t: '2', tp: '1', abr: [{ cd: 'am' }, { cd: 'rn' }] }
-          ]
-        }
-      ]
-    };
+  it('7. T2_SINGLE_OFFICE_CONFIG: Deve consultar exclusivamente o código configurado para T2 sem disparar estadual não configurado', async () => {
+    await seedActiveElectionWithConfigs([
+      { roundNumber: 2, officeCode: '1', officialElectionCode: '6258' }
+    ]);
 
     let requestedEa20Url = '';
     global.fetch = vi.fn().mockImplementation(async (url: string) => {
-      if (url.includes('ele-c.json')) return { ok: true, json: async () => mockRealEleC };
       if (url.includes('-e006258-')) {
         requestedEa20Url = url;
-        return { ok: true, json: async () => ({ ...mockTseResponse, ele: '6258', t: '2' }) };
+        return { ok: true, json: async () => ({ ...mockTseResponse, ele: '6258', t: '2' }) } as any;
       }
-      return { ok: false, status: 404 };
+      return { ok: false, status: 404 } as any;
     });
 
     const req = new Request('http://localhost/api/tse-results?round=2');
@@ -168,12 +291,15 @@ describe('TSE Adapter (API)', () => {
     expect(data.status).toBe('AVAILABLE');
     expect(requestedEa20Url).toContain('6258');
     expect(requestedEa20Url).toContain('sc80837-c0001-e006258-u.json');
-    // Confirma que não tentou consultar estadual (6260) pois SC não está em abr
-    const govOffice = data.offices.find((o: any) => o.cargo === '3');
-    expect(govOffice.status).toBe('NOT_YET_AVAILABLE');
+    expect(data.offices).toHaveLength(1);
+    expect(data.offices[0].cargo).toBe('1');
   });
 
   it('8. T2_REAL_EA20_PARSING: Deve processar payload real do TSE com 0 votos e candidatos 22 e 13', async () => {
+    await seedActiveElectionWithConfigs([
+      { roundNumber: 2, officeCode: '1', officialElectionCode: '6258' }
+    ]);
+
     const realEa20Payload = {
       ele: '6258', t: '2', cdabr: '80837',
       s: { ts: '193', st: '0', pst: '0,00' },
@@ -189,9 +315,8 @@ describe('TSE Adapter (API)', () => {
     };
 
     global.fetch = vi.fn().mockImplementation(async (url: string) => {
-      if (url.includes('ele-c.json')) return { ok: false }; // testa via fallback 6258
-      if (url.includes('-e006258-')) return { ok: true, json: async () => realEa20Payload };
-      return { ok: false, status: 404 };
+      if (url.includes('-e006258-')) return { ok: true, json: async () => realEa20Payload } as any;
+      return { ok: false, status: 404 } as any;
     });
 
     const req = new Request('http://localhost/api/tse-results?round=2');
@@ -216,6 +341,10 @@ describe('TSE Adapter (API)', () => {
   });
 
   it('9. T2_PROGRESS_STATUS_ZERO_SECTIONS: Confirma que s.st = 0 não é apresentado como apuração concluída', async () => {
+    await seedActiveElectionWithConfigs([
+      { roundNumber: 2, officeCode: '1', officialElectionCode: '6258' }
+    ]);
+
     const unstartedEa20 = {
       ele: '6258', t: '2', cdabr: '80837',
       s: { ts: '193', st: '0', pst: '0,00' },
@@ -224,10 +353,10 @@ describe('TSE Adapter (API)', () => {
       carg: [{ cd: '1', nmf: 'Presidente', agr: [] }]
     };
 
-    global.fetch = vi.fn().mockImplementation(async (url: string) => {
-      if (url.includes('ele-c.json')) return { ok: false };
-      return { ok: true, json: async () => unstartedEa20 };
-    });
+    global.fetch = vi.fn().mockImplementation(async () => ({
+      ok: true,
+      json: async () => unstartedEa20
+    } as any));
 
     const req = new Request('http://localhost/api/tse-results?round=2');
     const res = await GET(req);
@@ -240,18 +369,20 @@ describe('TSE Adapter (API)', () => {
     expect(pres.progress.status).toBe('AGUARDANDO_APURACAO');
   });
 
-  it('10. SC_UF_FILTERING: Garante que cargos 5, 6 e 7 não geram chamadas no Turno 2', async () => {
+  it('10. SC_UF_FILTERING: Garante que cargos 5, 6 e 7 não geram chamadas quando T2 configura apenas cargo 1', async () => {
+    await seedActiveElectionWithConfigs([
+      { roundNumber: 2, officeCode: '1', officialElectionCode: '6258' }
+    ]);
+
     const fetchedUrls: string[] = [];
     global.fetch = vi.fn().mockImplementation(async (url: string) => {
       fetchedUrls.push(url);
-      if (url.includes('ele-c.json')) return { ok: false };
-      return { ok: true, json: async () => ({ ...mockTseResponse, t: '2' }) };
+      return { ok: true, json: async () => ({ ...mockTseResponse, ele: '6258', t: '2' }) } as any;
     });
 
     const req = new Request('http://localhost/api/tse-results?round=2');
     await GET(req);
 
-    // No T2 para SC, apenas cargo 1 é consultado
     const cargosConsultados = fetchedUrls.filter(u => u.includes('c000'));
     expect(cargosConsultados).toHaveLength(1);
     expect(cargosConsultados[0]).toContain('c0001');

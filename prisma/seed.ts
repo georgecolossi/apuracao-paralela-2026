@@ -1,70 +1,38 @@
-import { PrismaClient } from '@prisma/client'
-import * as bcrypt from 'bcryptjs'
+import { PrismaClient } from '@prisma/client';
+import * as bcrypt from 'bcryptjs';
 
-const prisma = new PrismaClient()
+const prisma = new PrismaClient();
 
 async function main() {
-  const adminEmail = 'admin@apuracao.local';
-  let admin = await prisma.user.findUnique({ where: { email: adminEmail } });
-  if (!admin) {
-    const passwordHash = await bcrypt.hash('admin123', 10);
-    admin = await prisma.user.create({
+  const adminCount = await prisma.user.count({ where: { role: 'ADMIN' } });
+  
+  const envEmail = process.env.INITIAL_ADMIN_EMAIL;
+  const envPassword = process.env.INITIAL_ADMIN_PASSWORD;
+
+  if (adminCount === 0 && envEmail && envPassword) {
+    const passwordHash = await bcrypt.hash(envPassword, 10);
+    const admin = await prisma.user.create({
       data: {
-        name: 'Administrador Padrão',
-        email: adminEmail,
+        name: process.env.INITIAL_ADMIN_NAME || 'Administrador',
+        email: envEmail.trim().toLowerCase(),
         passwordHash,
-        role: 'ADMIN'
+        role: 'ADMIN',
+        isActive: true,
       }
     });
-  }
-
-  // Usar 2110 (TSE Oficial Turno 1) em vez do mock 123
-  // Isso evita ter múltiplas eleições ACTIVE gerando ambiguidade no /api/totals
-  const electionDb = await prisma.election.findFirst({ where: { plei: '2110' }});
-  if (!electionDb) {
-    const election = await prisma.election.create({
-      data: {
-        plei: '2110',
-        name: 'Eleição Oficial TSE 2026 (Fixture)',
-        year: 2026,
-        description: 'Pleito correspondente aos payloads oficiais TSE para testes físicos E2E',
-        status: 'ACTIVE',
-        rounds: {
-          create: [
-            { roundNumber: 1, status: 'ACTIVE' },
-            { roundNumber: 2, status: 'PLANNED' }
-          ]
-        }
-      }
-    });
-    console.log('Eleição oficial (2110) configurada:', election.id);
+    console.log(`[SEED] Administrador inicial configurado com sucesso via variáveis de ambiente (${admin.email}).`);
+  } else if (adminCount === 0) {
+    console.log('[SEED] Banco inicializado em estado virgem. A criação do primeiro administrador deve ser realizada pelo setup seguro (/api/setup ou script CLI).');
   } else {
-    console.log('Seed (2110) já existente.');
+    console.log('[SEED] Banco já possui administrador configurado. Nenhuma ação necessária.');
   }
-
-  // Idempotency check for state/city
-  let state = await prisma.state.findUnique({ where: { abbreviation: 'SP' } });
-  if (!state) {
-    state = await prisma.state.create({
-      data: { name: 'São Paulo', abbreviation: 'SP' }
-    });
-  }
-
-  const city = await prisma.municipality.findUnique({ where: { officialCode: '71072' } });
-  if (!city) {
-    await prisma.municipality.create({
-      data: { name: 'São Paulo', officialCode: '71072', stateId: state.id }
-    });
-  }
-
-  console.log('Seed concluído.');
 }
 
 main()
   .catch((e) => {
-    console.error(e)
-    process.exit(1)
+    console.error(e);
+    process.exit(1);
   })
   .finally(async () => {
-    await prisma.$disconnect()
-  })
+    await prisma.$disconnect();
+  });

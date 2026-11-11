@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/db';
 import { requireAuthenticatedUser } from '@/lib/auth';
 import { redirect } from 'next/navigation';
-import { AlertCircle, Database, MapPin, Hash, CheckCircle2, ShieldAlert } from 'lucide-react';
+import { Database, MapPin, Hash, ShieldAlert } from 'lucide-react';
 
 export default async function ConfigPage() {
   const auth = await requireAuthenticatedUser();
@@ -16,19 +16,72 @@ export default async function ConfigPage() {
   });
   const election = elections[0];
   const activeRound = election?.rounds.find(r => r.status === 'ACTIVE') || election?.rounds[0];
-  const activePlei = activeRound?.plei || election?.plei || '3221';
+  const activePlei = activeRound?.plei || election?.plei || 'N/D';
   const contextualizedName = activeRound
-    ? `Eleições Gerais ${election?.year || 2026} — ${activeRound.roundNumber}º Turno`
+    ? `${election?.name || 'Eleição'} — ${activeRound.roundNumber}º Turno`
     : election?.name || 'Eleição Principal';
   
-  const coverage = await prisma.municipality.findFirst({ where: { isCoverage: true }, include: { state: true } });
+  // Cobertura contextual da eleição ativa via ElectionScope
+  const electionMunicipalScopes = election
+    ? await prisma.electionScope.findMany({
+        where: { electionId: election.id, scopeType: 'MUNICIPAL', isCoverageArea: true },
+        include: { municipality: { include: { state: true } } }
+      })
+    : [];
+
+  const coveredMuniIds = electionMunicipalScopes
+    .map(s => s.municipalityId)
+    .filter((id): id is string => Boolean(id));
+
+  const coverage = electionMunicipalScopes[0]?.municipality
+    || await prisma.municipality.findFirst({ where: { isCoverage: true }, include: { state: true } });
   
-  const expectedAgg = await prisma.pollingSection.aggregate({
-    where: { zone: { municipality: { isCoverage: true } } },
-    _sum: { expectedBUs: true }
+  const municipalExpectedAgg = await prisma.pollingSection.aggregate({
+    where: coveredMuniIds.length > 0
+      ? { zone: { municipalityId: { in: coveredMuniIds } } }
+      : { zone: { municipality: { isCoverage: true } } },
+    _sum: { expectedBUs: true },
+    _count: { id: true }
   });
   
-  const expectedBUsCount = expectedAgg._sum.expectedBUs || 0;
+  const municipalExpectedBUs = municipalExpectedAgg._sum.expectedBUs || 0;
+  const municipalSectionsCount = municipalExpectedAgg._count.id || 0;
+
+  const roundsData = await Promise.all(
+    (election?.rounds || []).map(async (r) => {
+      const processedBUs = await prisma.ballotReport.count({
+        where: {
+          electionId: election.id,
+          roundId: r.id,
+          status: 'PROCESSADO',
+          isSimulation: false,
+        },
+      });
+
+      const roundCoverageAgg = await prisma.roundCoverage.aggregate({
+        where: {
+          electionRoundId: r.id,
+          expectedBUs: { gt: 0 },
+        },
+        _sum: { expectedBUs: true },
+        _count: { id: true },
+      });
+
+      const confirmedExpected = roundCoverageAgg._sum.expectedBUs || 0;
+      const configuredSectionsCount = roundCoverageAgg._count.id || 0;
+      const hasConfiguredCoverage = confirmedExpected > 0;
+
+      const expectedBUs = hasConfiguredCoverage ? confirmedExpected : municipalExpectedBUs;
+
+      return {
+        ...r,
+        processedBUs,
+        expectedBUs,
+        configuredSectionsCount,
+        hasConfiguredCoverage,
+      };
+    })
+  );
 
   return (
     <div className="max-w-4xl mx-auto space-y-6">
@@ -50,11 +103,13 @@ export default async function ConfigPage() {
                 <dt className="text-xs font-bold text-slate-400 uppercase tracking-wider">Identificador (PLEI)</dt>
                 <dd className="text-lg font-medium text-slate-900 flex items-center gap-2 mt-0.5">
                   <span className="font-mono font-bold text-indigo-700">{activePlei}</span>
-                  <span className="text-xs font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-indigo-100 text-indigo-800">
-                    Turno Ativo ({activeRound?.roundNumber || 2}º)
-                  </span>
+                  {activeRound && (
+                    <span className="text-xs font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-indigo-100 text-indigo-800">
+                      Turno Ativo ({activeRound.roundNumber}º)
+                    </span>
+                  )}
                 </dd>
-                <p className="text-xs text-slate-400 mt-1">PLEI do turno operacional ativo (T1 histórico: 3220 • T2 ativo: 3221)</p>
+                <p className="text-xs text-slate-400 mt-1">PLEI do turno operacional ativo</p>
               </div>
               <div>
                 <dt className="text-xs font-bold text-slate-400 uppercase tracking-wider">Nome</dt>
@@ -88,20 +143,16 @@ export default async function ConfigPage() {
                 <dd className="text-lg font-medium text-slate-900">{coverage.officialCode}</dd>
               </div>
               <div>
-                <dt className="text-xs font-bold text-slate-400 uppercase tracking-wider">Urnas Esperadas (Denominador)</dt>
+                <dt className="text-xs font-bold text-slate-400 uppercase tracking-wider">Urnas Cadastradas (Base Municipal)</dt>
                 <dd className="text-lg font-medium text-slate-900 flex items-baseline gap-2">
-                  <span>{activeRound?.roundNumber === 2 ? `~${expectedBUsCount} BUs` : expectedBUsCount}</span>
-                  {activeRound?.roundNumber === 2 && (
-                    <span className="text-xs font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-amber-100 text-amber-800 border border-amber-200">
-                      Provisória
-                    </span>
-                  )}
+                  <span>{municipalExpectedBUs.toLocaleString('pt-BR')} BUs</span>
+                  <span className="text-xs font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-700">
+                    {municipalSectionsCount} {municipalSectionsCount === 1 ? 'seção' : 'seções'}
+                  </span>
                 </dd>
-                {activeRound?.roundNumber === 2 && (
-                  <p className="text-xs text-amber-700 font-medium mt-1">
-                    Estimativa provisória baseada nas 193 seções do 1º Turno (Concórdia/SC), sujeita à confirmação final de agregação pelo TSE.
-                  </p>
-                )}
+                <p className="text-xs text-slate-400 mt-1">
+                  Total previsto no cadastro de seções do município de cobertura.
+                </p>
               </div>
             </dl>
           ) : (
@@ -116,9 +167,9 @@ export default async function ConfigPage() {
           <h2 className="text-lg font-bold uppercase tracking-wider">Turnos Eleitorais</h2>
         </div>
         
-        {election?.rounds.length ? (
+        {roundsData.length ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {election.rounds.map(r => (
+            {roundsData.map(r => (
               <div
                 key={r.id}
                 className={`p-4 rounded-xl border transition-colors ${
@@ -143,23 +194,37 @@ export default async function ConfigPage() {
                     {r.status === 'ACTIVE' ? 'ATIVO' : r.status === 'FINISHED' ? 'FINALIZADO' : r.status}
                   </span>
                 </div>
-                <div className="text-xs space-y-1">
-                  <div className="flex justify-between">
+                <div className="text-xs space-y-2 mt-3 pt-3 border-t border-slate-200/60">
+                  <div className="flex justify-between items-center">
                     <span className="font-semibold text-slate-500">PLEI Oficial:</span>
                     <span className="font-mono font-bold text-slate-800">{r.plei || 'N/D'}</span>
                   </div>
-                  {r.roundNumber === 1 && (
-                    <div className="flex justify-between text-slate-500">
-                      <span>Boletins Auditados:</span>
-                      <span className="font-bold text-slate-700">193 BUs (Preservados)</span>
-                    </div>
-                  )}
-                  {r.roundNumber === 2 && (
-                    <div className="flex justify-between text-slate-500">
-                      <span>Cobertura Estimada:</span>
-                      <span className="font-bold text-amber-700">~193 BUs (Provisória)</span>
-                    </div>
-                  )}
+                  <div className="flex justify-between items-center">
+                    <span className="font-semibold text-slate-500">Total Processado:</span>
+                    <span className="font-bold text-slate-900">
+                      {r.processedBUs.toLocaleString('pt-BR')} {r.processedBUs === 1 ? 'BU' : 'BUs'}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="font-semibold text-slate-500">Total Previsto:</span>
+                    <span className="font-bold text-slate-900">
+                      {!r.hasConfiguredCoverage && '~'}{r.expectedBUs.toLocaleString('pt-BR')} BUs
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="font-semibold text-slate-500">Regime de Cobertura:</span>
+                    <span
+                      className={`font-semibold px-2 py-0.5 rounded text-[11px] ${
+                        r.hasConfiguredCoverage
+                          ? 'bg-sky-100 text-sky-800 border border-sky-200'
+                          : 'bg-amber-100 text-amber-800 border border-amber-200'
+                      }`}
+                    >
+                      {r.hasConfiguredCoverage
+                        ? `Cadastrada — validação pendente (${r.configuredSectionsCount} ${r.configuredSectionsCount === 1 ? 'seção' : 'seções'})`
+                        : 'Estimada (Provisória)'}
+                    </span>
+                  </div>
                 </div>
               </div>
             ))}

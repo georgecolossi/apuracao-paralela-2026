@@ -35,10 +35,10 @@ let success = true;
 
 try {
   console.log('Pushing schema to test.db...');
-  execSync('npx prisma db push --skip-generate', { env, stdio: 'inherit' });
+  execSync('npx prisma db push --skip-generate --accept-data-loss', { env, stdio: 'inherit' });
   
-  console.log('Running seed to ensure Election context exists...');
-  execSync('npx tsx prisma/seed.ts', { env, stdio: 'inherit' });
+  console.log('Running test seed to ensure isolated Election context exists...');
+  execSync('npx tsx prisma/seeds/test-seed.ts', { env, stdio: 'inherit' });
   
   // Vitest args forward
   const args = process.argv.slice(2).join(' ');

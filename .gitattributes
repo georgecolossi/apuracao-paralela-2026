@@ -1,0 +1,25 @@
+# Auto-detect text files and enforce LF line endings with UTF-8
+* text=auto eol=lf
+
+# Explicit text file types
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.jsx text eol=lf
+*.mjs text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.prisma text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+
+# Explicit binary files
+*.db binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.pdf binary
+*.dat binary
+*.zip binary

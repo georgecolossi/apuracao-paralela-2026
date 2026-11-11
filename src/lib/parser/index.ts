@@ -7,15 +7,19 @@ export type ParseError = {
 };
 
 export type BallotVote = {
+  officeCode?: string;
   officeName: string;
+  officeType?: 'MAJORITARIO' | 'PROPORCIONAL' | 'CONSULTA';
   candidateNumber?: string;
   partyNumber?: string;
   type: 'NOMINAL' | 'LEGENDA' | 'BRANCO' | 'NULO';
   quantity: number;
+  electionPlei?: string;
 };
 
 export type BallotReportData = {
   electionId: string;
+  specificElectionId?: string;
   roundNumber: number;
   stateCode: string;
   cityCode: string;
@@ -27,11 +31,14 @@ export type BallotReportData = {
   signature: string;
   hashStatus?: VerificationState;
   sigStatus?: VerificationState;
+  sigValidationNote?: string;
   fase?: string;
+  vrqrVersion?: string;
   warnings?: string[];
   apto?: number;
   comp?: number;
   falt?: number;
+  rawPayload?: string;
 };
 
 export interface BallotReportParser {
@@ -40,4 +47,8 @@ export interface BallotReportParser {
   parseReport(fullPayload: string, rawParts?: string[]): BallotReportData | ParseError;
 }
 
-
+export * from './adapter/QrBuAdapter';
+export * from './adapter/UniversalQrBuParser';
+export * from './adapter/Vrqr6Adapter';
+export * from './adapter/Vrqr5Adapter';
+export * from './adapter/Vrqr4Adapter';

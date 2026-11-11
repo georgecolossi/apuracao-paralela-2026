@@ -33,8 +33,10 @@ next-env.d.ts
 # logs
 *.log
 test-results/
+/scratch
+scripts/pdf-qr-extractor.py
 # Banco de Dados Local (Fase 7.6)
-prisma/dev.db
+prisma/*.db
 prisma/*.db-journal
 prisma/*.db-wal
 prisma/*.db-shm

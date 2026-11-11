@@ -1,4 +1,6 @@
+import { redirect } from 'next/navigation';
 import { prisma } from '@/lib/db';
+import { requireAuthenticatedUser } from '@/lib/auth';
 import Link from 'next/link';
 import { ArrowLeft, Clock, CheckCircle2, CircleDashed } from 'lucide-react';
 import TurnoManagerClient from './TurnoManagerClient';
@@ -7,6 +9,14 @@ import TurnoResetClient from './TurnoResetClient';
 export const dynamic = 'force-dynamic';
 
 export default async function AdminTurnosPage() {
+  const auth = await requireAuthenticatedUser();
+  if (!auth.authenticated) {
+    redirect('/login');
+  }
+  if (auth.user.role !== 'ADMIN') {
+    redirect('/admin');
+  }
+
   const activeElections = await prisma.election.findMany({
     where: { status: 'ACTIVE' },
     include: {

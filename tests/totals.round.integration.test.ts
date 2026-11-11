@@ -95,9 +95,9 @@ describe('Round Isolation', () => {
     });
 
     // Encontra o Office PRESIDENTE
-    let presOffice = await prisma.office.findFirst({ where: { name: 'Presidente' } });
+    let presOffice = await prisma.office.findFirst({ where: { electionId, name: 'Presidente' } });
     if (!presOffice) {
-      presOffice = await prisma.office.create({ data: { name: 'Presidente', orderNumber: 1 } });
+      presOffice = await prisma.office.create({ data: { electionId, code: '1', name: 'Presidente', orderNumber: 1 } });
     }
     const officeId = presOffice.id;
 

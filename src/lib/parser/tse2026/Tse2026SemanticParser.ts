@@ -123,6 +123,7 @@ export class Tse2026SemanticParser {
       hashStatus: 'UNAVAILABLE',
       sigStatus: 'UNAVAILABLE',
       fase: map.get('FASE'),
+      vrqrVersion: map.get('VRQR') || undefined,
       warnings: unknownFields.size > 0 ? [`Campos opcionais desconhecidos: ${Array.from(unknownFields).join(', ')}`] : [],
       apto,
       comp,

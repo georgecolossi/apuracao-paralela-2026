@@ -1,6 +1,9 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll } from 'vitest';
 import { GET as getTseResults } from '../src/app/api/tse-results/route';
 import { ScannerDeduplicator } from '../src/lib/scanner-deduplicator';
+import { prisma } from '../src/lib/db';
+import { buildTseSyncConfigKey } from '../src/lib/validation/electionContext';
+import { clearTseResultsCache } from '../src/lib/tse/tseResultsCache';
 
 describe('Hotfix — Scanner Pre-Validation, Concurrency & TSE Synchronization', () => {
   beforeEach(() => {
@@ -144,6 +147,100 @@ describe('Hotfix — Scanner Pre-Validation, Concurrency & TSE Synchronization',
   });
 
   describe('2. TSE Results Route Headers & Cache Control', () => {
+    beforeEach(async () => {
+      clearTseResultsCache();
+      await prisma.tseSyncConfig.deleteMany();
+      await prisma.electionRound.deleteMany();
+      await prisma.electionScope.deleteMany();
+      await prisma.election.deleteMany();
+      await prisma.municipality.deleteMany();
+      await prisma.state.deleteMany();
+
+      const state = await prisma.state.create({
+        data: { abbreviation: 'SC', name: 'Santa Catarina' }
+      });
+      const muni = await prisma.municipality.create({
+        data: { officialCode: '80837', name: 'Concórdia', stateId: state.id, isCoverage: true }
+      });
+
+      const election = await prisma.election.create({
+        data: {
+          name: 'Eleição Hotfix TSE Sync',
+          slug: 'eleicao-hotfix-tse-sync',
+          year: 2026,
+          type: 'GENERAL',
+          status: 'ACTIVE',
+          rounds: {
+            create: [
+              { roundNumber: 1, status: 'ACTIVE', plei: '3220' },
+              { roundNumber: 2, status: 'PLANNED', plei: '3221' }
+            ]
+          },
+          scopes: {
+            create: {
+              scopeType: 'MUNICIPAL',
+              scopeKey: 'MUNICIPAL:SC:80837',
+              stateId: state.id,
+              municipalityId: muni.id,
+              isCoverageArea: true
+            }
+          }
+        }
+      });
+
+      await prisma.tseSyncConfig.create({
+        data: {
+          electionId: election.id,
+          roundNumber: 1,
+          configKey: buildTseSyncConfigKey({
+            roundNumber: 1,
+            officeCode: '1',
+            scopeType: 'MUNICIPAL',
+            uf: 'SC',
+            muniTseCode: '80837'
+          }),
+          officeCode: '1',
+          officialElectionCode: '6257',
+          scopeType: 'MUNICIPAL',
+          uf: 'SC',
+          muniTseCode: '80837',
+          status: 'ACTIVE',
+          isActive: true
+        }
+      });
+
+      await prisma.tseSyncConfig.create({
+        data: {
+          electionId: election.id,
+          roundNumber: 2,
+          configKey: buildTseSyncConfigKey({
+            roundNumber: 2,
+            officeCode: '1',
+            scopeType: 'MUNICIPAL',
+            uf: 'SC',
+            muniTseCode: '80837'
+          }),
+          officeCode: '1',
+          officialElectionCode: '6258',
+          scopeType: 'MUNICIPAL',
+          uf: 'SC',
+          muniTseCode: '80837',
+          status: 'ACTIVE',
+          isActive: true
+        }
+      });
+    });
+
+    afterAll(async () => {
+      clearTseResultsCache();
+      await prisma.tseSyncConfig.deleteMany();
+      await prisma.electionRound.deleteMany();
+      await prisma.electionScope.deleteMany();
+      await prisma.election.deleteMany();
+      await prisma.municipality.deleteMany();
+      await prisma.state.deleteMany();
+    });
+
     const mockZeroedT2 = {
       ele: '6258', t: '2', cdabr: '80837',
       carg: [{
@@ -181,20 +278,10 @@ describe('Hotfix — Scanner Pre-Validation, Concurrency & TSE Synchronization',
     };
 
     it('2.1. Deve retornar cabeçalhos Cache-Control adequados para evitar respostas antigas', async () => {
-      global.fetch = vi.fn().mockImplementation(async (url: string) => {
-        if (url.includes('ele-c.json')) {
-          return {
-            ok: true,
-            json: async () => ({
-              pl: [{
-                c: 'ele2026',
-                e: [{ cd: '6258', t: '2', tp: '8', nm: 'Eleição Ordinária Federal - 2026 2º Turno' }]
-              }]
-            })
-          };
-        }
-        return { ok: true, json: async () => mockZeroedT2 };
-      });
+      global.fetch = vi.fn().mockImplementation(async () => ({
+        ok: true,
+        json: async () => mockZeroedT2
+      } as any));
 
       const req = new Request('http://localhost/api/tse-results?round=2');
       const res = await getTseResults(req);
@@ -212,20 +299,10 @@ describe('Hotfix — Scanner Pre-Validation, Concurrency & TSE Synchronization',
     });
 
     it('2.2. Deve refletir imediatamente a apuração quando o EA20 for atualizado', async () => {
-      global.fetch = vi.fn().mockImplementation(async (url: string) => {
-        if (url.includes('ele-c.json')) {
-          return {
-            ok: true,
-            json: async () => ({
-              pl: [{
-                c: 'ele2026',
-                e: [{ cd: '6258', t: '2', tp: '8', nm: 'Eleição Ordinária Federal - 2026 2º Turno' }]
-              }]
-            })
-          };
-        }
-        return { ok: true, json: async () => mockUpdatedT2 };
-      });
+      global.fetch = vi.fn().mockImplementation(async () => ({
+        ok: true,
+        json: async () => mockUpdatedT2
+      } as any));
 
       const req = new Request('http://localhost/api/tse-results?round=2');
       const res = await getTseResults(req);
@@ -244,19 +321,16 @@ describe('Hotfix — Scanner Pre-Validation, Concurrency & TSE Synchronization',
     });
 
     it('2.3. Deve preservar funcionamento do Turno 1 com cabeçalho de cache', async () => {
-      global.fetch = vi.fn().mockImplementation(async (url: string) => {
-        if (url.includes('ele-c.json')) return { ok: false };
-        return {
-          ok: true,
-          json: async () => ({
-            ele: '6257', t: '1', cdabr: '80837',
-            carg: [{ cd: '1', nmf: 'Presidente', agr: [] }],
-            s: { ts: '193', st: '193', pst: '100,00' },
-            e: { te: '60391', c: '48952', pc: '81,06', a: '11439', pa: '18,94' },
-            v: { vvc: '47520', pvvc: '97,07', vb: '717', pvb: '1,46', tvn: '715', ptvn: '1,46' }
-          })
-        };
-      });
+      global.fetch = vi.fn().mockImplementation(async () => ({
+        ok: true,
+        json: async () => ({
+          ele: '6257', t: '1', cdabr: '80837',
+          carg: [{ cd: '1', nmf: 'Presidente', agr: [] }],
+          s: { ts: '193', st: '193', pst: '100,00' },
+          e: { te: '60391', c: '48952', pc: '81,06', a: '11439', pa: '18,94' },
+          v: { vvc: '47520', pvvc: '97,07', vb: '717', pvb: '1,46', tvn: '715', ptvn: '1,46' }
+        })
+      } as any));
 
       const req = new Request('http://localhost/api/tse-results?round=1');
       const res = await getTseResults(req);

@@ -1,35 +1,71 @@
 import { test, expect } from '@playwright/test';
-import fs from 'fs';
-import path from 'path';
 import { Tse2026BallotReportParser } from '../src/lib/parser/Tse2026BallotReportParser';
+import { SYNTHETIC_PHASE_O_PRES_T2_PAYLOAD, createE2EPrismaClient } from './helpers/e2eSupport';
 
 test.describe('E2E ADMINISTRATIVO / RESET DA APURAÇÃO', () => {
   const sessionId = `E2E-RESET-${Date.now()}`;
-  let officialPayload = "";
+  // Payload sintético de teste em formato QRBU FASE:O, com SHA-512 válido (não é BU oficial do TSE).
+  const syntheticPhaseOPayload = SYNTHETIC_PHASE_O_PRES_T2_PAYLOAD;
 
   test.beforeAll(async () => {
-    const examplesDir = path.join(__dirname, '../tests/fixtures/tse-2026/official/examples');
-    officialPayload = fs.readFileSync(path.join(examplesDir, 'Pres-T2_s02202ac0139200090013-imgbu', 'decoded', 'qrbu-01-of-01.txt'), 'utf-8');
-
-    const { PrismaClient } = await import('@prisma/client');
-    const prisma = new PrismaClient();
+    const prisma = await createE2EPrismaClient();
     
     await prisma.ballotVote.deleteMany({});
     await prisma.ballotReportPart.deleteMany({});
     await prisma.ballotReport.deleteMany({});
     await prisma.scanSession.deleteMany({});
+    await prisma.roundCoverage.deleteMany({});
+    await prisma.tseSyncConfig.deleteMany({});
+    await prisma.candidate.deleteMany({});
+    await prisma.office.deleteMany({});
+    await prisma.party.deleteMany({});
+    await prisma.electionScope.deleteMany({});
     await prisma.electionRound.deleteMany({});
     await prisma.election.deleteMany({});
 
+    const stateAC = await prisma.state.upsert({
+      where: { abbreviation: 'AC' },
+      update: {},
+      create: { abbreviation: 'AC', name: 'ACRE' }
+    });
+    const muniAC = await prisma.municipality.upsert({
+      where: { officialCode: '01392' },
+      update: { isCoverage: true },
+      create: { officialCode: '01392', name: 'RIO BRANCO', stateId: stateAC.id, isCoverage: true }
+    });
+    await prisma.pollingZone.upsert({
+      where: { municipalityId_zoneNumber: { municipalityId: muniAC.id, zoneNumber: '0009' } },
+      update: {},
+      create: { municipalityId: muniAC.id, zoneNumber: '0009' }
+    });
+
     await prisma.election.create({
-        data: {
-          plei: '2202',
-          name: 'Eleição Acrelandia',
-          year: 2026,
-          status: 'ACTIVE',
-          rounds: { create: [{ roundNumber: 1, status: 'ACTIVE' }, { roundNumber: 2, status: 'ACTIVE' }] }
+      data: {
+        plei: '2202',
+        name: 'Eleição Reset 2202',
+        year: 2026,
+        type: 'GENERAL',
+        status: 'ACTIVE',
+        rounds: {
+          create: [
+            { roundNumber: 1, plei: '2201', status: 'FINISHED' },
+            { roundNumber: 2, plei: '2202', status: 'ACTIVE' }
+          ]
+        },
+        scopes: {
+          create: {
+            scopeType: 'MUNICIPAL',
+            scopeKey: 'MUNICIPAL:AC:01392',
+            stateId: stateAC.id,
+            municipalityId: muniAC.id,
+            isCoverageArea: true
+          }
+        },
+        offices: {
+          create: [{ code: '1', name: 'Presidente', type: 'MAJORITARIO', orderNumber: 1 }]
         }
-      });
+      }
+    });
     await prisma.$disconnect();
   });
 
@@ -41,46 +77,54 @@ test.describe('E2E ADMINISTRATIVO / RESET DA APURAÇÃO', () => {
     await page.click('button[type="submit"]');
     await expect(page).toHaveURL(/.*admin.*/);
 
-    // 2. Post to API directly
-    const scanRes = await page.request.post('/api/scan', {
-      data: { content: officialPayload, isSimulation: false, sessionId: sessionId + '-A' }
+    const csrfRes = await page.request.get('/api/csrf-token');
+    const { csrfToken } = await csrfRes.json();
+
+    // 2. Enviar payload sintético FASE:O de Turno 2
+    const initialScanRes = await page.request.post('/api/scan', {
+      headers: { 'x-csrf-token': csrfToken },
+      data: { content: syntheticPhaseOPayload, isSimulation: false, sessionId: sessionId + '-A' }
     });
-    // Aceita 200 ou 409
-    
-    // 3. Executar Preparação (Reset)
+    expect([200, 409]).toContain(initialScanRes.status());
+
+    // 3. Executar Preparação (Reset) do Turno 2
     await page.goto('/admin/preparar');
     await expect(page.locator('text=Atenção: Operação Irreversível')).toBeVisible();
-    
-    // 4. Resetar
-    await page.fill('input[placeholder="ZERAR APURAÇÃO"]', 'ZERAR APURAÇÃO');
+
+    const confirmInput = page.locator('input[placeholder="ZERAR SEGUNDO TURNO"]');
+    await expect(confirmInput).toBeVisible();
+    await confirmInput.fill('ZERAR SEGUNDO TURNO');
     await page.click('button[type="submit"]');
-    
+
     await expect(page).toHaveURL('/apuracao', { timeout: 10000 });
-    
-    // Prova de que Totais foram zerados
-    const totalsCheckRes = await page.request.get('/api/totals');
+
+    // Prova de que Totais do Turno 2 foram zerados
+    const totalsCheckRes = await page.request.get('/api/totals?round=2');
     const totalsCheck = await totalsCheckRes.json();
-    expect(totalsCheck.totals.length).toBe(0); // Nenhum voto real
+    expect(totalsCheck.totals.length).toBe(0);
 
     // 5. Processar o mesmo BU novamente (Deve funcionar porque o BD foi zerado)
     const newScanRes = await page.request.post('/api/scan', {
-      data: { content: officialPayload, isSimulation: false, sessionId: sessionId + '-B' }
+      headers: { 'x-csrf-token': csrfToken },
+      data: { content: syntheticPhaseOPayload, isSimulation: false, sessionId: sessionId + '-B' }
     });
     const newScanData = await newScanRes.json();
     expect(newScanRes.status()).toBe(200);
     const newReportId = newScanData.reportId;
-    
+
     // Confirma
-    const confRes = await page.request.post(`/api/reports/${newReportId}/confirm`);
+    const confRes = await page.request.post(`/api/reports/${newReportId}/confirm`, {
+      headers: { 'x-csrf-token': csrfToken }
+    });
     expect(confRes.status()).toBe(200);
-    
+
     // Validar Totais gerados contra o parser oficial
-    const finalTotalsRes = await page.request.get('/api/totals');
+    const finalTotalsRes = await page.request.get('/api/totals?round=2');
     const finalTotals = await finalTotalsRes.json();
     
     const parser = new Tse2026BallotReportParser();
-    const parsed = parser.parseReport(officialPayload, [officialPayload]);
-    if ('code' in parsed) throw new Error('Failed to parse official payload');
+    const parsed = parser.parseReport(syntheticPhaseOPayload, [syntheticPhaseOPayload]);
+    if ('code' in parsed) throw new Error('Failed to parse synthetic FASE:O payload');
     const expectedAgg: Record<string, number> = {};
     for (const v of parsed.votes) {
       const key = `${v.officeName}|${v.candidateNumber || null}|${v.partyNumber || null}|${v.type}`;
@@ -101,8 +145,8 @@ test.describe('E2E ADMINISTRATIVO / RESET DA APURAÇÃO', () => {
       const expectedP = pNum === 'null' ? null : pNum;
       const found = finalTotals.totals.find((t: TotalRow) => 
         t.officeName === oName &&
-        String(t.candidateNumber) === String(expectedC) &&
-        String(t.partyNumber) === String(expectedP) &&
+        (t.candidateNumber ?? null) === expectedC &&
+        (t.partyNumber ?? null) === expectedP &&
         t.voteType === vType
       );
       expect(found).toBeDefined();
@@ -119,7 +163,8 @@ test.describe('E2E ADMINISTRATIVO / RESET DA APURAÇÃO', () => {
 
     // 6. Testar Duplicidade
     const dupScanRes = await page.request.post('/api/scan', {
-      data: { content: officialPayload, isSimulation: false, sessionId: sessionId + '-C' }
+      headers: { 'x-csrf-token': csrfToken },
+      data: { content: syntheticPhaseOPayload, isSimulation: false, sessionId: sessionId + '-C' }
     });
     expect(dupScanRes.status()).toBe(409);
     const dupScanData = await dupScanRes.json();

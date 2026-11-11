@@ -21,7 +21,7 @@ describe('Simulation Isolation', () => {
     roundId = round.id;
 
     const office = await prisma.office.create({
-      data: { name: 'Governador', orderNumber: 1 }
+      data: { electionId, code: '3', name: 'Governador', orderNumber: 1 }
     });
     officeId = office.id;
   });
