@@ -4,7 +4,7 @@ export const DEFAULT_LOGIN_WINDOW_MS = 15 * 60 * 1000;
 export const DEFAULT_LOGIN_MAX_ATTEMPTS_PER_PAIR = 5;
 export const DEFAULT_LOGIN_MAX_ATTEMPTS_PER_IP = 20;
 export const DEFAULT_MAX_TRACKED_RATE_LIMIT_ENTRIES = 10_000;
-const OVERFLOW_SLOTS_PER_SCOPE = 256;
+export const DEFAULT_OVERFLOW_SLOTS_PER_SCOPE = 256;
 
 export type IpResolutionStatus =
   | 'TRUSTED_PROXY_IP'
@@ -16,6 +16,8 @@ export type IpResolutionStatus =
 export type LoginRateLimitScope = 'PAIR' | 'IP' | 'ACCOUNT';
 
 interface RateLimitBucketEntry {
+  identityKey: string;
+  scope: LoginRateLimitScope;
   epochId: number;
   failures: number;
   pending: number;
@@ -24,22 +26,23 @@ interface RateLimitBucketEntry {
 
 interface LoginRateLimitState {
   primary: Map<string, RateLimitBucketEntry>;
-  overflow: Map<string, RateLimitBucketEntry>;
+  overflow: Record<LoginRateLimitScope, Array<RateLimitBucketEntry | null>>;
+  retiring: Map<number, RateLimitBucketEntry>;
   nextEpochId: number;
 }
 
 interface TargetBucketSpec {
   scope: LoginRateLimitScope;
-  primaryKey: string;
-  overflowKey: string;
+  identityKey: string;
   limit: number;
   resetOnSuccess: boolean;
 }
 
 interface ReservedBucketSlot {
   scope: LoginRateLimitScope;
+  identityKey: string;
   mapKind: 'primary' | 'overflow';
-  storeKey: string;
+  overflowSlotIndex: number;
   epochId: number;
   limit: number;
   resetOnSuccess: boolean;
@@ -51,6 +54,7 @@ export interface LoginRateLimitConfig {
   maxAttemptsPerIp: number;
   trustedProxyHops: number;
   maxStoreEntries: number;
+  maxOverflowSlotsPerScope: number;
 }
 
 export interface LoginRateLimitOptions {
@@ -72,7 +76,10 @@ export interface LoginRateLimitReservation {
   trustedProxyResolved: boolean;
   ipResolutionStatus: IpResolutionStatus;
   capacitySaturated: boolean;
+  overflowExhausted: boolean;
   settled: boolean;
+  acquiredNow: number;
+  acquiredWithCustomNow: boolean;
   windowMs: number;
   slots: ReservedBucketSlot[];
 }
@@ -88,23 +95,60 @@ export interface LoginFailureCommitResult {
 export interface LoginRateLimitDiagnostics {
   primarySize: number;
   overflowSize: number;
+  overflowByScope: Record<LoginRateLimitScope, number>;
+  retiringSize: number;
   activeBlockedCount: number;
   totalPendingCount: number;
+}
+
+export interface LoginRateLimitEntryState {
+  active: {
+    location: 'primary' | 'overflow';
+    overflowSlotIndex: number;
+    epochId: number;
+    failures: number;
+    pending: number;
+    resetAt: number;
+  } | null;
+  retiring: Array<{
+    epochId: number;
+    failures: number;
+    pending: number;
+    resetAt: number;
+  }>;
 }
 
 const globalForRateLimiter = globalThis as unknown as {
   loginRateLimitState?: LoginRateLimitState;
 };
 
+function createEmptyOverflowTables(): Record<LoginRateLimitScope, Array<RateLimitBucketEntry | null>> {
+  return {
+    PAIR: new Array<RateLimitBucketEntry | null>(DEFAULT_OVERFLOW_SLOTS_PER_SCOPE).fill(null),
+    IP: new Array<RateLimitBucketEntry | null>(DEFAULT_OVERFLOW_SLOTS_PER_SCOPE).fill(null),
+    ACCOUNT: new Array<RateLimitBucketEntry | null>(DEFAULT_OVERFLOW_SLOTS_PER_SCOPE).fill(null),
+  };
+}
+
 function getRateLimitState(): LoginRateLimitState {
-  if (!globalForRateLimiter.loginRateLimitState) {
+  const existing = globalForRateLimiter.loginRateLimitState;
+  if (
+    !existing ||
+    !(existing.primary instanceof Map) ||
+    !(existing.retiring instanceof Map) ||
+    !existing.overflow ||
+    !Array.isArray(existing.overflow.PAIR) ||
+    !Array.isArray(existing.overflow.IP) ||
+    !Array.isArray(existing.overflow.ACCOUNT)
+  ) {
     globalForRateLimiter.loginRateLimitState = {
       primary: new Map<string, RateLimitBucketEntry>(),
-      overflow: new Map<string, RateLimitBucketEntry>(),
+      overflow: createEmptyOverflowTables(),
+      retiring: new Map<number, RateLimitBucketEntry>(),
       nextEpochId: 1,
     };
   }
-  return globalForRateLimiter.loginRateLimitState;
+  return globalForRateLimiter.loginRateLimitState!;
 }
 
 function parsePositiveIntEnv(raw: string | undefined, fallback: number, min: number, max: number): number {
@@ -154,6 +198,21 @@ export function getLoginRateLimitConfig(): LoginRateLimitConfig {
     ),
     trustedProxyHops: parseTrustedProxyHops(process.env.LOGIN_TRUSTED_PROXY_HOPS),
     maxStoreEntries: DEFAULT_MAX_TRACKED_RATE_LIMIT_ENTRIES,
+    maxOverflowSlotsPerScope: DEFAULT_OVERFLOW_SLOTS_PER_SCOPE,
+  };
+}
+
+function getEffectiveConfig(options?: LoginRateLimitOptions): LoginRateLimitConfig {
+  const base = getLoginRateLimitConfig();
+  const merged = { ...base, ...options?.config };
+  const clampedOverflow = Math.max(
+    1,
+    Math.min(DEFAULT_OVERFLOW_SLOTS_PER_SCOPE, Math.trunc(merged.maxOverflowSlotsPerScope))
+  );
+  return {
+    ...merged,
+    maxStoreEntries: Math.max(1, Math.trunc(merged.maxStoreEntries)),
+    maxOverflowSlotsPerScope: clampedOverflow,
   };
 }
 
@@ -196,8 +255,7 @@ export function normalizeIpCandidate(raw: string): string | null {
 /**
  * Resolve o IP real do cliente SOMENTE quando `trustedProxyHops >= 1` e o sufixo
  * confiável de `X-Forwarded-For` é posicionalmente válido da direita para a esquerda.
- * Nunca filtra elementos inválidos antes de indexar (evita deslocamento silencioso
- * para entradas à esquerda controladas pelo atacante) e nunca fabrica IP sintético
+ * Nunca filtra elementos inválidos antes de indexar e nunca fabrica IP sintético
  * compartilhado quando o IP não é verificável (`ip: null`).
  */
 export function resolveLoginClientIp(
@@ -223,8 +281,6 @@ export function resolveLoginClientIp(
     return { ip: null, trustedProxyResolved: false, resolutionStatus: 'INSUFFICIENT_HOPS' };
   }
 
-  // Preserva posições exatas: qualquer entrada vazia ou malformada no sufixo
-  // confiável invalida toda a resolução em modo fail-safe.
   let resolvedClientIp: string | null = null;
   for (let i = targetIndex; i < rawSegments.length; i++) {
     const parsedIp = normalizeIpCandidate(rawSegments[i]);
@@ -256,148 +312,286 @@ function hashFnv1a(value: string): number {
   return hash >>> 0;
 }
 
-function buildIpBucketKey(clientIp: string): string {
+export function buildIpBucketKey(clientIp: string): string {
   return `ip:${clientIp}`;
 }
 
-function buildPairBucketKey(clientIp: string, normalizedAccount: string): string {
+export function buildPairBucketKey(clientIp: string, normalizedAccount: string): string {
   return `pair:${clientIp}:${normalizedAccount}`;
 }
 
-function buildAccountBucketKey(normalizedAccount: string): string {
+export function buildAccountBucketKey(normalizedAccount: string): string {
   return `acct:${normalizedAccount}`;
-}
-
-function buildOverflowBucketKey(scope: LoginRateLimitScope, primaryKey: string): string {
-  const slot = hashFnv1a(primaryKey) % OVERFLOW_SLOTS_PER_SCOPE;
-  return `ovf:${scope}:${slot}`;
 }
 
 function buildTargetBuckets(clientIp: string | null, normalizedAccount: string, cfg: LoginRateLimitConfig): TargetBucketSpec[] {
   if (clientIp !== null) {
-    const pairKey = buildPairBucketKey(clientIp, normalizedAccount);
-    const ipKey = buildIpBucketKey(clientIp);
     return [
       {
         scope: 'PAIR',
-        primaryKey: pairKey,
-        overflowKey: buildOverflowBucketKey('PAIR', pairKey),
+        identityKey: buildPairBucketKey(clientIp, normalizedAccount),
         limit: cfg.maxAttemptsPerPair,
         resetOnSuccess: true,
       },
       {
         scope: 'IP',
-        primaryKey: ipKey,
-        overflowKey: buildOverflowBucketKey('IP', ipKey),
+        identityKey: buildIpBucketKey(clientIp),
         limit: cfg.maxAttemptsPerIp,
         resetOnSuccess: false,
       },
     ];
   }
 
-  // Fallback seguro quando não há IP confiável: protege cada conta individualmente
-  // sem compartilhar bucket global entre usuários distintos.
-  const accountKey = buildAccountBucketKey(normalizedAccount);
   return [
     {
       scope: 'ACCOUNT',
-      primaryKey: accountKey,
-      overflowKey: buildOverflowBucketKey('ACCOUNT', accountKey),
+      identityKey: buildAccountBucketKey(normalizedAccount),
       limit: cfg.maxAttemptsPerPair,
       resetOnSuccess: true,
     },
   ];
 }
 
-function getBucketLimitByKey(key: string, cfg: LoginRateLimitConfig): number {
-  if (key.startsWith('ip:') || key.startsWith('ovf:IP:')) {
-    return cfg.maxAttemptsPerIp;
-  }
-  return cfg.maxAttemptsPerPair;
+function getBucketLimitByScope(scope: LoginRateLimitScope, cfg: LoginRateLimitConfig): number {
+  return scope === 'IP' ? cfg.maxAttemptsPerIp : cfg.maxAttemptsPerPair;
 }
 
-function isEntryBlocked(key: string, entry: RateLimitBucketEntry, cfg: LoginRateLimitConfig): boolean {
-  return entry.failures >= getBucketLimitByKey(key, cfg);
-}
-
-function getActiveEntry(map: Map<string, RateLimitBucketEntry>, key: string, now: number): RateLimitBucketEntry | null {
-  const existing = map.get(key);
-  if (!existing) return null;
-  if (now >= existing.resetAt) {
-    // Só remove se não houver reservas ativas pendentes; caso contrário preserva
-    // a expiração natural da janela sem quebrar limpeza de reservas em voo.
-    if (existing.pending === 0) {
-      map.delete(key);
-    }
-    return null;
-  }
-  return existing;
-}
-
-function purgeExpiredEntries(map: Map<string, RateLimitBucketEntry>, now: number): void {
-  for (const [key, entry] of map.entries()) {
-    if (now >= entry.resetAt && entry.pending === 0) {
-      map.delete(key);
-    }
-  }
+function isEntryBlocked(entry: RateLimitBucketEntry, cfg: LoginRateLimitConfig): boolean {
+  return entry.failures >= getBucketLimitByScope(entry.scope, cfg);
 }
 
 /**
- * Garante capacidade na store primária sem JAMAIS remover bloqueios ativos
- * nem entradas com reservas em voo (`pending > 0`). Retorna `true` se há vaga na
- * primária ou `false` caso esteja 100% saturada com bloqueios/reservas ativas.
+ * Trata entrada expirada preservando gerações com reservas pendentes na tabela
+ * `retiring` (mesmo epochId e mesmos contadores, nunca sobrescritas) e limpando
+ * definitivamente entradas expiradas ociosas (`pending === 0`).
  */
+function retireOrPurgeIfExpired(
+  state: LoginRateLimitState,
+  entry: RateLimitBucketEntry,
+  now: number
+): boolean {
+  if (now < entry.resetAt) return false;
+  if (entry.pending > 0) {
+    state.retiring.set(entry.epochId, entry);
+  }
+  return true;
+}
+
+function purgeOrRetireExpiredInPrimary(state: LoginRateLimitState, now: number): void {
+  for (const [key, entry] of state.primary.entries()) {
+    if (retireOrPurgeIfExpired(state, entry, now)) {
+      state.primary.delete(key);
+    }
+  }
+}
+
 function ensurePrimaryCapacityForInsert(
-  primary: Map<string, RateLimitBucketEntry>,
+  state: LoginRateLimitState,
   now: number,
   cfg: LoginRateLimitConfig
 ): boolean {
-  if (primary.size < cfg.maxStoreEntries) return true;
+  if (state.primary.size < cfg.maxStoreEntries) return true;
 
-  purgeExpiredEntries(primary, now);
-  if (primary.size < cfg.maxStoreEntries) return true;
+  purgeOrRetireExpiredInPrimary(state, now);
+  if (state.primary.size < cfg.maxStoreEntries) return true;
 
-  for (const [candidateKey, entry] of primary.entries()) {
-    if (entry.pending === 0 && !isEntryBlocked(candidateKey, entry, cfg)) {
-      primary.delete(candidateKey);
-      if (primary.size < cfg.maxStoreEntries) return true;
+  for (const [candidateKey, entry] of state.primary.entries()) {
+    if (entry.pending === 0 && !isEntryBlocked(entry, cfg)) {
+      state.primary.delete(candidateKey);
+      if (state.primary.size < cfg.maxStoreEntries) return true;
     }
   }
 
-  return primary.size < cfg.maxStoreEntries;
+  return state.primary.size < cfg.maxStoreEntries;
 }
 
-function refreshLruOrder(map: Map<string, RateLimitBucketEntry>, key: string, entry: RateLimitBucketEntry): void {
-  map.delete(key);
-  map.set(key, entry);
+function refreshPrimaryLruOrder(state: LoginRateLimitState, key: string, entry: RateLimitBucketEntry): void {
+  state.primary.delete(key);
+  state.primary.set(key, entry);
+}
+
+interface OverflowLookupResult {
+  matchedEntry: RateLimitBucketEntry | null;
+  matchedSlotIndex: number;
+  firstEmptySlotIndex: number | null;
+}
+
+/**
+ * Busca exata por `identityKey` no overflow do escopo via endereçamento aberto
+ * com sondagem linear circular até `maxOverflowSlotsPerScope` (padrão 256).
+ * Preserva identidade integral da chave e nunca agrega chaves distintas.
+ */
+function lookupOverflowByIdentity(
+  state: LoginRateLimitState,
+  scope: LoginRateLimitScope,
+  identityKey: string,
+  now: number,
+  maxSlots: number
+): OverflowLookupResult {
+  const table = state.overflow[scope];
+  const start = hashFnv1a(identityKey) % maxSlots;
+  let firstEmptySlotIndex: number | null = null;
+
+  for (let offset = 0; offset < maxSlots; offset++) {
+    const idx = (start + offset) % maxSlots;
+    const slot = table[idx];
+    if (!slot) {
+      if (firstEmptySlotIndex === null) firstEmptySlotIndex = idx;
+      continue;
+    }
+
+    if (retireOrPurgeIfExpired(state, slot, now)) {
+      table[idx] = null;
+      if (firstEmptySlotIndex === null) firstEmptySlotIndex = idx;
+      continue;
+    }
+
+    if (slot.identityKey === identityKey) {
+      return {
+        matchedEntry: slot,
+        matchedSlotIndex: idx,
+        firstEmptySlotIndex,
+      };
+    }
+  }
+
+  return {
+    matchedEntry: null,
+    matchedSlotIndex: -1,
+    firstEmptySlotIndex,
+  };
 }
 
 function locateActiveTargetEntry(
   state: LoginRateLimitState,
   target: TargetBucketSpec,
-  now: number
-): { mapKind: 'primary' | 'overflow'; storeKey: string; entry: RateLimitBucketEntry } | null {
-  const primaryEntry = getActiveEntry(state.primary, target.primaryKey, now);
-  if (primaryEntry) {
-    return { mapKind: 'primary', storeKey: target.primaryKey, entry: primaryEntry };
+  now: number,
+  cfg: LoginRateLimitConfig
+):
+  | { mapKind: 'primary'; entry: RateLimitBucketEntry; overflowSlotIndex: -1 }
+  | { mapKind: 'overflow'; entry: RateLimitBucketEntry; overflowSlotIndex: number }
+  | { mapKind: 'none'; firstEmptyOverflowSlotIndex: number | null } {
+  const pEntry = state.primary.get(target.identityKey);
+  if (pEntry) {
+    if (!retireOrPurgeIfExpired(state, pEntry, now)) {
+      return { mapKind: 'primary', entry: pEntry, overflowSlotIndex: -1 };
+    }
+    state.primary.delete(target.identityKey);
   }
-  const overflowEntry = getActiveEntry(state.overflow, target.overflowKey, now);
-  if (overflowEntry) {
-    return { mapKind: 'overflow', storeKey: target.overflowKey, entry: overflowEntry };
+
+  const ovfLookup = lookupOverflowByIdentity(
+    state,
+    target.scope,
+    target.identityKey,
+    now,
+    cfg.maxOverflowSlotsPerScope
+  );
+  if (ovfLookup.matchedEntry) {
+    return {
+      mapKind: 'overflow',
+      entry: ovfLookup.matchedEntry,
+      overflowSlotIndex: ovfLookup.matchedSlotIndex,
+    };
+  }
+
+  return { mapKind: 'none', firstEmptyOverflowSlotIndex: ovfLookup.firstEmptySlotIndex };
+}
+
+function findEvictableOrMinResetOverflow(
+  table: Array<RateLimitBucketEntry | null>,
+  identityKey: string,
+  maxSlots: number,
+  cfg: LoginRateLimitConfig,
+  now: number
+): { evictIndex: number | null; minResetAt: number } {
+  const start = hashFnv1a(identityKey) % maxSlots;
+  let evictIndex: number | null = null;
+  let oldestEvictReset = Infinity;
+  let minActiveReset = now + cfg.windowMs;
+  let foundActive = false;
+
+  for (let offset = 0; offset < maxSlots; offset++) {
+    const idx = (start + offset) % maxSlots;
+    const slot = table[idx];
+    if (!slot) continue;
+
+    if (!foundActive || slot.resetAt < minActiveReset) {
+      minActiveReset = slot.resetAt;
+      foundActive = true;
+    }
+
+    if (slot.pending === 0 && !isEntryBlocked(slot, cfg)) {
+      if (slot.resetAt < oldestEvictReset) {
+        oldestEvictReset = slot.resetAt;
+        evictIndex = idx;
+      }
+    }
+  }
+
+  return { evictIndex, minResetAt: minActiveReset };
+}
+
+function locateEntryForSettlement(
+  state: LoginRateLimitState,
+  slot: ReservedBucketSlot
+): { source: 'retiring' | 'primary' | 'overflow'; entry: RateLimitBucketEntry } | null {
+  const retired = state.retiring.get(slot.epochId);
+  if (retired && retired.identityKey === slot.identityKey) {
+    return { source: 'retiring', entry: retired };
+  }
+
+  if (slot.mapKind === 'primary') {
+    const pEntry = state.primary.get(slot.identityKey);
+    if (pEntry && pEntry.epochId === slot.epochId) {
+      return { source: 'primary', entry: pEntry };
+    }
+    return null;
+  }
+
+  const table = state.overflow[slot.scope];
+  const oEntry = table[slot.overflowSlotIndex];
+  if (oEntry && oEntry.epochId === slot.epochId && oEntry.identityKey === slot.identityKey) {
+    return { source: 'overflow', entry: oEntry };
   }
   return null;
 }
 
-function getEffectiveConfig(options?: LoginRateLimitOptions): LoginRateLimitConfig {
-  return {
-    ...getLoginRateLimitConfig(),
-    ...options?.config,
-  };
+function removeEntryFromStorage(
+  state: LoginRateLimitState,
+  source: 'retiring' | 'primary' | 'overflow',
+  slot: ReservedBucketSlot
+): void {
+  if (source === 'retiring') {
+    state.retiring.delete(slot.epochId);
+  } else if (source === 'primary') {
+    const cur = state.primary.get(slot.identityKey);
+    if (cur && cur.epochId === slot.epochId) {
+      state.primary.delete(slot.identityKey);
+    }
+  } else {
+    const table = state.overflow[slot.scope];
+    const cur = table[slot.overflowSlotIndex];
+    if (cur && cur.epochId === slot.epochId && cur.identityKey === slot.identityKey) {
+      table[slot.overflowSlotIndex] = null;
+    }
+  }
+}
+
+function rollbackReservedSlots(state: LoginRateLimitState, slots: ReservedBucketSlot[], now: number): void {
+  for (const slot of slots) {
+    const found = locateEntryForSettlement(state, slot);
+    if (!found) continue;
+    found.entry.pending = Math.max(0, found.entry.pending - 1);
+    if (found.entry.pending === 0 && (found.entry.failures === 0 || now >= found.entry.resetAt || found.source === 'retiring')) {
+      removeEntryFromStorage(state, found.source, slot);
+    }
+  }
 }
 
 /**
  * Verifica e reserva atomicamente capacidade de tentativa ANTES das operações
- * assíncronas de banco e bcrypt, eliminando corridas TOCTOU em rajadas concorrentes.
+ * assíncronas de banco e bcrypt, isolando identidades no overflow e gerações
+ * expiradas com reservas ainda em voo (`retiring`).
  */
 export function acquireLoginRateLimitReservation(
   req: Pick<Request, 'headers'> | Request | null | undefined,
@@ -405,15 +599,16 @@ export function acquireLoginRateLimitReservation(
   options?: LoginRateLimitOptions
 ): LoginRateLimitReservation {
   const now = options?.now ?? Date.now();
+  const acquiredWithCustomNow = options?.now !== undefined;
   const cfg = getEffectiveConfig(options);
   const ipResolution = resolveLoginClientIp(req, cfg.trustedProxyHops);
   const state = getRateLimitState();
   const targets = buildTargetBuckets(ipResolution.ip, normalizedAccount, cfg);
 
-  // Fase 1 (somente leitura): checa todos os buckets aplicáveis antes de mutar qualquer um
+  // Fase 1: leitura e retirada/limpeza segura de janelas expiradas
   for (const target of targets) {
-    const located = locateActiveTargetEntry(state, target, now);
-    if (located && located.entry.failures + located.entry.pending >= target.limit) {
+    const located = locateActiveTargetEntry(state, target, now, cfg);
+    if (located.mapKind !== 'none' && located.entry.failures + located.entry.pending >= target.limit) {
       return {
         allowed: false,
         retryAfterSeconds: Math.max(1, Math.ceil((located.entry.resetAt - now) / 1000)),
@@ -421,31 +616,31 @@ export function acquireLoginRateLimitReservation(
         clientIp: ipResolution.ip,
         trustedProxyResolved: ipResolution.trustedProxyResolved,
         ipResolutionStatus: ipResolution.resolutionStatus,
-        capacitySaturated: state.primary.size >= cfg.maxStoreEntries,
+        capacitySaturated: located.mapKind === 'overflow' || state.primary.size >= cfg.maxStoreEntries,
+        overflowExhausted: false,
         settled: true,
+        acquiredNow: now,
+        acquiredWithCustomNow,
         windowMs: cfg.windowMs,
         slots: [],
       };
     }
   }
 
-  // Fase 2 (mutação síncrona atômica): reserva slot em cada bucket aplicável
+  // Fase 2: alocação atômica síncrona de reserva com preservação integral de identidade
   let capacitySaturated = false;
   const reservedSlots: ReservedBucketSlot[] = [];
 
   for (const target of targets) {
-    const located = locateActiveTargetEntry(state, target, now);
-    if (located) {
-      if (located.mapKind === 'overflow') {
-        capacitySaturated = true;
-      }
+    const located = locateActiveTargetEntry(state, target, now, cfg);
+    if (located.mapKind === 'primary') {
       located.entry.pending += 1;
-      const targetMap = located.mapKind === 'primary' ? state.primary : state.overflow;
-      refreshLruOrder(targetMap, located.storeKey, located.entry);
+      refreshPrimaryLruOrder(state, target.identityKey, located.entry);
       reservedSlots.push({
         scope: target.scope,
-        mapKind: located.mapKind,
-        storeKey: located.storeKey,
+        identityKey: target.identityKey,
+        mapKind: 'primary',
+        overflowSlotIndex: -1,
         epochId: located.entry.epochId,
         limit: target.limit,
         resetOnSuccess: target.resetOnSuccess,
@@ -453,62 +648,101 @@ export function acquireLoginRateLimitReservation(
       continue;
     }
 
-    const canUsePrimary = ensurePrimaryCapacityForInsert(state.primary, now, cfg);
+    if (located.mapKind === 'overflow') {
+      capacitySaturated = true;
+      located.entry.pending += 1;
+      reservedSlots.push({
+        scope: target.scope,
+        identityKey: target.identityKey,
+        mapKind: 'overflow',
+        overflowSlotIndex: located.overflowSlotIndex,
+        epochId: located.entry.epochId,
+        limit: target.limit,
+        resetOnSuccess: target.resetOnSuccess,
+      });
+      continue;
+    }
+
+    const canUsePrimary = ensurePrimaryCapacityForInsert(state, now, cfg);
     if (canUsePrimary) {
-      const existingExpired = state.primary.get(target.primaryKey);
-      if (existingExpired && existingExpired.pending === 0 && now >= existingExpired.resetAt) {
-        state.primary.delete(target.primaryKey);
-      }
       const created: RateLimitBucketEntry = {
+        identityKey: target.identityKey,
+        scope: target.scope,
         epochId: state.nextEpochId++,
         failures: 0,
         pending: 1,
         resetAt: now + cfg.windowMs,
       };
-      state.primary.set(target.primaryKey, created);
+      state.primary.set(target.identityKey, created);
       reservedSlots.push({
         scope: target.scope,
+        identityKey: target.identityKey,
         mapKind: 'primary',
-        storeKey: target.primaryKey,
+        overflowSlotIndex: -1,
         epochId: created.epochId,
         limit: target.limit,
         resetOnSuccess: target.resetOnSuccess,
       });
-    } else {
-      // Primária 100% ocupada com bloqueios/reservas ativas: isola em tabela de overflow
-      // fixa sem remover nenhum bloqueio ativo da tabela primária.
-      capacitySaturated = true;
-      purgeExpiredEntries(state.overflow, now);
-      const ovfExisting = state.overflow.get(target.overflowKey);
-      if (ovfExisting && now < ovfExisting.resetAt) {
-        ovfExisting.pending += 1;
-        refreshLruOrder(state.overflow, target.overflowKey, ovfExisting);
-        reservedSlots.push({
-          scope: target.scope,
-          mapKind: 'overflow',
-          storeKey: target.overflowKey,
-          epochId: ovfExisting.epochId,
-          limit: target.limit,
-          resetOnSuccess: target.resetOnSuccess,
-        });
-      } else {
-        const createdOvf: RateLimitBucketEntry = {
-          epochId: state.nextEpochId++,
-          failures: 0,
-          pending: 1,
-          resetAt: now + cfg.windowMs,
-        };
-        state.overflow.set(target.overflowKey, createdOvf);
-        reservedSlots.push({
-          scope: target.scope,
-          mapKind: 'overflow',
-          storeKey: target.overflowKey,
-          epochId: createdOvf.epochId,
-          limit: target.limit,
-          resetOnSuccess: target.resetOnSuccess,
-        });
-      }
+      continue;
     }
+
+    // Store primária 100% ocupada por bloqueios/reservas ativas -> usa overflow por endereçamento aberto
+    capacitySaturated = true;
+    const table = state.overflow[target.scope];
+    let targetSlotIndex = located.firstEmptyOverflowSlotIndex;
+    let minActiveResetAt = now + cfg.windowMs;
+
+    if (targetSlotIndex === null) {
+      const reclaimScan = findEvictableOrMinResetOverflow(
+        table,
+        target.identityKey,
+        cfg.maxOverflowSlotsPerScope,
+        cfg,
+        now
+      );
+      targetSlotIndex = reclaimScan.evictIndex;
+      minActiveResetAt = reclaimScan.minResetAt;
+    }
+
+    if (targetSlotIndex === null) {
+      // Overflow do escopo 100% ocupado exclusivamente com bloqueios/reservas ativas:
+      // política fail-closed explícita sem reaproveitar contador de outra identidade.
+      rollbackReservedSlots(state, reservedSlots, now);
+      return {
+        allowed: false,
+        retryAfterSeconds: Math.max(1, Math.ceil((minActiveResetAt - now) / 1000)),
+        blockedScope: target.scope,
+        clientIp: ipResolution.ip,
+        trustedProxyResolved: ipResolution.trustedProxyResolved,
+        ipResolutionStatus: ipResolution.resolutionStatus,
+        capacitySaturated: true,
+        overflowExhausted: true,
+        settled: true,
+        acquiredNow: now,
+        acquiredWithCustomNow,
+        windowMs: cfg.windowMs,
+        slots: [],
+      };
+    }
+
+    const createdOvf: RateLimitBucketEntry = {
+      identityKey: target.identityKey,
+      scope: target.scope,
+      epochId: state.nextEpochId++,
+      failures: 0,
+      pending: 1,
+      resetAt: now + cfg.windowMs,
+    };
+    table[targetSlotIndex] = createdOvf;
+    reservedSlots.push({
+      scope: target.scope,
+      identityKey: target.identityKey,
+      mapKind: 'overflow',
+      overflowSlotIndex: targetSlotIndex,
+      epochId: createdOvf.epochId,
+      limit: target.limit,
+      resetOnSuccess: target.resetOnSuccess,
+    });
   }
 
   return {
@@ -518,25 +752,29 @@ export function acquireLoginRateLimitReservation(
     trustedProxyResolved: ipResolution.trustedProxyResolved,
     ipResolutionStatus: ipResolution.resolutionStatus,
     capacitySaturated,
+    overflowExhausted: false,
     settled: false,
+    acquiredNow: now,
+    acquiredWithCustomNow,
     windowMs: cfg.windowMs,
     slots: reservedSlots,
   };
 }
 
 /**
- * Converte uma reserva ativa em falha contabilizada (após credenciais inválidas).
- * Idempotente: chamadas repetidas na mesma reserva não duplicam falhas.
+ * Converte uma reserva ativa em falha contabilizada na sua geração (`epochId`).
+ * Reservas de gerações expiradas não contaminam novas gerações e são limpas ao zerar `pending`.
  */
 export function commitLoginFailure(
   reservation: LoginRateLimitReservation,
-  now = Date.now()
+  now?: number
 ): LoginFailureCommitResult {
   if (reservation.settled) {
     return { blocked: false, newlyBlocked: false, retryAfterSeconds: 0, pairOrAccountCount: 0, ipCount: 0 };
   }
   reservation.settled = true;
 
+  const settleNow = now ?? (reservation.acquiredWithCustomNow ? reservation.acquiredNow : Date.now());
   const state = getRateLimitState();
   let blocked = false;
   let newlyBlocked = false;
@@ -545,34 +783,29 @@ export function commitLoginFailure(
   let ipCount = 0;
 
   for (const slot of reservation.slots) {
-    const map = slot.mapKind === 'primary' ? state.primary : state.overflow;
-    const entry = map.get(slot.storeKey);
-    if (!entry || entry.epochId !== slot.epochId) {
-      continue;
-    }
+    const located = locateEntryForSettlement(state, slot);
+    if (!located) continue;
 
+    const { source, entry } = located;
     entry.pending = Math.max(0, entry.pending - 1);
+    const prevFailures = entry.failures;
+    entry.failures += 1;
 
-    if (now >= entry.resetAt && entry.pending === 0) {
-      entry.failures = 1;
-      entry.resetAt = now + reservation.windowMs;
-    } else {
-      const prevFailures = entry.failures;
-      entry.failures += 1;
-      if (entry.failures >= slot.limit && prevFailures < slot.limit) {
-        newlyBlocked = true;
+    const isStillActiveGeneration = source !== 'retiring' && settleNow < entry.resetAt;
+    if (isStillActiveGeneration) {
+      if (entry.failures >= slot.limit) {
+        blocked = true;
+        retryAfterMs = Math.max(retryAfterMs, entry.resetAt - settleNow);
+        if (prevFailures < slot.limit) {
+          newlyBlocked = true;
+        }
       }
-    }
-
-    if (entry.failures >= slot.limit) {
-      blocked = true;
-      retryAfterMs = Math.max(retryAfterMs, entry.resetAt - now);
-      if (slot.limit === 1) {
-        newlyBlocked = true;
+      if (source === 'primary') {
+        refreshPrimaryLruOrder(state, slot.identityKey, entry);
       }
+    } else if (entry.pending === 0) {
+      removeEntryFromStorage(state, source, slot);
     }
-
-    refreshLruOrder(map, slot.storeKey, entry);
 
     if (slot.scope === 'IP') {
       ipCount = entry.failures;
@@ -591,53 +824,61 @@ export function commitLoginFailure(
 }
 
 /**
- * Conclui uma reserva após login bem-sucedido: libera `pending` e zera as falhas
- * do bucket específico da conta/par sem remover reservas concorrentes ainda em voo.
+ * Conclui uma reserva após autenticação válida: zera falhas apenas da mesma
+ * identidade e da mesma geração (`epochId`), nunca afetando outra identidade
+ * colidente nem nova geração ativa.
  */
-export function commitLoginSuccess(reservation: LoginRateLimitReservation): void {
+export function commitLoginSuccess(reservation: LoginRateLimitReservation, now?: number): void {
   if (reservation.settled) return;
   reservation.settled = true;
 
+  const settleNow = now ?? (reservation.acquiredWithCustomNow ? reservation.acquiredNow : Date.now());
   const state = getRateLimitState();
-  for (const slot of reservation.slots) {
-    const map = slot.mapKind === 'primary' ? state.primary : state.overflow;
-    const entry = map.get(slot.storeKey);
-    if (!entry || entry.epochId !== slot.epochId) continue;
 
+  for (const slot of reservation.slots) {
+    const located = locateEntryForSettlement(state, slot);
+    if (!located) continue;
+
+    const { source, entry } = located;
     entry.pending = Math.max(0, entry.pending - 1);
     if (slot.resetOnSuccess) {
       entry.failures = 0;
     }
 
-    if (entry.failures === 0 && entry.pending === 0) {
-      map.delete(slot.storeKey);
+    const expiredOrRetired = source === 'retiring' || settleNow >= entry.resetAt;
+    if (entry.pending === 0 && (entry.failures === 0 || expiredOrRetired)) {
+      removeEntryFromStorage(state, source, slot);
     }
   }
 }
 
 /**
  * Libera reservas pendentes em caso de erro inesperado (exceção de banco/bcrypt),
- * preservando idempotência caso a reserva já tenha sido encerrada como sucesso ou falha.
+ * de forma estritamente idempotente e isolada por geração (`epochId`).
  */
-export function releaseLoginRateLimitReservation(reservation: LoginRateLimitReservation): void {
+export function releaseLoginRateLimitReservation(reservation: LoginRateLimitReservation, now?: number): void {
   if (reservation.settled) return;
   reservation.settled = true;
 
+  const settleNow = now ?? (reservation.acquiredWithCustomNow ? reservation.acquiredNow : Date.now());
   const state = getRateLimitState();
-  for (const slot of reservation.slots) {
-    const map = slot.mapKind === 'primary' ? state.primary : state.overflow;
-    const entry = map.get(slot.storeKey);
-    if (!entry || entry.epochId !== slot.epochId) continue;
 
+  for (const slot of reservation.slots) {
+    const located = locateEntryForSettlement(state, slot);
+    if (!located) continue;
+
+    const { source, entry } = located;
     entry.pending = Math.max(0, entry.pending - 1);
-    if (entry.failures === 0 && entry.pending === 0) {
-      map.delete(slot.storeKey);
+
+    const expiredOrRetired = source === 'retiring' || settleNow >= entry.resetAt;
+    if (entry.pending === 0 && (entry.failures === 0 || expiredOrRetired)) {
+      removeEntryFromStorage(state, source, slot);
     }
   }
 }
 
 /**
- * Retorna contadores diagnósticos da store em memória (sem expor chaves/contas sensíveis).
+ * Retorna contadores diagnósticos da store em memória (sem expor identidades sensíveis).
  */
 export function getLoginRateLimitDiagnostics(options?: LoginRateLimitOptions): LoginRateLimitDiagnostics {
   const now = options?.now ?? Date.now();
@@ -647,26 +888,95 @@ export function getLoginRateLimitDiagnostics(options?: LoginRateLimitOptions): L
   let activeBlockedCount = 0;
   let totalPendingCount = 0;
 
-  for (const [k, entry] of state.primary.entries()) {
+  for (const entry of state.primary.values()) {
     totalPendingCount += entry.pending;
-    if (now < entry.resetAt && isEntryBlocked(k, entry, cfg)) {
+    if (now < entry.resetAt && isEntryBlocked(entry, cfg)) {
       activeBlockedCount += 1;
     }
   }
 
-  for (const [k, entry] of state.overflow.entries()) {
-    totalPendingCount += entry.pending;
-    if (now < entry.resetAt && isEntryBlocked(k, entry, cfg)) {
-      activeBlockedCount += 1;
+  const overflowByScope: Record<LoginRateLimitScope, number> = { PAIR: 0, IP: 0, ACCOUNT: 0 };
+  let overflowSize = 0;
+
+  for (const scope of ['PAIR', 'IP', 'ACCOUNT'] as const) {
+    for (const slot of state.overflow[scope]) {
+      if (!slot) continue;
+      overflowByScope[scope] += 1;
+      overflowSize += 1;
+      totalPendingCount += slot.pending;
+      if (now < slot.resetAt && isEntryBlocked(slot, cfg)) {
+        activeBlockedCount += 1;
+      }
     }
+  }
+
+  for (const entry of state.retiring.values()) {
+    totalPendingCount += entry.pending;
   }
 
   return {
     primarySize: state.primary.size,
-    overflowSize: state.overflow.size,
+    overflowSize,
+    overflowByScope,
+    retiringSize: state.retiring.size,
     activeBlockedCount,
     totalPendingCount,
   };
+}
+
+/**
+ * Inspeciona estado ativo e gerações aposentadas de uma identidade específica para auditoria em testes.
+ */
+export function getLoginRateLimitEntryState(
+  scope: LoginRateLimitScope,
+  identityKey: string,
+  options?: LoginRateLimitOptions
+): LoginRateLimitEntryState {
+  const cfg = getEffectiveConfig(options);
+  const state = getRateLimitState();
+
+  let active: LoginRateLimitEntryState['active'] = null;
+  const pEntry = state.primary.get(identityKey);
+  if (pEntry) {
+    active = {
+      location: 'primary',
+      overflowSlotIndex: -1,
+      epochId: pEntry.epochId,
+      failures: pEntry.failures,
+      pending: pEntry.pending,
+      resetAt: pEntry.resetAt,
+    };
+  } else {
+    const table = state.overflow[scope];
+    for (let i = 0; i < cfg.maxOverflowSlotsPerScope; i++) {
+      const slot = table[i];
+      if (slot && slot.identityKey === identityKey) {
+        active = {
+          location: 'overflow',
+          overflowSlotIndex: i,
+          epochId: slot.epochId,
+          failures: slot.failures,
+          pending: slot.pending,
+          resetAt: slot.resetAt,
+        };
+        break;
+      }
+    }
+  }
+
+  const retiring: LoginRateLimitEntryState['retiring'] = [];
+  for (const entry of state.retiring.values()) {
+    if (entry.scope === scope && entry.identityKey === identityKey) {
+      retiring.push({
+        epochId: entry.epochId,
+        failures: entry.failures,
+        pending: entry.pending,
+        resetAt: entry.resetAt,
+      });
+    }
+  }
+
+  return { active, retiring };
 }
 
 /**
@@ -675,6 +985,7 @@ export function getLoginRateLimitDiagnostics(options?: LoginRateLimitOptions): L
 export function resetLoginRateLimitStore(): void {
   const state = getRateLimitState();
   state.primary.clear();
-  state.overflow.clear();
+  state.overflow = createEmptyOverflowTables();
+  state.retiring.clear();
   state.nextEpochId = 1;
 }
