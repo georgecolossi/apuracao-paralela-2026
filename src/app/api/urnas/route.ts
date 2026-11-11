@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db';
 import { validateTerritoryCode, getTerritoryVariants } from '@/lib/presentation/territoryValidator';
 import { validateAndDecodeCursor, encodeUrnaCursor, CursorContext } from '@/lib/presentation/urnaCursor';
 import { UrnaFeedItemDTO, UrnaFeedResponse, resolveCryptographicStatus } from '@/lib/presentation/pressDto';
+import { isPublicElectionStatusAllowed } from '@/lib/validation/electionContext';
 import { Prisma } from '@prisma/client';
 
 export const dynamic = 'force-dynamic';
@@ -54,6 +55,12 @@ export async function GET(req: Request) {
           error: 'ELEICAO_NAO_ENCONTRADA',
           message: `Eleição '${electionParam}' não encontrada no sistema.`
         }, { status: 404, headers: { 'Cache-Control': CACHE_HEADER } });
+      }
+      if (!isPublicElectionStatusAllowed(found.status)) {
+        return NextResponse.json({
+          error: 'CONTEXTO_NAO_AUTORIZADO',
+          message: 'A eleição selecionada não está disponível para consulta pública.'
+        }, { status: 403, headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' } });
       }
       election = found;
     } else {

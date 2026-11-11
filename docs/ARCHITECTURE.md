@@ -77,14 +77,14 @@ flowchart TB
 
 ## 4. Núcleo de Segurança e Isolamento
 
-1. **Autenticação Fail-Closed (`src/lib/auth.ts`):** Exige `JWT_SECRET` configurado no ambiente. Tokens carregam `userId`, `role` e `sessionVersion`, validados no banco a cada requisição administrativa.
+1. **Autenticação Fail-Closed e Rate Limiting (`src/lib/auth.ts`, `src/lib/security/loginRateLimiter.ts`):** Exige `JWT_SECRET` configurado no ambiente. Tokens carregam `userId`, `role` e `sessionVersion`, validados no banco a cada requisição administrativa. `POST /api/login` aplica equalização de tempo via `bcrypt` para contas inexistentes/inativas (anti-enumeração) e rate limiting em memória com buckets independentes por par `(IP, conta)` (5 tentativas/15 min por padrão, evitando DoS direcionado contra terceiros em outros IPs) e por `IP` (20 tentativas/15 min), respeitando `X-Forwarded-For` da direita para a esquerda somente quando `LOGIN_TRUSTED_PROXY_HOPS >= 1`. O armazenamento padrão em memória é volátil por instância Node.js (reinícios zeram os contadores e implantações com múltiplas réplicas horizontais exigiriam store compartilhado como Redis).
 2. **Controle de Acesso Baseado em Papéis (RBAC):**
    - `ADMIN`: Setup Wizard, gestão de usuários/sessões, ativação de turnos, cobertura, reset operacional (quando habilitado), scanner e conferência.
    - `OPERATOR`: scanner de QRBU (`/admin/scanner`) e conferência de boletins (`/admin/conferencia`, `/admin/conferir/[id]`).
    - `VIEWER`: leitura restrita conforme regras das rotas administrativas.
 3. **Proteção CSRF (`src/lib/security/csrf.ts`):** Mutações autenticadas exigem validação de `Origin`/`Referer`/`Sec-Fetch-Site: same-origin` ou token HMAC em `x-csrf-token` obtido via `GET /api/csrf-token`. Em produção, protocolos não-HTTPS e hosts fora da lista confiável (`APP_URL`, `NEXT_PUBLIC_APP_URL`, `RAILWAY_PUBLIC_DOMAIN`) são bloqueados.
 4. **Blindagem de Ingestão (`POST /api/scan`):** Rejeita payloads não oficiais (`FASE !== 'O'`), a menos que `isSimulation: true` ou `ALLOW_SIMULATED_FASE=true` esteja explicitamente definido; verifica integridade SHA-512, cobertura territorial e invariantes de votação (`BALLOT_INVARIANT_*`); garante atomicidade contra duplicidade via erro `P2002` no `deterministicId`.
-5. **Segregação Estrita de Simulação e Contexto:** Relatórios com `isSimulation = true` nunca contaminam `/api/totals` nem `/api/urnas` oficiais; eleições `DRAFT` e `ARCHIVED` retornam HTTP `403` nos endpoints públicos (`/api/totals`, `/api/urnas`, `/api/tse-results`).
+5. **Segregação Estrita de Simulação e Contexto:** Relatórios com `isSimulation = true` nunca contaminam `/api/totals` nem `/api/urnas` oficiais; eleições `DRAFT` e `ARCHIVED` retornam HTTP `403` (`CONTEXTO_NAO_AUTORIZADO`) em todos os endpoints públicos (`/api/totals`, `/api/urnas`, `/api/urnas/[id]`, `/api/tse-results`), permanecendo acessíveis (`200`) apenas contextos `ACTIVE` e `FINISHED`.
 6. **Anti-SSRF no Adaptador TSE (`src/lib/validation/electionContext.ts` e `src/lib/tse/tseResultsService.ts`):** Bloqueia sobrescrita de parâmetros via query string (`PARAMETRO_NAO_PERMITIDO`), impõe HTTPS em produção, filtra intervalos IPv4/IPv6 reservados/privados/loopback/CGNAT/link-local em formatos alternativos, resolve DNS com validação completa e fixa IPs no socket (`executePinnedHttpGetJson`) com bloqueio de redirecionamentos `3xx`.
 
 ---

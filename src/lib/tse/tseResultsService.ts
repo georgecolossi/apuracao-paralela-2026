@@ -2,6 +2,7 @@ import dns from 'node:dns';
 import { prisma } from '@/lib/db';
 import {
   VALID_BRAZILIAN_UFS,
+  isPublicElectionStatusAllowed,
   TseDnsLookupFn,
   TseResolvedUrlValidationResult,
   validateTseSourceUrl,
@@ -740,7 +741,7 @@ export async function getDynamicTseResults(
         };
       }
 
-      if (found.status !== 'ACTIVE' && found.status !== 'FINISHED') {
+      if (!isPublicElectionStatusAllowed(found.status)) {
         return {
           status: 403,
           headers: NO_STORE_HEADERS,

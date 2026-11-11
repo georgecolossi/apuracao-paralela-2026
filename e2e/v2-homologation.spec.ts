@@ -121,8 +121,8 @@ test.describe('PR 9 — Homologação E2E Completa v2.0.0', () => {
       }
     });
 
-    // Eleição em rascunho privado (DRAFT) para validar bloqueio público
-    await prisma.election.create({
+    // Eleição em rascunho privado (DRAFT) com BU associado para validar bloqueio público integral
+    const draftElection = await prisma.election.create({
       data: {
         name: 'Rascunho Privado 2028',
         slug: 'rascunho-privado-2028',
@@ -131,6 +131,51 @@ test.describe('PR 9 — Homologação E2E Completa v2.0.0', () => {
         type: 'MUNICIPAL',
         status: 'DRAFT',
         rounds: { create: [{ roundNumber: 1, plei: '9999', status: 'PLANNED' }] }
+      },
+      include: { rounds: true }
+    });
+    await prisma.ballotReport.create({
+      data: {
+        id: 'e2e-draft-report-id',
+        deterministicId: 'E2E-DET-DRAFT-BLOCK',
+        electionId: draftElection.id,
+        roundId: draftElection.rounds[0].id,
+        stateCode: 'AC',
+        cityCode: '01392',
+        zoneCode: '0009',
+        sectionCode: '0091',
+        urnCode: '9100001',
+        status: 'PROCESSADO',
+        confirmedAt: new Date('2028-10-01T18:00:00.000Z')
+      }
+    });
+
+    // Eleição arquivada (ARCHIVED) com BU associado para validar bloqueio público integral (403)
+    const archivedElection = await prisma.election.create({
+      data: {
+        name: 'Arquivo Legado 2020',
+        slug: 'arquivada-legado-2020',
+        plei: '404',
+        year: 2020,
+        type: 'MUNICIPAL',
+        status: 'ARCHIVED',
+        rounds: { create: [{ roundNumber: 1, plei: '404', status: 'FINISHED' }] }
+      },
+      include: { rounds: true }
+    });
+    await prisma.ballotReport.create({
+      data: {
+        id: 'e2e-archived-report-id',
+        deterministicId: 'E2E-DET-ARCHIVED-BLOCK',
+        electionId: archivedElection.id,
+        roundId: archivedElection.rounds[0].id,
+        stateCode: 'AC',
+        cityCode: '01392',
+        zoneCode: '0009',
+        sectionCode: '0092',
+        urnCode: '9200001',
+        status: 'PROCESSADO',
+        confirmedAt: new Date('2020-11-15T18:00:00.000Z')
       }
     });
 
@@ -323,10 +368,35 @@ test.describe('PR 9 — Homologação E2E Completa v2.0.0', () => {
     await page.goto(`/admin/wizard?electionId=${activeElectionId}`);
     await expect(page.locator('input').first()).toHaveValue('Eleição Presidencial E2E 2026');
 
-    // 4. Isolamento entre contextos eleitorais (DRAFT bloqueado, FINISHED histórico isolado)
-    expect((await request.get('/api/tse-results?election=rascunho-privado-2028&round=1')).status()).toBe(403);
-    const histTotals = await (await request.get('/api/totals?election=historica-salvador-2022&round=1')).json();
+    // 4. Isolamento entre contextos eleitorais (DRAFT/ARCHIVED -> 403; FINISHED histórico e ACTIVE -> 200)
+    for (const blockedSlug of ['rascunho-privado-2028', 'arquivada-legado-2020']) {
+      for (const blockedUrl of [
+        `/api/totals?election=${blockedSlug}&round=1`,
+        `/api/urnas?election=${blockedSlug}&round=1`,
+        `/api/tse-results?election=${blockedSlug}&round=1`
+      ]) {
+        const blockedRes = await request.get(blockedUrl);
+        expect(blockedRes.status()).toBe(403);
+        expect((await blockedRes.json()).error).toBe('CONTEXTO_NAO_AUTORIZADO');
+      }
+    }
+    for (const blockedReportUrl of ['/api/urnas/e2e-draft-report-id', '/api/urnas/e2e-archived-report-id']) {
+      const blockedReportRes = await request.get(blockedReportUrl);
+      expect(blockedReportRes.status()).toBe(403);
+      expect((await blockedReportRes.json()).error).toBe('CONTEXTO_NAO_AUTORIZADO');
+    }
+
+    const activeTotalsRes = await request.get(`/api/totals?election=${activeElectionId}&round=2`);
+    expect(activeTotalsRes.status()).toBe(200);
+    const activeUrnasRes = await request.get(`/api/urnas?election=${activeElectionId}&round=2`);
+    expect(activeUrnasRes.status()).toBe(200);
+
+    const histTotalsRes = await request.get('/api/totals?election=historica-salvador-2022&round=1');
+    expect(histTotalsRes.status()).toBe(200);
+    const histTotals = await histTotalsRes.json();
     expect(histTotals.totals).toHaveLength(0);
+    expect((await request.get('/api/urnas?election=historica-salvador-2022&round=1')).status()).toBe(200);
+    expect((await request.get('/api/tse-results?election=historica-salvador-2022&round=1')).status()).toBe(200);
 
     // 5. Ingestão de QRBU via UI de Scanner (/admin/scanner) e rejeições
     await page.goto('/admin/scanner');
@@ -566,5 +636,50 @@ test.describe('PR 9 — Homologação E2E Completa v2.0.0', () => {
     const urnasRes = await page.request.get('/api/urnas?round=1');
     expect(urnasRes.status()).toBe(200);
     expect((await urnasRes.json()).items).toHaveLength(0);
+  });
+
+  test('Segurança do endpoint POST /api/login: payload inválido (400), rate limit por par (429 + UI) e isolamento entre contas', async ({
+    page,
+    request
+  }) => {
+    await page.goto('/login');
+
+    // 1. JSON malformado enviado literalmente via browser fetch retorna 400 controlado (INVALID_PAYLOAD)
+    const malformedPayloadRes = await page.evaluate(async () => {
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{invalid-json'
+      });
+      return { status: res.status, body: await res.json() };
+    });
+    expect(malformedPayloadRes.status).toBe(400);
+    expect(malformedPayloadRes.body.code).toBe('INVALID_PAYLOAD');
+
+    // 2. 5 falhas direcionadas para conta isolada retornam 401 padronizado
+    const probeAccount = `rate-limit-probe-${Date.now()}@apuracao.local`;
+    for (let i = 0; i < 5; i++) {
+      const failRes = await request.post('/api/login', {
+        data: { username: probeAccount, password: `wrong-${i}` }
+      });
+      expect(failRes.status()).toBe(401);
+    }
+
+    // 3. 6a tentativa via UI /login é bloqueada com HTTP 429 + Retry-After e feedback claro na interface
+    await page.fill('input[name="username"]', probeAccount);
+    await page.fill('input[type="password"]', 'qualquer-senha');
+    const [rateLimitedResponse] = await Promise.all([
+      page.waitForResponse(res => res.url().includes('/api/login') && res.request().method() === 'POST'),
+      page.click('button[type="submit"]')
+    ]);
+    expect(rateLimitedResponse.status()).toBe(429);
+    expect(Number(rateLimitedResponse.headers()['retry-after'])).toBeGreaterThan(0);
+    await expect(page.locator('body')).toContainText(/Muitas tentativas de login/i);
+
+    // 4. Outra conta na mesma rede/IP não é bloqueada pelo par bloqueado
+    await page.fill('input[name="username"]', 'admin@apuracao.local');
+    await page.fill('input[type="password"]', 'admin123');
+    await page.click('button[type="submit"]');
+    await expect(page).toHaveURL('/admin/scanner');
   });
 });

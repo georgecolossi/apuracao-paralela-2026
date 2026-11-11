@@ -25,6 +25,14 @@ export default function LoginPage() {
 
       if (res.ok) {
         router.push('/admin/scanner');
+      } else if (res.status === 429) {
+        const data = await res.json().catch(() => null);
+        setErrorMsg(
+          typeof data?.error === 'string' && data.error.trim().length > 0
+            ? data.error
+            : 'Muitas tentativas de login. Aguarde antes de tentar novamente.'
+        );
+        setLoading(false);
       } else {
         setErrorMsg('Credenciais inválidas. Verifique seu usuário e senha.');
         setLoading(false);

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
+import { isPublicElectionStatusAllowed } from '@/lib/validation/electionContext';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -36,6 +37,15 @@ export async function GET(req: Request) {
       if (!found) {
         return NextResponse.json({ error: 'Eleição informada não encontrada.' }, {
           status: 404,
+          headers: { 'Cache-Control': CACHE_CONTROL_HEADER }
+        });
+      }
+      if (!isPublicElectionStatusAllowed(found.status)) {
+        return NextResponse.json({
+          error: 'CONTEXTO_NAO_AUTORIZADO',
+          message: 'A eleição selecionada não está disponível para consulta pública.'
+        }, {
+          status: 403,
           headers: { 'Cache-Control': CACHE_CONTROL_HEADER }
         });
       }

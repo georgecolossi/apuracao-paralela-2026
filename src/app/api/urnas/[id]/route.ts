@@ -9,6 +9,7 @@ import {
   resolveCryptographicStatus
 } from '@/lib/presentation/pressDto';
 import { getTerritoryVariants } from '@/lib/presentation/territoryValidator';
+import { isPublicElectionStatusAllowed } from '@/lib/validation/electionContext';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -38,7 +39,7 @@ export async function GET(
       },
       include: {
         election: {
-          select: { id: true, name: true, year: true }
+          select: { id: true, name: true, year: true, status: true }
         },
         round: {
           select: { id: true, roundNumber: true }
@@ -60,6 +61,13 @@ export async function GET(
         error: 'BOLETIM_NAO_DISPONIVEL',
         message: 'Boletim de Urna não encontrado ou não disponível para consulta pública.'
       }, { status: 404, headers: { 'Cache-Control': CACHE_HEADER } });
+    }
+
+    if (!isPublicElectionStatusAllowed(report.election?.status)) {
+      return NextResponse.json({
+        error: 'CONTEXTO_NAO_AUTORIZADO',
+        message: 'O boletim solicitado pertence a uma eleição indisponível para consulta pública.'
+      }, { status: 403, headers: { 'Cache-Control': 'no-store, no-cache, must-revalidate' } });
     }
 
     // Resolução Territorial Estrita por Tríade (cityCode + zoneCode + sectionCode)

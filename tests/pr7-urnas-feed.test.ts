@@ -1287,7 +1287,7 @@ describe('PR 7 — Feed de Últimas Urnas e Paginação por Keyset Cursor (PAG-0
         name: 'Eleição Sem Turnos',
         year: 2018,
         type: 'MUNICIPAL',
-        status: 'ARCHIVED',
+        status: 'FINISHED',
         slug: 'eleicao-sem-turnos-2018'
       }
     });
@@ -1368,6 +1368,129 @@ describe('PR 7 — Feed de Últimas Urnas e Paginação por Keyset Cursor (PAG-0
       expect(detailJson.radioScript).toContain('Hash SHA-512 Verificado com Sucesso');
     } finally {
       await prisma.ballotReport.delete({ where: { id: repFallback.id } });
+    }
+  });
+
+  // PAG-41: Segregação pública rigorosa em /api/urnas e /api/urnas/[id] (DRAFT e ARCHIVED -> 403; ACTIVE e FINISHED -> 200)
+  it('PAG-41: Bloqueia eleições DRAFT e ARCHIVED em /api/urnas e /api/urnas/[id] com HTTP 403 CONTEXTO_NAO_AUTORIZADO', async () => {
+    const draftEl = await prisma.election.create({
+      data: {
+        name: 'Draft Urnas Test',
+        year: 2028,
+        type: 'MUNICIPAL',
+        status: 'DRAFT',
+        slug: 'draft-urnas-test',
+        rounds: { create: { roundNumber: 1, status: 'PLANNED' } }
+      },
+      include: { rounds: true }
+    });
+
+    const archivedEl = await prisma.election.create({
+      data: {
+        name: 'Archived Urnas Test',
+        year: 2020,
+        type: 'MUNICIPAL',
+        status: 'ARCHIVED',
+        slug: 'archived-urnas-test',
+        rounds: { create: { roundNumber: 1, status: 'FINISHED' } }
+      },
+      include: { rounds: true }
+    });
+
+    const finishedEl = await prisma.election.create({
+      data: {
+        name: 'Finished Urnas Test',
+        year: 2022,
+        type: 'MUNICIPAL',
+        status: 'FINISHED',
+        slug: 'finished-urnas-test',
+        rounds: { create: { roundNumber: 1, status: 'FINISHED' } }
+      },
+      include: { rounds: true }
+    });
+
+    const draftRep = await prisma.ballotReport.create({
+      data: {
+        deterministicId: 'det-pag41-draft',
+        electionId: draftEl.id,
+        roundId: draftEl.rounds[0].id,
+        stateCode: 'SC',
+        cityCode: '80837',
+        zoneCode: '1',
+        sectionCode: '101',
+        urnCode: '8101',
+        status: 'PROCESSADO',
+        confirmedAt: new Date('2028-10-01T18:00:00.000Z')
+      }
+    });
+
+    const archivedRep = await prisma.ballotReport.create({
+      data: {
+        deterministicId: 'det-pag41-archived',
+        electionId: archivedEl.id,
+        roundId: archivedEl.rounds[0].id,
+        stateCode: 'SC',
+        cityCode: '80837',
+        zoneCode: '1',
+        sectionCode: '102',
+        urnCode: '8102',
+        status: 'PROCESSADO',
+        confirmedAt: new Date('2020-11-15T18:00:00.000Z')
+      }
+    });
+
+    const finishedRep = await prisma.ballotReport.create({
+      data: {
+        deterministicId: 'det-pag41-finished',
+        electionId: finishedEl.id,
+        roundId: finishedEl.rounds[0].id,
+        stateCode: 'SC',
+        cityCode: '80837',
+        zoneCode: '1',
+        sectionCode: '103',
+        urnCode: '8103',
+        status: 'PROCESSADO',
+        confirmedAt: new Date('2022-10-02T18:00:00.000Z')
+      }
+    });
+
+    try {
+      for (const blocked of [
+        { slug: draftEl.slug, reportId: draftRep.id },
+        { slug: archivedEl.slug, reportId: archivedRep.id }
+      ]) {
+        const feedRes = await urnasFeedRoute(new Request(`http://localhost:3000/api/urnas?election=${blocked.slug}&round=1`));
+        expect(feedRes.status).toBe(403);
+        expect((await feedRes.json()).error).toBe('CONTEXTO_NAO_AUTORIZADO');
+
+        const detailRes = await urnaDetailRoute(
+          new Request(`http://localhost:3000/api/urnas/${blocked.reportId}`),
+          { params: Promise.resolve({ id: blocked.reportId }) }
+        );
+        expect(detailRes.status).toBe(403);
+        expect((await detailRes.json()).error).toBe('CONTEXTO_NAO_AUTORIZADO');
+      }
+
+      const finFeedRes = await urnasFeedRoute(new Request(`http://localhost:3000/api/urnas?election=${finishedEl.slug}&round=1`));
+      expect(finFeedRes.status).toBe(200);
+      expect((await finFeedRes.json()).items).toHaveLength(1);
+
+      const finDetailRes = await urnaDetailRoute(
+        new Request(`http://localhost:3000/api/urnas/${finishedRep.id}`),
+        { params: Promise.resolve({ id: finishedRep.id }) }
+      );
+      expect(finDetailRes.status).toBe(200);
+      const finDetailJson = await finDetailRes.json();
+      expect(finDetailJson.context.election.id).toBe(finishedEl.id);
+      expect(finDetailJson.context.election.status).toBeUndefined();
+
+      const activeFeedRes = await urnasFeedRoute(new Request(`http://localhost:3000/api/urnas?election=${electionA.slug}&round=1`));
+      expect(activeFeedRes.status).toBe(200);
+    } finally {
+      const ids = [draftEl.id, archivedEl.id, finishedEl.id];
+      await prisma.ballotReport.deleteMany({ where: { electionId: { in: ids } } });
+      await prisma.electionRound.deleteMany({ where: { electionId: { in: ids } } });
+      await prisma.election.deleteMany({ where: { id: { in: ids } } });
     }
   });
 });

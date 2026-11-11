@@ -2280,5 +2280,80 @@ describe('PR 6 — Painel Público Universal e Projeções Dinâmicas (Auditoria
       // Homônimos: JAMAIS cria alias por nome!
       expect(json.projections['Conselheiro']).toBeUndefined();
     });
+
+    it('17.8 Bloqueia eleições DRAFT e ARCHIVED com HTTP 403 CONTEXTO_NAO_AUTORIZADO em /api/totals e libera ACTIVE e FINISHED com 200', async () => {
+      const draftEl = await prisma.election.create({
+        data: {
+          name: 'Draft Public Totals Test',
+          slug: 'draft-public-totals-test',
+          year: 2028,
+          type: 'MUNICIPAL',
+          status: 'DRAFT',
+          rounds: { create: { roundNumber: 1, status: 'PLANNED', coverageStatus: 'REGISTERED' } }
+        }
+      });
+
+      const archivedEl = await prisma.election.create({
+        data: {
+          name: 'Archived Public Totals Test',
+          slug: 'archived-public-totals-test',
+          year: 2020,
+          type: 'MUNICIPAL',
+          status: 'ARCHIVED',
+          rounds: { create: { roundNumber: 1, status: 'FINISHED', coverageStatus: 'REGISTERED' } }
+        }
+      });
+
+      const finishedEl = await prisma.election.create({
+        data: {
+          name: 'Finished Public Totals Test',
+          slug: 'finished-public-totals-test',
+          year: 2022,
+          type: 'MUNICIPAL',
+          status: 'FINISHED',
+          rounds: { create: { roundNumber: 1, status: 'FINISHED', coverageStatus: 'REGISTERED' } }
+        }
+      });
+
+      const existingActive = await prisma.election.findFirst({ where: { status: 'ACTIVE' } });
+      const createdActive = existingActive
+        ? null
+        : await prisma.election.create({
+            data: {
+              name: 'Active Public Totals Test',
+              slug: 'active-public-totals-test',
+              year: 2026,
+              type: 'MUNICIPAL',
+              status: 'ACTIVE',
+              rounds: { create: { roundNumber: 1, status: 'ACTIVE', coverageStatus: 'REGISTERED' } }
+            }
+          });
+      const activeTarget = existingActive ?? createdActive!;
+
+      try {
+        for (const el of [draftEl, archivedEl]) {
+          const resBySlug = await totalsRoute(new Request(`http://localhost/api/totals?election=${el.slug}&round=1`));
+          expect(resBySlug.status).toBe(403);
+          expect((await resBySlug.json()).error).toBe('CONTEXTO_NAO_AUTORIZADO');
+
+          const resById = await totalsRoute(new Request(`http://localhost/api/totals?election=${el.id}&round=1`));
+          expect(resById.status).toBe(403);
+        }
+
+        const resFinished = await totalsRoute(
+          new Request(`http://localhost/api/totals?election=${finishedEl.slug}&round=1`)
+        );
+        expect(resFinished.status).toBe(200);
+
+        const resActive = await totalsRoute(
+          new Request(`http://localhost/api/totals?election=${activeTarget.slug ?? activeTarget.id}&round=1`)
+        );
+        expect(resActive.status).toBe(200);
+      } finally {
+        const idsToDelete = [draftEl.id, archivedEl.id, finishedEl.id, ...(createdActive ? [createdActive.id] : [])];
+        await prisma.electionRound.deleteMany({ where: { electionId: { in: idsToDelete } } });
+        await prisma.election.deleteMany({ where: { id: { in: idsToDelete } } });
+      }
+    });
   });
 });

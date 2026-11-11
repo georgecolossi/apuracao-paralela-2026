@@ -93,6 +93,10 @@ Este manual orienta a configuração, operação, homologação e manutenção e
 | `ALLOW_SIMULATED_FASE` | `false` | Garante rejeição (`SIMULATED_QRBU_REJECTED`) de qualquer BU que não seja `FASE:O`. |
 | `ALLOW_EXPERIMENTAL_VRQR` | `false` | Bloqueia versões experimentais não homologadas do QRBU. |
 | `TSE_FETCH_TIMEOUT_MS` | `5000` | Timeout externo para consultas EA20 ao TSE. |
+| `LOGIN_TRUSTED_PROXY_HOPS` | `1` (em proxy único) ou `0` | Número de proxies reversos confiáveis à frente do app para leitura de `X-Forwarded-For` da direita para a esquerda em `POST /api/login`. |
+| `LOGIN_RATE_LIMIT_WINDOW_MS` | `900000` (opcional) | Janela em ms do rate limiting de login (padrão: 15 minutos). |
+| `LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_PAIR` | `5` (opcional) | Máximo de falhas consecutivas por par `(IP, conta)` na janela (evita DoS de terceiros contra a conta). |
+| `LOGIN_RATE_LIMIT_MAX_ATTEMPTS_PER_IP` | `20` (opcional) | Máximo agregado de falhas por `IP` na janela. |
 
 #### Bootstrap Inicial Seguro em Produção
 1. Com o volume `/data` montado e `npx prisma db push` aplicado:
@@ -102,6 +106,7 @@ Este manual orienta a configuração, operação, homologação e manutenção e
      ```
    - **Opção B (HTTP temporário com token):** configure temporariamente `ADMIN_SETUP_TOKEN` (mínimo 16 caracteres CSPRNG), chame `POST /api/setup` enviando `{ name, email, password, setupToken }`, remova `ADMIN_SETUP_TOKEN` e fixe `DISABLE_HTTP_SETUP="true"`.
 2. Faça `npm run build` e `npm start` sempre atrás de proxy reverso com TLS/HTTPS (`X-Forwarded-Proto: https`). Em `NODE_ENV=production`, mutações HTTP sem HTTPS são rejeitadas pela proteção CSRF.
+3. **Proxy Reverso e Rate Limiting de Login:** Configure `LOGIN_TRUSTED_PROXY_HOPS="1"` atrás de um proxy reverso confiável (ex.: Railway ou Nginx) que anexe o IP real do cliente no cabeçalho `X-Forwarded-For`; o servidor extrai o IP da direita para a esquerda de modo a ignorar entradas forjadas pelo cliente na ponta esquerda. Se a aplicação não estiver atrás de proxy confiável, mantenha `LOGIN_TRUSTED_PROXY_HOPS="0"` para ignorar cabeçalhos de encaminhamento. Os contadores do limiter residem em memória limitada no processo Node.js (voláteis em reinicializações e não compartilhados entre múltiplas réplicas horizontais).
 
 ---
 

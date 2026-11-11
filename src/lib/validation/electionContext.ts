@@ -12,6 +12,18 @@ export const VALID_BRAZILIAN_UFS = new Set([
   'RJ', 'RN', 'RS', 'RO', 'RR', 'SC', 'SP', 'SE', 'TO'
 ]);
 
+export const PUBLIC_ELECTION_STATUSES = new Set(['ACTIVE', 'FINISHED']);
+
+/**
+ * Determina se o status da eleição permite exposição em endpoints públicos
+ * (`/api/totals`, `/api/urnas`, `/api/urnas/[id]`, `/api/tse-results`).
+ * Eleições em `DRAFT` ou `ARCHIVED` permanecem bloqueadas (`HTTP 403`).
+ */
+export function isPublicElectionStatusAllowed(status?: string | null): boolean {
+  if (!status || typeof status !== 'string') return false;
+  return PUBLIC_ELECTION_STATUSES.has(status.trim().toUpperCase());
+}
+
 export interface BallotIngestionContext {
   electionId: string;
   roundId: string;
