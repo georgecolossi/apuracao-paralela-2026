@@ -354,4 +354,73 @@ describe('POST /api/login', () => {
     );
     expect(recoverRes.status).toBe(200);
   });
+
+  it('P) should isolate in-flight pending reservations across window expiry inside POST /api/login', async () => {
+    vi.useFakeTimers();
+    try {
+      const t0 = new Date('2026-11-11T12:00:00.000Z');
+      vi.setSystemTime(t0);
+      process.env.LOGIN_TRUSTED_PROXY_HOPS = '1';
+
+      let releaseInFlight!: (val: boolean) => void;
+      const inFlightGate = new Promise<boolean>((resolve) => {
+        releaseInFlight = resolve;
+      });
+
+      vi.mocked(prisma.user.findUnique).mockResolvedValue({
+        id: 'u-exp',
+        email: 'expiry@local',
+        role: 'ADMIN',
+        passwordHash: 'hash',
+        isActive: true,
+        sessionVersion: 0,
+      } as NonNullable<Awaited<ReturnType<typeof prisma.user.findUnique>>>);
+
+      // 1. Dispara tentativa r1 que ficará pendente no bcrypt durante a virada da janela
+      vi.mocked(bcrypt.compare).mockImplementationOnce(() => inFlightGate as unknown as Promise<boolean>);
+      const req1Promise = POST(
+        mockReq({ username: 'expiry@local', password: 'wrong' }, { 'x-forwarded-for': '203.0.113.85' })
+      );
+      await vi.advanceTimersByTimeAsync(0);
+      expect(getLoginRateLimitDiagnostics().totalPendingCount).toBe(2); // PAIR + IP
+
+      // 2. Avança o relógio para exatamente o instante de expiração (15 min) enquanto r1 continua pendente
+      vi.setSystemTime(new Date(t0.getTime() + 15 * 60 * 1000));
+      vi.mocked(bcrypt.compare).mockImplementation(async () => false);
+      const req2Res = await POST(
+        mockReq({ username: 'expiry@local', password: 'wrong' }, { 'x-forwarded-for': '203.0.113.85' })
+      );
+      expect(req2Res.status).toBe(401);
+      expect(getLoginRateLimitDiagnostics().retiringSize).toBe(2); // r1 PAIR + IP aposentados com epoch preservado
+
+      // 3. Conclui r1 como falha após expiração -> retiring limpa completamente e nova geração permanece íntegra
+      releaseInFlight(false);
+      const req1Res = await req1Promise;
+      expect(req1Res.status).toBe(401);
+
+      const diag = getLoginRateLimitDiagnostics();
+      expect(diag.retiringSize).toBe(0);
+      expect(diag.totalPendingCount).toBe(0);
+
+      // 4. Mais 4 falhas bloqueiam exatamente na 5a (r2 contou como 1/5 na nova geração)
+      for (let i = 0; i < 4; i++) {
+        expect(
+          (
+            await POST(
+              mockReq({ username: 'expiry@local', password: 'wrong' }, { 'x-forwarded-for': '203.0.113.85' })
+            )
+          ).status
+        ).toBe(401);
+      }
+      expect(
+        (
+          await POST(
+            mockReq({ username: 'expiry@local', password: 'wrong' }, { 'x-forwarded-for': '203.0.113.85' })
+          )
+        ).status
+      ).toBe(429);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
