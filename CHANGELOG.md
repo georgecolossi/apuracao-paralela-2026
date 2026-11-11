@@ -5,9 +5,9 @@ O versionamento segue o padrão [Semantic Versioning](https://semver.org/lang/pt
 
 ---
 
-## [2.0.0] — Preparação de Release (PR 0–PR 8 integrados em `feature/v2-universal`; PR 9 em revisão no PR #20)
+## [2.0.0] — Preparação de Release (PR 0–PR 9 integrados em `feature/v2-universal`)
 
-> **Status:** PR 0–PR 8 já integrados em `feature/v2-universal`. PR 9 implementado na branch `feature/v2-pr9-release` (PR #20) aguardando auditoria e integração; sem definição formal de licença nem publicação de tag/release `v2.0.0`.
+> **Status:** Ciclo **PR 0–PR 9** integrado na branch consolidada `feature/v2-universal` (PR #20 integrado em 10/11/2026 via commit de merge `ea1f679d1f9c651ae2f3c53814a9f54667656bb8`). **Versão ainda não publicada:** arquivo `LICENSE` ainda não definido, tag Git `v2.0.0` ainda não criada, GitHub Release `v2.0.0` ainda não publicada e deploy em produção não autorizado nem executado.
 
 ### Adicionado
 - **Modelo de Dados Universal (PR 1 / #12):** Entidades `Election`, `ElectionRound`, `ElectionScope`, `RoundCoverage`, `Office` por eleição e `TseSyncConfig`, suportando múltiplas eleições simultâneas/históricas e abrangências `MUNICIPAL`, `ESTADUAL` e `NACIONAL`.
@@ -18,7 +18,7 @@ O versionamento segue o padrão [Semantic Versioning](https://semver.org/lang/pt
 - **Painel Público Universal (PR 6 / #17):** `/apuracao` agnóstico a cargo e pleito, seleção por `?election=` e `?round=`, distinção entre cobertura provisória e homologada e projeção linear com garantia de não regressão e ocultação automática aos 100%.
 - **Imprensa & Rádio (PR 7 / #18):** Módulo `/imprensa` (**Últimas Urnas Apuradas**) com APIs paginadas por cursor (`/api/urnas` e `/api/urnas/[id]`), filtros por Zona/Seção, modal de integridade SHA-512, gerador automático de roteiro para locução em rádio e modo Teleprompter.
 - **Adaptador Dinâmico TSE (PR 8 / #19):** `GET /api/tse-results` inteiramente dirigido por `TseSyncConfig` e Setup Wizard, com cache contextual de 15 segundos (`tseResultsCache`), bloqueio anti-proxy e validação anti-SSRF multi-camada (bloqueio CIDR IPv4/IPv6 privados, DNS multi-registro com socket pinning e bloqueio de redirecionamentos `3xx`).
-- **Homologação E2E, Documentação e Auditoria Final (PR 9):**
+- **Homologação E2E, Documentação e Auditoria Final (PR 9 / #20):**
   - Nova suíte E2E ponta a ponta (`e2e/v2-homologation.spec.ts`) validando autenticação, RBAC, Setup Wizard, isolamento de rascunho/histórico/simulação, proteção CSRF fail-closed, scanner UI, conferência, `/apuracao`, `/imprensa` e `/api/tse-results`.
   - Criação de `CHANGELOG.md` e [`docs/RELEASE_V2.0.0.md`](docs/RELEASE_V2.0.0.md) com checklist de publicação e análise de segurança/dependências.
 

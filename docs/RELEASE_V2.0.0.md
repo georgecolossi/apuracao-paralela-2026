@@ -1,9 +1,11 @@
 # Notas da Release e Homologação — Apuração Paralela v2.0.0
 
-Este documento consolida a preparação da versão **`v2.0.0`** do **Apuração Paralela 2026** (ciclo **PR 0–PR 8** já integrado à branch `feature/v2-universal`; **PR 9** implementado na branch `feature/v2-pr9-release` no **PR #20**, aguardando auditoria independente e integração), incluindo instruções reprodutíveis de validação, resultado completo de `npm audit`, ressalvas conhecidas e checklist de publicação manual.
+Este documento consolida a preparação da versão **`v2.0.0`** do **Apuração Paralela 2026** (ciclo **PR 0–PR 9** integrado à branch `feature/v2-universal` em 10/11/2026 por meio do **PR #20**, commit de merge `ea1f679d1f9c651ae2f3c53814a9f54667656bb8`), incluindo instruções reprodutíveis de validação, resultado completo de `npm audit`, ressalvas conhecidas e checklist de publicação manual.
 
 > [!IMPORTANT]
-> **Estado de Publicação:** A tag Git `v2.0.0`, a GitHub Release, o merge do PR #20 e a definição formal de um arquivo `LICENSE` **ainda não foram realizados**. Este PR prepara e homologa o código e a documentação para revisão final e decisão expressa do mantenedor.
+> **Estado de Publicação e Integração:**
+> - **Branch consolidada (`feature/v2-universal`):** PR 0–PR 9 integrados (PR #20 integrado com commit de merge `ea1f679d1f9c651ae2f3c53814a9f54667656bb8`).
+> - **Ainda pendente de autorização e execução manual:** arquivo `LICENSE` ainda não definido, tag Git `v2.0.0` ainda não criada, GitHub Release `v2.0.0` ainda não publicada, integração em `main` e deploy em produção ainda não realizados.
 
 ---
 
@@ -20,7 +22,7 @@ Este documento consolida a preparação da versão **`v2.0.0`** do **Apuração 
 | **PR 6** | PR `#17` | **Integrado** em `feature/v2-universal` | Painel Público Universal (`/apuracao`), agnóstico a cargo/pleito, cobertura provisória vs homologada e projeção linear provisória |
 | **PR 7** | PR `#18` | **Integrado** em `feature/v2-universal` | Últimas Urnas Apuradas — Imprensa e Rádio (`/imprensa`, `/api/urnas`, `/api/urnas/[id]`), modal detalhado, roteiro de locução e Teleprompter |
 | **PR 8** | PR `#19` | **Integrado** em `feature/v2-universal` | Adaptador Dinâmico de Integração TSE (`/api/tse-results`), anti-proxy, anti-SSRF multi-camada (CIDR + DNS pinning + anti-3xx) e cache contextual (15s) |
-| **PR 9** | PR `#20` (`feature/v2-pr9-release`) | **Em auditoria / aguardando integração** | Homologação E2E com `ALLOW_SIMULATED_FASE="false"` e payloads sintéticos `FASE:O` com SHA-512 válido (`e2e/v2-homologation.spec.ts`), isolamento obrigatório de `file:./e2e.db`, integridade de `ScanSession` (`SCAN_SESSION_*_MISMATCH`), correção de `hashStatus`/`sigStatus` (`PAG-40`), remediação de dependências (`next@16.4.6`, `eslint-config-next@16.4.6`, `zod@4.6.7`, `source-map-js@1.2.2`), saneamento documental e preparação da release |
+| **PR 9** | PR `#20` (`feature/v2-pr9-release`) | **Integrado** em `feature/v2-universal` (`ea1f679`) | Homologação E2E com `ALLOW_SIMULATED_FASE="false"` e payloads sintéticos `FASE:O` com SHA-512 válido (`e2e/v2-homologation.spec.ts`), isolamento obrigatório de `file:./e2e.db`, integridade de `ScanSession` (`SCAN_SESSION_*_MISMATCH`), correção de `hashStatus`/`sigStatus` (`PAG-40`), remediação de dependências (`next@16.4.6`, `eslint-config-next@16.4.6`, `zod@4.6.7`, `source-map-js@1.2.2`), saneamento documental e preparação da release |
 
 ---
 
@@ -93,10 +95,13 @@ npm run build
 
 ---
 
-## 5. Checklist Final de Publicação (Ações Manuais Pós-Aprovação)
+## 5. Checklist Final de Publicação
 
-- [ ] Concluir auditoria independente e aprovar o **PR #20** (`feature/v2-pr9-release` → `feature/v2-universal`).
+### Concluído na Branch Consolidada (`feature/v2-universal`)
+- [x] Concluir auditoria independente, aprovar e integrar o **PR #20** (`feature/v2-pr9-release` → `feature/v2-universal`, commit de merge `ea1f679d1f9c651ae2f3c53814a9f54667656bb8`).
+
+### Pendente de Autorização / Execução Manual
 - [ ] Definir os termos de licenciamento e adicionar o arquivo `LICENSE` após decisão do mantenedor.
 - [ ] Realizar o merge autorizado de `feature/v2-universal` em `main` e atualizar a versão em `package.json` caso desejado (`"2.0.0"`).
 - [ ] Garantir em produção: `JWT_SECRET` forte, `DISABLE_HTTP_SETUP="true"`, `ALLOW_OPERATIONAL_RESET="false"`, `ALLOW_SIMULATED_FASE="false"`, `APP_URL`/`NEXT_PUBLIC_APP_URL` HTTPS e backup prévio de `/data/prod.db`.
-- [ ] Criar e enviar a tag `v2.0.0` e publicar a GitHub Release correspondente após aprovação expressa.
+- [ ] Criar e enviar a tag `v2.0.0` e publicar a GitHub Release `v2.0.0` após aprovação expressa.
